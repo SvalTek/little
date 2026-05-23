@@ -355,7 +355,11 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 	t.identifier_buffer = lt_buffer_new(sizeof(lt_Identifier));
 	t.literal_buffer = lt_buffer_new(sizeof(lt_Literal));
 
-	if (!setjmp(*(jmp_buf*)vm->error_buf))
+	void* saved_error_buf = vm->error_buf;
+	jmp_buf error_buf;
+	vm->error_buf = &error_buf;
+
+	if (!setjmp(error_buf))
 	{
 		const char* current = source;
 		uint16_t line = 1, col = 0;
@@ -621,9 +625,11 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 		tok.line = line;
 		tok.col = col;
 		lt_buffer_push(vm, &t.token_buffer, &tok);
-	
+
 		t.is_valid = 1;
 	}
+
+	vm->error_buf = saved_error_buf;
 	return t;
 }
 
@@ -1718,15 +1724,20 @@ expr_end:
 lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 {
 	lt_Parser p;
+	memset(&p, 0, sizeof(lt_Parser));
 	p.is_valid = 0;
+	p.tkn = tkn;
+	p.ast_nodes = lt_buffer_new(sizeof(lt_AstNode*));
 
-	if (!setjmp(*(jmp_buf*)vm->error_buf))
+	void* saved_error_buf = vm->error_buf;
+	jmp_buf error_buf;
+	vm->error_buf = &error_buf;
+
+	if (!setjmp(error_buf))
 	{
 		p.current = 0;
 		p.in_async = 0;
 		p.had_error = 0;
-		p.tkn = tkn;
-		p.ast_nodes = lt_buffer_new(sizeof(lt_AstNode*));
 		p.root = _lt_get_node_of_type(vm, (lt_Token*)tkn->token_buffer.data, &p, LT_AST_NODE_CHUNK);
 		p.root->chunk.body = lt_buffer_new(sizeof(lt_AstNode*));
 
@@ -1736,6 +1747,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 		p.is_valid = !p.had_error;
 	}
 
+	vm->error_buf = saved_error_buf;
 	return p;
 }
 
@@ -1752,7 +1764,6 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 	vm->keepalive = lt_buffer_new(sizeof(lt_Object*));
 	ltasync_init_state(vm);
 
-	vm->error_buf = malloc(sizeof(jmp_buf));
 	vm->generate_debug = 1;
 
 	vm->global = LT_VALUE_OBJECT(lt_allocate(vm, LT_OBJECT_TABLE));
@@ -1767,7 +1778,6 @@ void lt_destroy(lt_VM* vm)
 	lt_buffer_destroy(vm, &vm->keepalive);
 	lt_collect(vm);
 	if (vm->error_trap) vm->free(vm->error_trap);
-	free(vm->error_buf);
 	vm->free(vm);
 }
 
@@ -2185,14 +2195,22 @@ static void _lt_instance_set(lt_VM* vm, lt_Value instance_value, lt_Value key, l
 
 uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 {
-	if (!setjmp(*(jmp_buf*)vm->error_buf))
+	void* saved_error_buf = vm->error_buf;
+	jmp_buf error_buf;
+	vm->error_buf = &error_buf;
+
+	if (!setjmp(error_buf))
 	{
-		return _lt_exec(vm, callable, argc);
+		uint16_t nret = _lt_exec(vm, callable, argc);
+		vm->error_buf = saved_error_buf;
+		return nret;
 	}
 	else
 	{
 		vm->depth = 0;
 		vm->top = 0;
+		vm->current = 0;
+		vm->error_buf = saved_error_buf;
 		return 0;
 	}
 }
@@ -2207,7 +2225,8 @@ void lt_error(lt_VM* vm, const char* msg)
 		memcpy(vm->error_trap, msg, len + 1);
 	}
 	else if (vm->error) vm->error(vm, msg);
-	longjmp(*(jmp_buf*)vm->error_buf, 1);
+	if (vm->error_buf) longjmp(*(jmp_buf*)vm->error_buf, 1);
+	abort();
 }
 
 uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
