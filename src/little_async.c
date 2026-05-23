@@ -912,6 +912,14 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 	}
 
 	lt_Worker* worker = vm->alloc(sizeof(lt_Worker));
+	if (!worker)
+	{
+		_lt_settle_promise(vm, promise, LT_PROMISE_REJECTED, lt_make_string(vm, "Failed to allocate worker!"));
+		vm->free(state_literal);
+		lt_push(vm, promise);
+		lt_resumecollect(vm, LT_GET_OBJECT(promise));
+		return 1;
+	}
 	memset(worker, 0, sizeof(lt_Worker));
 	_lt_worker_init_lock(worker);
 	worker->parent = vm;
@@ -922,6 +930,16 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 	const char* source = lt_get_string(vm, source_value);
 	uint32_t source_len = (uint32_t)strlen(source);
 	worker->source = vm->alloc(source_len + 1);
+	if (!worker->source)
+	{
+		_lt_settle_promise(vm, promise, LT_PROMISE_REJECTED, lt_make_string(vm, "Failed to allocate worker source!"));
+		vm->free(worker->state_literal);
+		_lt_worker_destroy_lock(worker);
+		vm->free(worker);
+		lt_push(vm, promise);
+		lt_resumecollect(vm, LT_GET_OBJECT(promise));
+		return 1;
+	}
 	memcpy(worker->source, source, source_len + 1);
 
 #if defined(_WIN32)

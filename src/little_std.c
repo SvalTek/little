@@ -50,7 +50,7 @@ static uint8_t _ltstd_pcall(lt_VM* vm, uint8_t argc)
 
     if (!setjmp(error_buf))
     {
-        uint16_t nret = _lt_exec(vm, callable, argc - 1);
+        uint16_t nret = lt_exec_internal(vm, callable, argc - 1);
         lt_Value value = LT_VALUE_NULL;
         if (nret > 0)
         {

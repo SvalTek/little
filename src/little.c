@@ -2113,7 +2113,7 @@ void lt_setupval(lt_VM* vm, uint8_t idx, lt_Value val)
 	_lt_cell_set(vm, slot, val);
 }
 
-uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc);
+uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc);
 
 static void _lt_table_copy(lt_VM* vm, lt_Table* dst, lt_Table* src)
 {
@@ -2193,7 +2193,7 @@ static void _lt_run_field_initializers(lt_VM* vm, lt_Value instance, lt_Table* i
 		{
 			lt_TablePair* pair = lt_buffer_at(bucket, j);
 			lt_push(vm, instance);
-			uint16_t nret = _lt_exec(vm, pair->value, 1);
+			uint16_t nret = lt_exec_internal(vm, pair->value, 1);
 			lt_Value value = LT_VALUE_NULL;
 			if (nret > 0)
 			{
@@ -2223,7 +2223,7 @@ static lt_Value _lt_class_call(lt_VM* vm, lt_Value class_value, uint8_t argc)
 		vm->top++;
 		if (vm->top > LT_STACK_SIZE) lt_runtime_error(vm, "VM stack overflow!");
 
-		uint16_t nret = _lt_exec(vm, klass->class_def.constructor, argc + 1);
+		uint16_t nret = lt_exec_internal(vm, klass->class_def.constructor, argc + 1);
 		while (nret-- > 0) lt_pop(vm);
 	}
 
@@ -2244,7 +2244,7 @@ static lt_Value _lt_instance_get(lt_VM* vm, lt_Value instance_value, lt_Value ke
 		if (private_getter)
 		{
 			lt_push(vm, instance_value);
-			uint16_t nret = _lt_exec(vm, private_getter->value, 1);
+			uint16_t nret = lt_exec_internal(vm, private_getter->value, 1);
 			if (nret > 0)
 			{
 				result = vm->stack[vm->top - nret];
@@ -2258,7 +2258,7 @@ static lt_Value _lt_instance_get(lt_VM* vm, lt_Value instance_value, lt_Value ke
 	if (public_getter)
 	{
 		lt_push(vm, instance_value);
-		uint16_t nret = _lt_exec(vm, public_getter->value, 1);
+		uint16_t nret = lt_exec_internal(vm, public_getter->value, 1);
 		if (nret > 0)
 		{
 			result = vm->stack[vm->top - nret];
@@ -2299,7 +2299,7 @@ static void _lt_instance_set(lt_VM* vm, lt_Value instance_value, lt_Value key, l
 		{
 			lt_push(vm, instance_value);
 			lt_push(vm, value);
-			uint16_t nret = _lt_exec(vm, private_setter->value, 2);
+			uint16_t nret = lt_exec_internal(vm, private_setter->value, 2);
 			while (nret-- > 0) lt_pop(vm);
 			return;
 		}
@@ -2310,7 +2310,7 @@ static void _lt_instance_set(lt_VM* vm, lt_Value instance_value, lt_Value key, l
 	{
 		lt_push(vm, instance_value);
 		lt_push(vm, value);
-		uint16_t nret = _lt_exec(vm, public_setter->value, 2);
+		uint16_t nret = lt_exec_internal(vm, public_setter->value, 2);
 		while (nret-- > 0) lt_pop(vm);
 		return;
 	}
@@ -2332,7 +2332,7 @@ uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 
 	if (!setjmp(error_buf))
 	{
-		uint16_t nret = _lt_exec(vm, callable, argc);
+		uint16_t nret = lt_exec_internal(vm, callable, argc);
 		vm->error_buf = saved_error_buf;
 		return nret;
 	}
@@ -2360,7 +2360,7 @@ void lt_error(lt_VM* vm, const char* msg)
 	abort();
 }
 
-uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
+uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc)
 {
 	if (!LT_IS_OBJECT(callable)) return 0;
 	if (LT_IS_CLASS(callable))
@@ -2681,7 +2681,7 @@ inst_loop:
 			PUSH(result);
 			vm->last_call_returns = 1;
 		}
-		else vm->last_call_returns = (uint8_t)_lt_exec(vm, callee, (uint8_t)current.arg);
+		else vm->last_call_returns = (uint8_t)lt_exec_internal(vm, callee, (uint8_t)current.arg);
 	} NEXT;
 
 	case LT_OP_CALLM: {
@@ -2700,7 +2700,7 @@ inst_loop:
 			PUSH(result);
 			vm->last_call_returns = 1;
 		}
-		else vm->last_call_returns = (uint8_t)_lt_exec(vm, callee, argc);
+		else vm->last_call_returns = (uint8_t)lt_exec_internal(vm, callee, argc);
 	} NEXT;
 
 	case LT_OP_FIXRET: {

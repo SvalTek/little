@@ -3,6 +3,7 @@
 Little is intentionally small and uses fixed-size VM stacks for predictable embedding. These limits are defaults from `little.h`; embedders may override the `LT_*` defines before including/building Little, but larger limits increase VM memory usage and should be tested.
 
 ## VM limits
+
 | Limit | Default | Notes |
 | --- | ---: | --- |
 | `LT_STACK_SIZE` | 256 | Value stack entries. This stack holds operands, locals, arguments, and return values. Overflow now fails with `VM stack overflow!`. |
@@ -10,6 +11,7 @@ Little is intentionally small and uses fixed-size VM stacks for predictable embe
 | `LT_DEDUP_TABLE_SIZE` | 64 | String dedup hash buckets. This is not a string-count limit; buckets grow dynamically. |
 
 ## Parser/compiler limits
+
 | Limit | Default | Practical source limit |
 | --- | ---: | ---: |
 | `LT_MAX_FUNCTION_PARAMS` | 16 | 16 declared parameters. |
