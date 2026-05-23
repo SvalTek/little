@@ -81,9 +81,39 @@ static uint8_t _ltstd_pcall(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+static uint8_t _ltstd_unpack(lt_VM* vm, uint8_t argc)
+{
+    if (argc < 1 || argc > 3) lt_runtime_error(vm, "Expected 1-3 arguments to unpack!");
+
+    lt_Value end_value = LT_VALUE_NULL;
+    lt_Value start_value = LT_VALUE_NUMBER(0);
+    if (argc == 3) end_value = lt_pop(vm);
+    if (argc >= 2) start_value = lt_pop(vm);
+    lt_Value array = lt_pop(vm);
+
+    if (!LT_IS_ARRAY(array)) lt_runtime_error(vm, "Expected first argument to unpack to be array!");
+    if (!LT_IS_NUMBER(start_value)) lt_runtime_error(vm, "Expected start argument to unpack to be number!");
+    if (!LT_IS_NULL(end_value) && !LT_IS_NUMBER(end_value)) lt_runtime_error(vm, "Expected end argument to unpack to be number!");
+
+    int32_t start = (int32_t)LT_GET_NUMBER(start_value);
+    int32_t end = LT_IS_NULL(end_value) ? (int32_t)lt_array_length(array) - 1 : (int32_t)LT_GET_NUMBER(end_value);
+    if (start < 0 || end < -1) lt_runtime_error(vm, "Expected unpack bounds to be non-negative!");
+    if (start > end || start >= (int32_t)lt_array_length(array)) return 0;
+    if (end >= (int32_t)lt_array_length(array)) end = (int32_t)lt_array_length(array) - 1;
+
+    uint8_t count = 0;
+    for (int32_t i = start; i <= end && count < UINT8_MAX; ++i)
+    {
+        lt_push(vm, *lt_array_at(array, (uint32_t)i));
+        count++;
+    }
+    return count;
+}
+
 void ltstd_open_all(lt_VM* vm)
 {
     lt_table_set(vm, vm->global, lt_make_string(vm, "pcall"), lt_make_native(vm, _ltstd_pcall));
+    lt_table_set(vm, vm->global, lt_make_string(vm, "unpack"), lt_make_native(vm, _ltstd_unpack));
     ltstd_open_io(vm);
     ltstd_open_math(vm);
     ltstd_open_array(vm);

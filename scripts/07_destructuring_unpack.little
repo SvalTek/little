@@ -1,0 +1,43 @@
+io.print("destructuring and unpack")
+
+var request = {
+    id: 1042
+    user: "Ada"
+    path: "/orders/42"
+    status: 201
+    tags: [ "api", "orders", "write" ]
+}
+
+var { id: requestId, user, path, status, missing } = request
+var summary = { requestId, user, path, status }
+io.print(string.expand("request {{requestId}} {{user}} -> {{path}} status {{status}}", summary))
+io.print("missing optional field", missing)
+
+var [firstTag, secondTag, thirdTag] = request.tags
+io.print("tags", firstTag, secondTag, thirdTag)
+
+var rgb = fn(r, g, b) {
+    var parts = { r, g, b }
+    return string.expand("rgb({{r}}, {{g}}, {{b}})", parts)
+}
+
+var badgeColor = [ 34, 139, 230 ]
+io.print("badge color", rgb(unpack(badgeColor)))
+
+var makeAccount = fn(name, role, state, note) {
+    return { name, role, state, note }
+}
+
+var csvRow = [ "Ada", "admin", "active", "last-login:today" ]
+var account = makeAccount(unpack(csvRow))
+var { name, role, state } = account
+io.print(string.expand("account {{name}} has {{role}} role and is {{state}}", { name, role, state }))
+
+var roleOnly = unpack(csvRow, 1, 1)
+io.print("single unpacked field", roleOnly)
+
+var labelPair = fn(primary, suffix) {
+    io.print("non-final unpack uses first value", primary, suffix)
+}
+
+labelPair(unpack([ "first", "ignored" ]), "kept")
