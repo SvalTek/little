@@ -1,0 +1,12 @@
+Promise(fn(resolve, reject) {
+    reject("bad")
+}).next(fn(value) {
+    io.print("nope")
+}).catch(fn(reason) {
+    io.print(reason)
+    return "recovered"
+}).finally(fn() {
+    io.print("done")
+}).next(fn(value) {
+    io.print(value)
+})

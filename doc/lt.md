@@ -9,6 +9,7 @@ Little supports a set of basic types:
 * `closure` - any function that captures surroudning values
 * `array` - 0-indexed array of values
 * `table` - a table of key-value pairs
+* `promise` - an asynchronous value that can be fulfilled or rejected
 * `native` - reference to a natively defined C function
 * `ptr` - userdata pointer set by C api
 
@@ -100,6 +101,26 @@ The comparison operators `is` and `isnt` work on all types
 The logical operators `or`, `and` and `not` compare values based on their `truthiness`, and return their last operand
 The index operator `[expression]` works on any `table` and `array` values
 The dot operator `.` is syntax sugar for indexsing `table`s - `my_table.my_index = 10`
+The colon operator `:` is syntax sugar for receiver-passing method calls - `obj:method(a)` is equivalent to `obj.method(obj, a)`. Methods conventionally name the first parameter `this`.
 
 ### Truthiness
 Any `null` or `false` values are considered `falsy`, anything else is logically `true`
+
+---
+## Async
+Little supports JS-style Promise and timer primitives:
+```js
+Promise(fn(resolve, reject) {
+    setTimeout(fn() { resolve("done") }, 10)
+}).next(fn(value) {
+    io.print(value)
+}).catch(fn(reason) {
+    io.print(reason)
+}).finally(fn() {
+    io.print("settled")
+})
+```
+
+`thread.run(source, state)` runs Little source text in an isolated worker VM and returns a promise. The worker receives a copied `state` global and resolves with the script's returned value. Only `null`, numbers, booleans, strings, arrays, and tables cross worker boundaries.
+
+`async fn` and `await` are reserved as future JS-like syntax; `await` will only be valid inside async functions once implemented.

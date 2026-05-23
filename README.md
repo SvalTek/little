@@ -30,6 +30,7 @@ for animal in array.each(animals) {
 ```c
 #include "little.h"
 #include "little_std.h"
+#include "little_async.h"
 
 // this is called if the vm encounters an error, letting us react
 void my_error_callback(lt_VM* vm, const char* msg)
@@ -41,7 +42,8 @@ int main(char** argv, int argc)
 {
     lt_VM* vm = lt_open(malloc, free, my_error_callback);                    // open new VM
     ltstd_open_all(vm);                                                      // register stdlib
-                   
+    ltasync_open_all(vm);                                                    // optional async/timer/thread libs
+
     const char* my_source_code = ...                                         // read source from file/stream/string
 
     uint16_t n_return = lt_dostring(vm, my_source_code, "my_module")         // run code as "my_module" 
@@ -53,7 +55,7 @@ int main(char** argv, int argc)
 
 #### Linux
 ```
-gcc -std=c11 main.c src/little.c src/little_std.c -lm -o little
+gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_std.c src/little_async.c -lm -pthread -o little
 ```
 
 #### Windows
@@ -61,7 +63,7 @@ you need [msys2](https://www.msys2.org) _just follow the installation instructio
 ```
 pacman -S mingw-w64-ucrt-x86_64-gcc
 
-gcc main.c src/little.c src/little_std.c -o little
+gcc main.c src/little_buffer.c src/little.c src/little_std.c src/little_async.c -o little
 ```
 ---
 ## Links

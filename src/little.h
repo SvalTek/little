@@ -279,12 +279,20 @@ typedef struct {
 } lt_Table;
 
 typedef enum {
+	LT_PROMISE_PENDING,
+	LT_PROMISE_FULFILLED,
+	LT_PROMISE_REJECTED,
+} lt_PromiseState;
+
+typedef enum {
 	LT_OBJECT_CHUNK,
 	LT_OBJECT_FN,
 	LT_OBJECT_CLOSURE,
 	LT_OBJECT_TABLE,
 	LT_OBJECT_ARRAY,
 	LT_OBJECT_NATIVEFN,
+	LT_OBJECT_BOUND_NATIVE,
+	LT_OBJECT_PROMISE,
 	LT_OBJECT_PTR,
 } lt_ObjectType;
 
@@ -325,10 +333,22 @@ typedef struct {
 			lt_Buffer captures;
 		} closure;
 
+		struct
+		{
+			lt_NativeFn native;
+			lt_Value receiver;
+		} bound_native;
 
 		lt_Table table;
 		lt_Buffer array;
 		lt_NativeFn native;
+		struct
+		{
+			lt_PromiseState state;
+			lt_Value result;
+			lt_Buffer reactions;
+			uint8_t handled;
+		} promise;
 		void* ptr;
 	};
 
@@ -374,6 +394,10 @@ struct lt_VM {
 	lt_Buffer strings[LT_DEDUP_TABLE_SIZE];
 
 	lt_Value global;
+	lt_Buffer microtasks;
+	lt_Buffer timers;
+	lt_Buffer workers;
+	uint32_t next_timer_id;
 
 	lt_AllocFn alloc;
 	lt_FreeFn free;
@@ -405,6 +429,8 @@ lt_Value lt_getupval(lt_VM* vm, uint8_t idx);
 void lt_setupval(lt_VM* vm, uint8_t idx, lt_Value val);
 
 uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc);
+uint8_t lt_poll(lt_VM* vm);
+void lt_runloop(lt_VM* vm);
 void lt_error(lt_VM* vm, const char* msg);
 void lt_runtime_error(lt_VM* vm, const char* message);
 

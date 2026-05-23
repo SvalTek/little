@@ -1,0 +1,8 @@
+var obj = {
+    base: 10
+    add: fn(this, value) {
+        return this.base + value
+    }
+}
+
+io.print(obj:add(5))

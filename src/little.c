@@ -1,4 +1,4 @@
-#include "little.h"
+#include "little_internal.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -83,71 +83,6 @@ typedef union {
 	uint64_t bits;
 } _lt_conversion_union;
 
-
-lt_Buffer lt_buffer_new(uint32_t element_size)
-{
-	lt_Buffer buf;
-	buf.element_size = element_size;
-	buf.capacity = 0;
-	buf.length = 0;
-	buf.data = 0;
-
-	return buf;
-}
-
-void lt_buffer_destroy(lt_VM* vm, lt_Buffer* buf)
-{
-	if (buf->data != 0) vm->free(buf->data);
-	buf->data = 0;
-	buf->length = 0;
-	buf->capacity = 0;
-}
-
-static uint8_t lt_buffer_push(lt_VM* vm, lt_Buffer* buf, void* element)
-{
-	uint8_t has_allocated = 0;
-	if (buf->length + 1 > buf->capacity)
-	{
-		has_allocated = 1;
-
-		void* new_buffer = vm->alloc(buf->element_size * (buf->capacity + 16));
-
-		if (buf->data != 0)
-		{
-			memcpy(new_buffer, buf->data, buf->element_size * buf->capacity);
-			free(buf->data);
-		}
-
-		buf->data = new_buffer;
-		buf->capacity += 16;
-	}
-
-	memcpy((uint8_t*)buf->data + buf->element_size * buf->length, element, buf->element_size);
-	buf->length++;
-
-	return has_allocated;
-}
-
-static void* lt_buffer_at(lt_Buffer* buf, uint32_t idx)
-{
-	return (uint8_t*)buf->data + buf->element_size * idx;
-}
-
-static void* lt_buffer_last(lt_Buffer* buf)
-{
-	return lt_buffer_at(buf, buf->length - 1);
-}
-
-static void lt_buffer_cycle(lt_Buffer* buf, uint32_t idx)
-{
-	memcpy(lt_buffer_at(buf, idx), lt_buffer_last(buf), buf->element_size);
-	buf->length--;
-}
-
-static void lt_buffer_pop(lt_Buffer* buf)
-{
-	buf->length--;
-}
 
 lt_Value lt_make_number(double n)
 {
@@ -480,6 +415,8 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 				else PUSH_STR_TOKEN("while", LT_TOKEN_WHILE)
 				else PUSH_STR_TOKEN("break", LT_TOKEN_BREAK)
 				else PUSH_STR_TOKEN("return", LT_TOKEN_RETURN)
+				/* TODO: reserve and implement JS-like async fn/await syntax.
+				   await must only be valid inside an async function. */
 				else PUSH_STR_TOKEN("is", LT_TOKEN_EQUALS)
 				else PUSH_STR_TOKEN("isnt", LT_TOKEN_NOTEQUALS)
 				else PUSH_STR_TOKEN("and", LT_TOKEN_AND)
@@ -981,6 +918,51 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			lt_buffer_push(vm, &result, &index);
 		} break;
 
+		case LT_TOKEN_COLON: {
+			uint8_t allowed = 0;
+			if (last) switch (last->type)
+			{
+			case LT_TOKEN_CLOSEBRACE:
+			case LT_TOKEN_CLOSEBRACKET:
+			case LT_TOKEN_CLOSEPAREN:
+			case LT_TOKEN_IDENTIFIER:
+				allowed = 1;
+			}
+
+			if (!allowed) goto expr_end;
+
+			NEXT(); // eat colon
+			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
+			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
+			idx_expr->literal.token = NEXT();
+
+			if (current->type != LT_TOKEN_OPENPAREN) _lt_parse_error(vm, p->tkn->module, current, "Expected call arguments to follow ':' method access!");
+			NEXT(); // eat open paren
+
+			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
+			lt_AstNode* index = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_INDEX);
+			index->index.source = source;
+			index->index.idx = idx_expr;
+
+			lt_AstNode* call = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_CALL);
+			uint8_t nargs = 0;
+			call->call.args[nargs++] = source;
+
+			while (current->type != LT_TOKEN_CLOSEPAREN)
+			{
+				if (current->type == LT_TOKEN_END) _lt_parse_error(vm, p->tkn->module, current, "Unexpected end of file in expression. (Unclosed method call?)");
+				if (current->type == LT_TOKEN_COMMA) NEXT();
+
+				lt_AstNode* arg = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+				current = _lt_parse_expression(vm, p, current, arg);
+				call->call.args[nargs++] = arg;
+			}
+
+			call->call.callee = index;
+			lt_buffer_push(vm, &result, &call);
+			NEXT(); // eat close paren
+		} break;
+
 		case LT_TOKEN_NUMBER_LITERAL: case LT_TOKEN_NULL_LITERAL: case LT_TOKEN_TRUE_LITERAL: case LT_TOKEN_FALSE_LITERAL: case LT_TOKEN_STRING_LITERAL: {
 			BREAK_ON_EXPR_BOUNDRY
 
@@ -1235,17 +1217,20 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 	
 	vm->heap = lt_buffer_new(sizeof(lt_Object*));
 	vm->keepalive = lt_buffer_new(sizeof(lt_Object*));
+	ltasync_init_state(vm);
 
 	vm->error_buf = malloc(sizeof(jmp_buf));
 	vm->generate_debug = 1;
 
 	vm->global = LT_VALUE_OBJECT(lt_allocate(vm, LT_OBJECT_TABLE));
 	lt_nocollect(vm, LT_GET_OBJECT(vm->global));
+
 	return vm;
 }
 
 void lt_destroy(lt_VM* vm)
 {
+	ltasync_destroy_state(vm);
 	lt_buffer_destroy(vm, &vm->keepalive);
 	lt_collect(vm);
 	vm->free(vm);
@@ -1285,7 +1270,10 @@ void lt_free(lt_VM* vm, uint32_t heapidx)
 	} break;
 	case LT_OBJECT_ARRAY: {
 		lt_buffer_destroy(vm, &obj->array);
-	} break;	
+	} break;
+	case LT_OBJECT_PROMISE: {
+		ltasync_free_promise(vm, obj);
+	} break;
 	case LT_OBJECT_PTR: {
 		vm->free(obj->ptr);
 	} break;
@@ -1340,7 +1328,10 @@ void lt_sweep(lt_VM* vm, lt_Object* obj)
 		{
 			lt_sweep_v(vm, *(lt_Value*)lt_buffer_at(&obj->closure.captures, i));
 		}
-	}
+	} break;
+	case LT_OBJECT_BOUND_NATIVE: {
+		lt_sweep_v(vm, obj->bound_native.receiver);
+	} break;
 	case LT_OBJECT_FN: {
 		for (uint32_t i = 0; i < obj->fn.constants.length; ++i)
 		{
@@ -1363,6 +1354,9 @@ void lt_sweep(lt_VM* vm, lt_Object* obj)
 		{
 			lt_sweep_v(vm, *(lt_Value*)lt_buffer_at(&obj->array, j));
 		}
+	} break;
+	case LT_OBJECT_PROMISE: {
+		ltasync_mark_promise(vm, obj);
 	} break;
 	}
 }
@@ -1390,6 +1384,13 @@ uint32_t lt_collect(lt_VM* vm)
 	{
 		lt_sweep(vm, *(lt_Object**)lt_buffer_at(&vm->keepalive, i));
 	}
+
+	for (uint32_t i = 0; i < vm->top; ++i)
+	{
+		lt_sweep_v(vm, vm->stack[i]);
+	}
+
+	ltasync_mark_roots(vm);
 
 	for (uint32_t i = 0; i < vm->heap.length; ++i)
 	{
@@ -1528,6 +1529,13 @@ uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 		vm->current = vm->depth > 0 ? &vm->callstack[vm->depth - 1] : 0;
 		return n_return;
 	} break;
+	case LT_OBJECT_BOUND_NATIVE: {
+		uint8_t n_return = callee->bound_native.native(vm, argc);
+
+		--vm->depth;
+		vm->current = vm->depth > 0 ? &vm->callstack[vm->depth - 1] : 0;
+		return n_return;
+	} break;
 	}
 
 	lt_Op current = *(lt_Op*)lt_buffer_at(frame->code, frame->pc++);
@@ -1599,6 +1607,10 @@ inst_loop:
 		if (LT_IS_TABLE(t))
 		{
 			PUSH(lt_table_get(vm, t, key));
+		}
+		else if (LT_IS_OBJECT(t) && LT_GET_OBJECT(t)->type == LT_OBJECT_PROMISE && LT_IS_STRING(key))
+		{
+			PUSH(ltasync_get_promise_method(vm, t, key));
 		}
 		else if (LT_IS_ARRAY(t))
 		{

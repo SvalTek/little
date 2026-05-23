@@ -3,6 +3,7 @@
 
 #include "src/little.h"
 #include "src/little_std.h"
+#include "src/little_async.h"
 
 void error(lt_VM* vm, const char* msg)
 {
@@ -30,8 +31,10 @@ int main(int argc, char** argv)
     // Init VM and run program
     lt_VM* vm = lt_open(malloc, free, error);
     ltstd_open_all(vm);
+    ltasync_open_all(vm);
 
     uint32_t nreturn = lt_dostring(vm, text, "module");
+    lt_runloop(vm);
 
     while (nreturn-- > 0)
     {
