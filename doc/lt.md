@@ -185,7 +185,7 @@ Promise(fn(resolve, reject) {
 })
 ```
 
-`thread.run(source, state)` runs Little source text in an isolated worker VM and returns a promise. The worker receives a copied `state` global and resolves with the script's returned value. Only `null`, numbers, booleans, strings, arrays, and tables cross worker boundaries.
+`task.run(source, state)` runs Little source text in an isolated VM and returns a promise. The task receives a copied `state` global and resolves with the script's returned value. Only `null`, numbers, booleans, strings, arrays, and tables cross task boundaries.
 
 `async fn` creates an asynchronous function. Calling it returns a promise immediately; the function body is run by the VM event loop. `await` is only valid inside async functions and waits for a promise before continuing:
 ```js

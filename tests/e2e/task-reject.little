@@ -1,0 +1,3 @@
+task.run("return 1 + state.bad", { bad: "bad" }).catch(fn(reason) {
+    io.print("rejected")
+})

@@ -91,7 +91,7 @@ Tokenizes, parses, and compiles the source string, passing `mod_name` for debug 
 uint8_t lt_poll(lt_VM* vm);
 void lt_runloop(lt_VM* vm);
 ```
-Polls or drains asynchronous work owned by the VM, including promise callbacks, timers, and worker completions. `lt_poll` returns non-zero while work was performed or remains pending.
+Polls or drains asynchronous work owned by the VM, including promise callbacks, timers, and task completions. `lt_poll` returns non-zero while work was performed or remains pending.
 
 ---
 ## Library loading
@@ -100,7 +100,7 @@ Polls or drains asynchronous work owned by the VM, including promise callbacks, 
 void ltstd_open_all(lt_VM* vm);
 void ltasync_open_all(lt_VM* vm);
 ```
-The VM starts without standard libraries. Use `ltstd_open_all` for the traditional stdlib modules and `ltasync_open_all` for optional Promise, timer, and thread globals. The CLI opens both because it is designed to run full Little scripts.
+The VM starts without standard libraries. Use `ltstd_open_all` for the traditional stdlib modules (`io`, `math`, `array`, `table`, `string`, and `gc`) and `ltasync_open_all` for optional Promise, timer, and task globals. The CLI opens both because it is designed to run full Little scripts.
 
 ---
 ```c

@@ -8,6 +8,7 @@ void ltstd_open_all(lt_VM* vm)
     ltstd_open_io(vm);
     ltstd_open_math(vm);
     ltstd_open_array(vm);
+    ltstd_open_table(vm);
     ltstd_open_string(vm);
     ltstd_open_gc(vm);
 }

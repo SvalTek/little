@@ -1,0 +1,10 @@
+var t = { name: "little" count: 2 }
+io.print(table.has(t, "name"))
+io.print(table.fetch(t, "missing", "fallback"))
+table.put(t, "count", 3)
+io.print(table.fetch(t, "count"))
+var keys = table.keys(t)
+var values = table.values(t)
+io.print(array.len(keys), array.len(values))
+table.remove(t, "name")
+io.print(table.has(t, "name"), table.fetch(t, "name", "gone"))

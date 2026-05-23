@@ -35,8 +35,8 @@ Here are some samples of how to extend the language through the C API. For brevi
 ## Optional library loading
 
 ```c
-    ltstd_open_all(vm);    // io, math, array, string, gc
-    ltasync_open_all(vm);  // Promise, timers, thread.run
+    ltstd_open_all(vm);    // io, math, array, table, string, gc
+    ltasync_open_all(vm);  // Promise, timers, task.run
 ```
 
 The CLI opens both sets of libraries, but embedders can choose only the modules they want.

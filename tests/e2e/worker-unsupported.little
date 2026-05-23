@@ -1,3 +1,0 @@
-thread.run("return state", { bad: fn() { return 1 } }).catch(fn(reason) {
-    io.print("unsupported")
-})
