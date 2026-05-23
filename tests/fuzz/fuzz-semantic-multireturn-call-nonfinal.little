@@ -1,0 +1,5 @@
+var collect = fn(a, b) {
+    io.print(a, b)
+}
+
+collect(unpack(["first", "dropped"]), "kept")

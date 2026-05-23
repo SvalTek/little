@@ -101,7 +101,7 @@ static uint8_t _ltstd_unpack(lt_VM* vm, uint8_t argc)
     if (end >= (int32_t)lt_array_length(array)) end = (int32_t)lt_array_length(array) - 1;
 
     uint8_t count = 0;
-    for (int32_t i = start; i <= end && count < UINT8_MAX; ++i)
+    for (int32_t i = start; i <= end && count < LT_MAX_RETURNS; ++i)
     {
         lt_push(vm, *lt_array_at(array, (uint32_t)i));
         count++;
@@ -147,6 +147,7 @@ char* ltstd_tostring(lt_VM* vm, lt_Value val)
         case LT_OBJECT_PROMISE: len = snprintf(scratch, sizeof(scratch), "promise 0x%llx", (uintptr_t)obj); break;
         case LT_OBJECT_CLASS: len = snprintf(scratch, sizeof(scratch), "class 0x%llx", (uintptr_t)obj); break;
         case LT_OBJECT_INSTANCE: len = snprintf(scratch, sizeof(scratch), "instance 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_CELL: len = snprintf(scratch, sizeof(scratch), "cell 0x%llx", (uintptr_t)obj); break;
         case LT_OBJECT_PTR: len = snprintf(scratch, sizeof(scratch), "ptr 0x%llx", (uintptr_t)obj); break;
         }
     }

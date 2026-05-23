@@ -1,0 +1,11 @@
+class Vault {
+    private open() {
+        return "open"
+    }
+}
+
+var vault = Vault()
+var result = pcall(fn() {
+    return vault.open + 1
+})
+io.print(result.ok, vault.open, string.contains(result.error, "Expected arithmetic operands"))

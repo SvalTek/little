@@ -1,0 +1,2 @@
+io.print("left\qright")
+io.print("slash\\done")

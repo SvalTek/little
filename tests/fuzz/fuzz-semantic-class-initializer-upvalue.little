@@ -1,0 +1,8 @@
+var seed = 4
+
+class Seeded {
+    value = seed + 1
+}
+
+var seeded = Seeded()
+io.print(seeded.value)

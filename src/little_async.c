@@ -41,7 +41,7 @@ typedef struct {
 typedef struct {
 	lt_Value promise;
 	lt_Value callee;
-	lt_Value args[16];
+	lt_Value args[LT_MAX_CALL_ARGS];
 	uint8_t argc;
 } lt_AsyncCall;
 
@@ -755,6 +755,8 @@ uint8_t ltasync_is_async_callable(lt_Value callable)
 
 lt_Value ltasync_call(lt_VM* vm, lt_Value callee, uint8_t argc)
 {
+	if (argc > LT_MAX_CALL_ARGS) lt_runtime_error(vm, "Too many async call arguments!");
+
 	lt_Value promise = _lt_make_promise(vm);
 	lt_AsyncCall task;
 	memset(&task, 0, sizeof(task));

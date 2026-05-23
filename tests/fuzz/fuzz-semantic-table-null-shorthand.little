@@ -1,0 +1,5 @@
+var id = 7
+var name = null
+var source = { id, name, extra: "ignored" }
+var { id: userId, name, missing } = source
+io.print(userId, name, missing)

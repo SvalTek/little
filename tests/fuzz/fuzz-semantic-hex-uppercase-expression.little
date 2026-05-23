@@ -1,0 +1,2 @@
+io.print(0XFF)
+io.print(0xff + 1)

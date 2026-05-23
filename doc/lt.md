@@ -182,7 +182,7 @@ class Derived {
     private y = this.x * 2
 }
 ```
-Field initializers do not close over surrounding local variables in v1.
+Class methods and field initializers can close over surrounding local variables.
 
 Classes can declare public or private getters and setters:
 ```js
@@ -221,7 +221,7 @@ Promise(fn(resolve, reject) {
 })
 ```
 
-`task.run(source, state)` runs Little source text in an isolated VM and returns a promise. The task receives a copied `state` global and resolves with the script's returned value. Only `null`, numbers, booleans, strings, arrays, and tables cross task boundaries.
+`task.run(source, state)` runs Little source text in an isolated VM and returns a promise. The task receives a copied `state` global and resolves with the script's returned value. Only `null`, numbers, booleans, strings, arrays, and tables cross task boundaries. See `doc/std/task.md` for the full task model and limitations.
 
 `async fn` creates an asynchronous function. Calling it returns a promise immediately; the function body is run by the VM event loop. `await` is only valid inside async functions and waits for a promise before continuing:
 ```js
@@ -256,3 +256,7 @@ else {
     io.print(result.error)
 }
 ```
+
+---
+## Limits
+Little has fixed VM stack and parser/compiler limits by design. See `doc/limits.md` for the current defaults, including stack depth, call depth, argument counts, branch-chain limits, and multi-return limits.

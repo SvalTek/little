@@ -42,7 +42,16 @@ function Normalize([string]$Text) {
 }
 
 $failed = 0
-$tests = Get-ChildItem -Path (Join-Path $PSScriptRoot "e2e") -Filter "*.little" | Sort-Object Name
+$testDirs = @(
+    (Join-Path $PSScriptRoot "e2e"),
+    (Join-Path $PSScriptRoot "fuzz")
+)
+$tests = foreach ($testDir in $testDirs) {
+    if (Test-Path $testDir) {
+        Get-ChildItem -Path $testDir -Filter "*.little"
+    }
+}
+$tests = $tests | Sort-Object DirectoryName, Name
 
 foreach ($test in $tests) {
     $testFailed = $false

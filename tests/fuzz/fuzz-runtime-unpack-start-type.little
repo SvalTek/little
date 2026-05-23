@@ -1,0 +1,4 @@
+var result = pcall(fn() {
+    return unpack([1, 2], "0")
+})
+io.print(result.ok, string.contains(result.error, "Expected start argument to unpack to be number!"))

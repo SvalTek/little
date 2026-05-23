@@ -1,0 +1,11 @@
+class Loop {
+    get value() {
+        return this.value
+    }
+}
+
+var loop = Loop()
+var result = pcall(fn() {
+    return loop.value
+})
+io.print(result.ok, string.contains(result.error, "Call stack overflow!"))

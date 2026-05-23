@@ -8,4 +8,4 @@
 
 `clearTimeout(id)` and `clearInterval(id)` cancel timers.
 
-`task.run(source, state)` runs Little `source` in an isolated VM with copied global `state`, returning a promise that resolves to the task return value or rejects with an error string.
+`task.run(source, state)` runs Little `source` in an isolated VM with copied global `state`, returning a promise that resolves to the task return value or rejects with an error string. See [task](task.md) for boundary rules and limitations.

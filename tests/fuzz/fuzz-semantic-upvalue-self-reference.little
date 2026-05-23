@@ -1,0 +1,11 @@
+var calls = 0
+var f = fn() {
+    calls = calls + 1
+    if calls < 2 {
+        return f()
+    }
+    return calls
+}
+
+io.print(f())
+io.print(calls)

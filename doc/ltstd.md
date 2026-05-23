@@ -10,3 +10,4 @@ The Little standard library is divided into modules. Embedders can load everythi
 - [string](std/string.md)
 - [gc](std/gc.md)
 - [async](std/async.md)
+- [task](std/task.md)

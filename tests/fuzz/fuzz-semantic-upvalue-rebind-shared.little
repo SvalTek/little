@@ -1,0 +1,10 @@
+var count = 0
+
+var inc = fn() {
+    count = count + 1
+    return count
+}
+
+io.print(count)
+io.print(inc())
+io.print(count)

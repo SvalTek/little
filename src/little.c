@@ -49,14 +49,14 @@ typedef enum {
 	LT_OP_EQ, LT_OP_NEQ, LT_OP_GT, LT_OP_GTE,
 	LT_OP_AND, LT_OP_OR, LT_OP_NOT,
 
-	LT_OP_LOAD, LT_OP_STORE,
-	LT_OP_LOADUP, LT_OP_STOREUP,
+	LT_OP_LOAD, LT_OP_STORE, LT_OP_LOADCELL, LT_OP_STORECELL,
+	LT_OP_LOADUP, LT_OP_STOREUP, LT_OP_LOADUPCELL, LT_OP_CAPTURE,
 	LT_OP_LOADB,
 	LT_OP_AWAIT,
 
 	LT_OP_CLOSE, LT_OP_CALL, LT_OP_CALLM, LT_OP_FIXRET, LT_OP_PACKRET,
 
-	LT_OP_MAKET, LT_OP_MAKEA, LT_OP_SETT, LT_OP_GETT, LT_OP_GETD, LT_OP_GETG,
+	LT_OP_MAKET, LT_OP_MAKEA, LT_OP_MAKEC, LT_OP_SETT, LT_OP_SETC, LT_OP_GETT, LT_OP_GETD, LT_OP_GETG,
 
 	LT_OP_JMP, LT_OP_JMPC, LT_OP_JMPN,
 
@@ -273,6 +273,7 @@ uint8_t lt_equals(lt_Value a, lt_Value b)
 		case LT_OBJECT_PROMISE:
 		case LT_OBJECT_CLASS:
 		case LT_OBJECT_INSTANCE:
+		case LT_OBJECT_CELL:
 		case LT_OBJECT_PTR:
 			return obja == objb;
 		}
@@ -659,8 +660,25 @@ uint16_t _lt_make_local(lt_VM* vm, lt_Scope* scope, lt_Token* t)
 		if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&current->locals, i), t)) return i;
 	}
 
+	if (current->locals.length >= LT_MAX_LOCALS) lt_error(vm, "Too many local variables!");
 	lt_buffer_push(vm, &current->locals, t);
 	return current->locals.length - 1;
+}
+
+static void _lt_mark_captured_local(lt_VM* vm, lt_Scope* scope, lt_Token* t)
+{
+	for (uint32_t i = 0; i < scope->captured.length; ++i)
+		if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&scope->captured, i), t)) return;
+	lt_buffer_push(vm, &scope->captured, t);
+}
+
+static uint8_t _lt_is_captured_local(lt_Scope* scope, uint32_t idx)
+{
+	if (idx >= scope->locals.length) return 0;
+	lt_Token* local = lt_buffer_at(&scope->locals, idx);
+	for (uint32_t i = 0; i < scope->captured.length; ++i)
+		if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&scope->captured, i), local)) return 1;
+	return 0;
 }
 
 
@@ -680,20 +698,30 @@ uint32_t _lt_find_local(lt_VM* vm, lt_Scope* scope, lt_Token* t)
 	lt_Scope* test = current->last;
 	while (test)
 	{
-		uint8_t found = 0;
+		lt_Token* found_local = 0;
 		for (uint32_t i = 0; i < test->locals.length; ++i)
 		{
-			if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&test->locals, i), t)) { found = 1; break; }
+			lt_Token* local = lt_buffer_at(&test->locals, i);
+			if (_lt_tokens_equal(local, t)) { found_local = local; break; }
 		}
 
-		if(!found)
+		if(!found_local)
 			for (uint32_t i = 0; i < test->upvals.length; ++i)
 			{
-				if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&test->upvals, i), t)) { found = 1; break; }
+				if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&test->upvals, i), t)) { found_local = t; break; }
 			}
 
-		if (found)
+		if (found_local)
 		{
+			for (uint32_t i = 0; i < test->locals.length; ++i)
+			{
+				lt_Token* local = lt_buffer_at(&test->locals, i);
+				if (_lt_tokens_equal(local, t))
+				{
+					_lt_mark_captured_local(vm, test, local);
+					break;
+				}
+			}
 			lt_buffer_push(vm, &current->upvals, t);
 			return (current->upvals.length - 1) | UPVAL_BIT;
 		}
@@ -835,6 +863,7 @@ static lt_AstNode* _lt_make_field_initializer_fn(lt_VM* vm, lt_Parser* p, lt_Tok
 	fn_scope->end = loc;
 	fn_scope->locals = lt_buffer_new(sizeof(lt_Token));
 	fn_scope->upvals = lt_buffer_new(sizeof(lt_Token));
+	fn_scope->captured = lt_buffer_new(sizeof(lt_Token));
 	_lt_make_local(vm, fn_scope, fn->fn.args[0]);
 	fn->fn.scope = fn_scope;
 	return fn;
@@ -940,6 +969,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 		new_scope->locals = lt_buffer_new(sizeof(lt_Token));
 		new_scope->upvals = lt_buffer_new(sizeof(lt_Token));
+		new_scope->captured = lt_buffer_new(sizeof(lt_Token));
 
 		if (argnames) while (*argnames) _lt_make_local(vm, p->current, *argnames++);
 	}
@@ -1254,6 +1284,7 @@ static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* cur
 	if (add_this) fn->fn.args[nargs++] = _lt_make_identifier_token(vm, p, "this", current);
 	while (current->type == LT_TOKEN_IDENTIFIER)
 	{
+		if (nargs >= LT_MAX_FUNCTION_PARAMS) _lt_parse_error(vm, p->tkn->module, current, "Too many function parameters!");
 		fn->fn.args[nargs++] = current++;
 		if (current->type == LT_TOKEN_COMMA) current++;
 	}
@@ -1451,6 +1482,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 				lt_AstNode* arg = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 				current = _lt_parse_expression(vm, p, current, arg);
+				if (nargs >= LT_MAX_CALL_ARGS) _lt_parse_error(vm, p->tkn->module, current, "Too many call arguments!");
 				call->call.args[nargs++] = arg;
 			}
 
@@ -1524,6 +1556,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 					lt_AstNode* arg = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 					current = _lt_parse_expression(vm, p, current, arg);
+					if (nargs >= LT_MAX_CALL_ARGS) _lt_parse_error(vm, p->tkn->module, current, "Too many call arguments!");
 					call->call.args[nargs++] = arg;
 				}
 
@@ -1637,6 +1670,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			uint8_t nargs = 0;
 			while (current->type == LT_TOKEN_IDENTIFIER)
 			{
+				if (nargs >= LT_MAX_FUNCTION_PARAMS) _lt_parse_error(vm, p->tkn->module, current, "Too many function parameters!");
 				func->fn.args[nargs++] = current++;
 				if (current->type == LT_TOKEN_COMMA) current++;
 			}
@@ -1834,6 +1868,8 @@ void lt_free(lt_VM* vm, uint32_t heapidx)
 		_lt_table_destroy(vm, &obj->instance.public_fields);
 		_lt_table_destroy(vm, &obj->instance.private_fields);
 	} break;
+	case LT_OBJECT_CELL: {
+	} break;
 	case LT_OBJECT_PTR: {
 		vm->free(obj->ptr);
 	} break;
@@ -1873,6 +1909,7 @@ void lt_sweep_v(lt_VM* vm, lt_Value val)
 
 void lt_sweep(lt_VM* vm, lt_Object* obj)
 {
+	if (!obj || !obj->markbit) return;
 	CLEAR(obj);
 	switch (obj->type)
 	{
@@ -1884,10 +1921,14 @@ void lt_sweep(lt_VM* vm, lt_Object* obj)
 	} break;
 	case LT_OBJECT_CLOSURE: {
 		lt_sweep_v(vm, obj->closure.function);
+		if (obj->closure.owner_class) lt_sweep(vm, obj->closure.owner_class);
 		for (uint32_t i = 0; i < obj->closure.captures.length; ++i)
 		{
 			lt_sweep_v(vm, *(lt_Value*)lt_buffer_at(&obj->closure.captures, i));
 		}
+	} break;
+	case LT_OBJECT_CELL: {
+		lt_sweep_v(vm, obj->cell);
 	} break;
 	case LT_OBJECT_BOUND_NATIVE: {
 		lt_sweep_v(vm, obj->bound_native.receiver);
@@ -1998,17 +2039,51 @@ uint32_t lt_collect(lt_VM* vm)
 
 void lt_push(lt_VM* vm, lt_Value val)
 {
+	if (vm->top >= LT_STACK_SIZE) lt_runtime_error(vm, "VM stack overflow!");
 	vm->stack[vm->top++] = val;
 }
 
 lt_Value lt_pop(lt_VM* vm)
 {
+	if (vm->top == 0) lt_runtime_error(vm, "VM stack underflow!");
 	return vm->stack[--vm->top];
 }
 
 lt_Value lt_at(lt_VM* vm, uint32_t idx)
 {
 	return vm->stack[vm->current->start + idx];
+}
+
+static lt_Value _lt_make_cell(lt_VM* vm, lt_Value value)
+{
+	lt_Object* cell = lt_allocate(vm, LT_OBJECT_CELL);
+	cell->cell = value;
+	return LT_VALUE_OBJECT(cell);
+}
+
+static lt_Value _lt_cell_get(lt_Value cell)
+{
+	if (!LT_IS_CELL(cell)) return cell;
+	return LT_GET_OBJECT(cell)->cell;
+}
+
+static void _lt_cell_set(lt_VM* vm, lt_Value* slot, lt_Value value)
+{
+	if (!LT_IS_CELL(*slot))
+	{
+		*slot = _lt_make_cell(vm, *slot);
+	}
+	LT_GET_OBJECT(*slot)->cell = value;
+}
+
+static lt_Value _lt_capture_local(lt_VM* vm, uint16_t idx)
+{
+	lt_Value* slot = &vm->stack[vm->current->start + idx];
+	if (!LT_IS_CELL(*slot))
+	{
+		*slot = _lt_make_cell(vm, *slot);
+	}
+	return *slot;
 }
 
 void lt_close(lt_VM* vm, uint8_t count)
@@ -2018,6 +2093,7 @@ void lt_close(lt_VM* vm, uint8_t count)
 	for (int i = 0; i < count; i++)
 	{
 		lt_Value v = lt_pop(vm);
+		if (!LT_IS_CELL(v)) v = _lt_make_cell(vm, v);
 		lt_buffer_push(vm, &closure->closure.captures, &v);
 	}
 	closure->closure.function = lt_pop(vm);
@@ -2027,13 +2103,14 @@ void lt_close(lt_VM* vm, uint8_t count)
 lt_Value lt_getupval(lt_VM* vm, uint8_t idx)
 {
 	if (vm->current->upvals == 0) return LT_VALUE_NULL;
-	return *(lt_Value*)lt_buffer_at(vm->current->upvals, idx);
+	return _lt_cell_get(*(lt_Value*)lt_buffer_at(vm->current->upvals, idx));
 }
 
 void lt_setupval(lt_VM* vm, uint8_t idx, lt_Value val)
 {
 	if (vm->current->upvals == 0) return;
-	*(lt_Value*)lt_buffer_at(vm->current->upvals, idx) = val;
+	lt_Value* slot = lt_buffer_at(vm->current->upvals, idx);
+	_lt_cell_set(vm, slot, val);
 }
 
 uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc);
@@ -2055,6 +2132,47 @@ static void _lt_table_copy(lt_VM* vm, lt_Table* dst, lt_Table* src)
 static uint8_t _lt_has_class_access(lt_VM* vm, lt_Object* klass)
 {
 	return vm->current && vm->current->class_context == klass;
+}
+
+static void _lt_class_set_member(lt_VM* vm, lt_Value class_value, lt_Value key, lt_Value value, int16_t encoded)
+{
+	lt_Object* klass = LT_GET_OBJECT(class_value);
+	lt_Object* member_obj = LT_IS_OBJECT(value) ? LT_GET_OBJECT(value) : 0;
+	if (member_obj && member_obj->type == LT_OBJECT_CLOSURE) member_obj->closure.owner_class = klass;
+	else if (member_obj && member_obj->type == LT_OBJECT_FN) member_obj->fn.owner_class = klass;
+
+	lt_ClassMemberType type = (lt_ClassMemberType)(encoded & 0x0F);
+	lt_Visibility visibility = (encoded & 0x10) ? LT_VIS_PRIVATE : LT_VIS_PUBLIC;
+
+	if (type == LT_CLASS_CONSTRUCTOR)
+	{
+		klass->class_def.constructor = value;
+		return;
+	}
+
+	lt_Table* table = 0;
+	if (type == LT_CLASS_FIELD) table = visibility == LT_VIS_PRIVATE ? &klass->class_def.private_fields : &klass->class_def.public_fields;
+	else if (type == LT_CLASS_GETTER) table = visibility == LT_VIS_PRIVATE ? &klass->class_def.private_getters : &klass->class_def.public_getters;
+	else if (type == LT_CLASS_SETTER) table = visibility == LT_VIS_PRIVATE ? &klass->class_def.private_setters : &klass->class_def.public_setters;
+	else table = visibility == LT_VIS_PRIVATE ? &klass->class_def.private_methods : &klass->class_def.public_methods;
+
+	_lt_table_set_raw(vm, table, key, value);
+}
+
+static lt_Value _lt_make_class(lt_VM* vm, lt_Value name)
+{
+	lt_Object* klass = lt_allocate(vm, LT_OBJECT_CLASS);
+	klass->class_def.name = name;
+	_lt_table_init(&klass->class_def.public_fields);
+	_lt_table_init(&klass->class_def.private_fields);
+	_lt_table_init(&klass->class_def.public_methods);
+	_lt_table_init(&klass->class_def.private_methods);
+	_lt_table_init(&klass->class_def.public_getters);
+	_lt_table_init(&klass->class_def.private_getters);
+	_lt_table_init(&klass->class_def.public_setters);
+	_lt_table_init(&klass->class_def.private_setters);
+	klass->class_def.constructor = LT_VALUE_NULL;
+	return LT_VALUE_OBJECT(klass);
 }
 
 static lt_Value _lt_make_instance(lt_VM* vm, lt_Object* klass)
@@ -2103,6 +2221,7 @@ static lt_Value _lt_class_call(lt_VM* vm, lt_Value class_value, uint8_t argc)
 			vm->stack[vm->top - i] = vm->stack[vm->top - i - 1];
 		vm->stack[base] = instance;
 		vm->top++;
+		if (vm->top > LT_STACK_SIZE) lt_runtime_error(vm, "VM stack overflow!");
 
 		uint16_t nret = _lt_exec(vm, klass->class_def.constructor, argc + 1);
 		while (nret-- > 0) lt_pop(vm);
@@ -2252,6 +2371,11 @@ uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 
 	lt_Object* callee = LT_GET_OBJECT(callable);
 
+	if (vm->depth >= LT_CALLSTACK_SIZE)
+	{
+		lt_runtime_error(vm, "Call stack overflow!");
+	}
+
 	lt_Frame* frame = &vm->callstack[vm->depth++];
 	memset(frame, 0, sizeof(lt_Frame));
 	vm->current = frame;
@@ -2275,11 +2399,12 @@ uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 	case LT_OBJECT_CLOSURE: {
 		lt_Object* fn = LT_GET_OBJECT(callee->closure.function);
 		frame->upvals = &callee->closure.captures;
+		frame->class_context = callee->closure.owner_class;
 		if (fn->type == LT_OBJECT_FN)
 		{
 			frame->code = &fn->fn.code;
 			frame->constants = &fn->fn.constants;
-			frame->class_context = fn->fn.owner_class;
+			if (!frame->class_context) frame->class_context = fn->fn.owner_class;
 		}
 		else
 		{
@@ -2310,8 +2435,8 @@ uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 #undef NEXT
 #define NEXT { current = *(lt_Op*)lt_buffer_at(frame->code, frame->pc++); goto inst_loop; break; }
 
-#define PUSH(x) vm->stack[vm->top++] = (x)
-#define POP() vm->stack[--vm->top]
+#define PUSH(x) lt_push(vm, (x))
+#define POP() lt_pop(vm)
 
 inst_loop:
 	switch (current.op)
@@ -2321,11 +2446,14 @@ inst_loop:
 	case LT_OP_PUSH: {
 		for (int i = 0; i < current.arg; i++)
 		{
-			vm->stack[vm->top++] = LT_VALUE_NULL;
+			PUSH(LT_VALUE_NULL);
 		}
 	} NEXT;
 
-	case LT_OP_POP: vm->top -= current.arg; NEXT;
+	case LT_OP_POP: {
+		if (current.arg > vm->top) lt_runtime_error(vm, "VM stack underflow!");
+		vm->top -= current.arg;
+	} NEXT;
 	case LT_OP_DUP: PUSH(vm->stack[vm->top - 1]); NEXT;
 	case LT_OP_PUSHC: PUSH(*(lt_Value*)lt_buffer_at(frame->constants, current.arg)); NEXT;
 	case LT_OP_PUSHN: PUSH(LT_VALUE_NULL); NEXT;
@@ -2353,6 +2481,10 @@ inst_loop:
 		PUSH(a);
 	} NEXT;
 
+	case LT_OP_MAKEC: {
+		PUSH(_lt_make_class(vm, POP()));
+	} NEXT;
+
 	case LT_OP_SETT: {
 		lt_Value value = POP();
 		lt_Value key = POP();
@@ -2370,6 +2502,13 @@ inst_loop:
 			_lt_instance_set(vm, t, key, value);
 		}
 		else {};
+	} NEXT;
+
+	case LT_OP_SETC: {
+		lt_Value key = POP();
+		lt_Value klass = POP();
+		lt_Value value = POP();
+		_lt_class_set_member(vm, klass, key, value, current.arg);
 	} NEXT;
 
 	case LT_OP_GETT: {
@@ -2491,13 +2630,28 @@ inst_loop:
 
 	case LT_OP_LOAD: PUSH(vm->stack[frame->start + current.arg]); NEXT;
 	case LT_OP_STORE: vm->stack[frame->start + current.arg] = POP(); NEXT;
+	case LT_OP_LOADCELL: PUSH(_lt_cell_get(vm->stack[frame->start + current.arg])); NEXT;
+	case LT_OP_STORECELL: {
+		lt_Value value = POP();
+		_lt_cell_set(vm, &vm->stack[frame->start + current.arg], value);
+	} NEXT;
 
 	case LT_OP_LOADUP: {
-		PUSH(*(lt_Value*)lt_buffer_at(frame->upvals, current.arg));
+		PUSH(_lt_cell_get(*(lt_Value*)lt_buffer_at(frame->upvals, current.arg)));
 	} NEXT;
 
 	case LT_OP_STOREUP: {
-		*(lt_Value*)lt_buffer_at(frame->upvals, current.arg) = POP();
+		lt_Value value = POP();
+		lt_Value* slot = lt_buffer_at(frame->upvals, current.arg);
+		_lt_cell_set(vm, slot, value);
+	} NEXT;
+
+	case LT_OP_LOADUPCELL: {
+		PUSH(*(lt_Value*)lt_buffer_at(frame->upvals, current.arg));
+	} NEXT;
+
+	case LT_OP_CAPTURE: {
+		PUSH(_lt_capture_local(vm, (uint16_t)current.arg));
 	} NEXT;
 
 	case LT_OP_CLOSE: {
@@ -2505,7 +2659,9 @@ inst_loop:
 		closure->closure.captures = lt_buffer_new(sizeof(lt_Value));
 		for (int i = 0; i < current.arg; i++)
 		{
-			lt_buffer_push(vm, &closure->closure.captures, &POP());
+			lt_Value capture = POP();
+			if (!LT_IS_CELL(capture)) capture = _lt_make_cell(vm, capture);
+			lt_buffer_push(vm, &closure->closure.captures, &capture);
 		}
 		closure->closure.function = POP();
 		PUSH(LT_VALUE_OBJECT(closure));
@@ -2608,7 +2764,7 @@ inst_loop:
 
 	case LT_OP_RETM: {
 		uint8_t nret = vm->last_call_returns;
-		lt_Value values[255];
+		lt_Value values[LT_MAX_RETURNS];
 		for (uint8_t i = 0; i < nret; ++i)
 			values[i] = vm->stack[vm->top - nret + i];
 		vm->top = frame->start;
@@ -2634,6 +2790,7 @@ uint16_t _lt_push_constant(lt_VM* vm, lt_Buffer* constants, lt_Value constant)
 		if ((*(lt_Value*)lt_buffer_at(constants, i)) == constant) return i;
 	}
 
+	if (constants->length >= LT_MAX_CONSTANTS) lt_error(vm, "Too many constants!");
 	lt_buffer_push(vm, constants, &constant);
 	return constants->length - 1;
 }
@@ -2676,6 +2833,30 @@ static lt_Value _lt_compile_function_value(lt_VM* vm, lt_Parser* p, const char* 
 
 	((lt_Op*)lt_buffer_at(&fn->fn.code, 0))->arg = node->fn.scope->locals.length;
 	return LT_VALUE_OBJECT(fn);
+}
+
+static void _lt_compile_function_capture(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffer* debug, lt_AstNode* node, lt_Scope* scope, lt_Buffer* code_body, lt_Buffer* constants, lt_Object* owner_class, uint8_t force_closure)
+{
+	lt_Value as_val = _lt_compile_function_value(vm, p, name, node, owner_class);
+	OPARG(PUSHC, _lt_push_constant(vm, constants, as_val));
+
+	if (force_closure || node->fn.scope->upvals.length > 0)
+	{
+		lt_Buffer* upvals = &node->fn.scope->upvals;
+		for (int i = upvals->length - 1; i >= 0; i--)
+		{
+			uint32_t idx = _lt_find_local(vm, scope, (lt_Token*)lt_buffer_at(upvals, i));
+			if ((idx & UPVAL_BIT) == UPVAL_BIT) OPARG(LOADUPCELL, idx & 0xFFFF)
+			else OPARG(CAPTURE, idx & 0xFFFF);
+		}
+
+		OPARG(CLOSE, upvals->length);
+	}
+}
+
+static int16_t _lt_encode_class_member(lt_ClassMember* member)
+{
+	return (int16_t)(member->type | (member->visibility == LT_VIS_PRIVATE ? 0x10 : 0));
 }
 
 static void _lt_compile_index(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffer* debug, lt_AstNode* node, lt_Scope* scope, lt_Buffer* code_body, lt_Buffer* constants)
@@ -2775,6 +2956,10 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		{
 			OPARG(LOADUP, idx & 0xFFFF);
 		}
+		else if (_lt_is_captured_local(scope, idx))
+		{
+			OPARG(LOADCELL, idx & 0xFFFF);
+		}
 		else
 		{
 			OPARG(LOAD, idx & 0xFFFF);
@@ -2820,7 +3005,8 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 			if (node->declare.expr)
 			{
 				_lt_compile_node(vm, p, name, debug, node->declare.expr, scope, code_body, constants);
-				OPARG(STORE, idx);
+				if (_lt_is_captured_local(scope, idx)) OPARG(STORECELL, idx)
+				else OPARG(STORE, idx);
 			}
 		}
 		else
@@ -2839,25 +3025,22 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 					_lt_compile_push_token_value(vm, p, entry->key, debug, code_body, constants, &node->loc);
 				OP(GETD);
 				uint32_t idx = _lt_find_local(vm, scope, entry->local);
-				OPARG(STORE, idx & 0xFFFF);
+				if (_lt_is_captured_local(scope, idx)) OPARG(STORECELL, idx & 0xFFFF)
+				else OPARG(STORE, idx & 0xFFFF);
 			}
 			OPARG(POP, 1);
 		}
 	} break;
 
 	case LT_AST_NODE_CLASS: {
-		lt_Object* klass = lt_allocate(vm, LT_OBJECT_CLASS);
-		lt_nocollect(vm, klass);
-		klass->class_def.name = lt_make_string(vm, ((lt_Identifier*)lt_buffer_at(&p->tkn->identifier_buffer, node->class_decl.identifier->idx))->name);
-		_lt_table_init(&klass->class_def.public_fields);
-		_lt_table_init(&klass->class_def.private_fields);
-		_lt_table_init(&klass->class_def.public_methods);
-		_lt_table_init(&klass->class_def.private_methods);
-		_lt_table_init(&klass->class_def.public_getters);
-		_lt_table_init(&klass->class_def.private_getters);
-		_lt_table_init(&klass->class_def.public_setters);
-		_lt_table_init(&klass->class_def.private_setters);
-		klass->class_def.constructor = LT_VALUE_NULL;
+		lt_Value class_name = lt_make_string(vm, ((lt_Identifier*)lt_buffer_at(&p->tkn->identifier_buffer, node->class_decl.identifier->idx))->name);
+		uint32_t idx = _lt_find_local(vm, scope, node->class_decl.identifier);
+		if (idx == NOT_FOUND) idx = _lt_make_local(vm, scope, node->class_decl.identifier);
+
+		OPARG(PUSHC, _lt_push_constant(vm, constants, class_name));
+		OP(MAKEC);
+		if (_lt_is_captured_local(scope, idx)) OPARG(STORECELL, idx & 0xFFFF)
+		else OPARG(STORE, idx & 0xFFFF);
 
 		for (uint32_t i = 0; i < node->class_decl.members.length; ++i)
 		{
@@ -2866,27 +3049,12 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 				? lt_make_string(vm, "constructor")
 				: lt_make_string(vm, ((lt_Identifier*)lt_buffer_at(&p->tkn->identifier_buffer, member->name->idx))->name);
 
-			if (member->type == LT_CLASS_FIELD)
-			{
-				lt_Value fn = _lt_compile_function_value(vm, p, name, member->value, klass);
-				_lt_table_set_raw(vm, member->visibility == LT_VIS_PRIVATE ? &klass->class_def.private_fields : &klass->class_def.public_fields, member_name, fn);
-			}
-			else
-			{
-				lt_Value fn = _lt_compile_function_value(vm, p, name, member->value, klass);
-				if (member->type == LT_CLASS_CONSTRUCTOR) klass->class_def.constructor = fn;
-				else if (member->type == LT_CLASS_GETTER) _lt_table_set_raw(vm, member->visibility == LT_VIS_PRIVATE ? &klass->class_def.private_getters : &klass->class_def.public_getters, member_name, fn);
-				else if (member->type == LT_CLASS_SETTER) _lt_table_set_raw(vm, member->visibility == LT_VIS_PRIVATE ? &klass->class_def.private_setters : &klass->class_def.public_setters, member_name, fn);
-				else _lt_table_set_raw(vm, member->visibility == LT_VIS_PRIVATE ? &klass->class_def.private_methods : &klass->class_def.public_methods, member_name, fn);
-			}
+			_lt_compile_function_capture(vm, p, name, debug, member->value, scope, code_body, constants, 0, 1);
+			if (_lt_is_captured_local(scope, idx)) OPARG(LOADCELL, idx & 0xFFFF)
+			else OPARG(LOAD, idx & 0xFFFF);
+			OPARG(PUSHC, _lt_push_constant(vm, constants, member_name));
+			OPARG(SETC, _lt_encode_class_member(member));
 		}
-
-		lt_Value class_value = LT_VALUE_OBJECT(klass);
-		OPARG(PUSHC, _lt_push_constant(vm, constants, class_value));
-		uint32_t idx = _lt_find_local(vm, scope, node->class_decl.identifier);
-		if (idx == NOT_FOUND) idx = _lt_make_local(vm, scope, node->class_decl.identifier);
-		OPARG(STORE, idx & 0xFFFF);
-		lt_resumecollect(vm, klass);
 	} break;
 
 	case LT_AST_NODE_ASSIGN: {
@@ -2897,6 +3065,7 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 			uint32_t idx = _lt_find_local(vm, scope, target->identifier.token);
 			if (idx == NOT_FOUND) _lt_parse_error(vm, name, target->identifier.token, "Can't find local to assign to!");
 			else if ((idx & UPVAL_BIT) == UPVAL_BIT) OPARG(STOREUP, idx & 0xFFFF)
+			else if (_lt_is_captured_local(scope, idx)) OPARG(STORECELL, idx & 0xFFFF)
 			else OPARG(STORE, idx & 0xFFFF);
 		}
 		else if (target->type == LT_AST_NODE_INDEX)
@@ -2920,8 +3089,8 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 			for (int i = upvals->length - 1; i >= 0; i--)
 			{
 				uint32_t idx = _lt_find_local(vm, scope, (lt_Token*)lt_buffer_at(upvals, i));
-				if ((idx & UPVAL_BIT) == UPVAL_BIT) OPARG(LOADUP, idx & 0xFFFF)
-				else OPARG(LOAD, idx & 0xFFFF);
+				if ((idx & UPVAL_BIT) == UPVAL_BIT) OPARG(LOADUPCELL, idx & 0xFFFF)
+				else OPARG(CAPTURE, idx & 0xFFFF);
 			}
 
 			OPARG(CLOSE, upvals->length);
@@ -2969,11 +3138,11 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		else OP(RET);
 	} break;
 
-#define REG_JMP() branch_stack[n_branches++] = code_body->length; OP(NOP);
+#define REG_JMP() { if (n_branches >= LT_MAX_BRANCHES) lt_error(vm, "Too many if/elseif branches!"); branch_stack[n_branches++] = code_body->length; OP(NOP); }
 
 	case LT_AST_NODE_IF: {
 		uint8_t n_branches = 0;
-		uint32_t branch_stack[32];
+		uint32_t branch_stack[LT_MAX_BRANCHES];
 
 		_lt_compile_node(vm, p, name, debug, node->branch.expr, scope, code_body, constants);
 		uint32_t jidx = code_body->length;
@@ -3031,8 +3200,10 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		uint32_t loop_header = code_body->length;
 		OPARG(LOAD, node->loop.closureidx);
 		OPARG(CALL, 0);
-		OPARG(STORE, node->loop.identifier);
-		OPARG(LOAD, node->loop.identifier);
+		if (_lt_is_captured_local(scope, node->loop.identifier)) OPARG(STORECELL, node->loop.identifier)
+		else OPARG(STORE, node->loop.identifier);
+		if (_lt_is_captured_local(scope, node->loop.identifier)) OPARG(LOADCELL, node->loop.identifier)
+		else OPARG(LOAD, node->loop.identifier);
 		uint32_t loop_start = code_body->length;
 		OPARG(JMPN, 0);
 
@@ -3125,6 +3296,7 @@ void lt_free_scope(lt_VM* vm, lt_Scope* scope)
 {
 	lt_buffer_destroy(vm, &scope->locals);
 	lt_buffer_destroy(vm, &scope->upvals);
+	lt_buffer_destroy(vm, &scope->captured);
 }
 
 void lt_free_parser(lt_VM* vm, lt_Parser* p)

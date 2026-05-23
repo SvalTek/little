@@ -113,17 +113,17 @@ class Derived {
 
 Initializers may use `this` to read fields initialized earlier in the class body. They are not reactive. If a later method changes `x`, `y` is not automatically recomputed.
 
-Important v1 limitation: field initializers do not close over surrounding local variables.
+Field initializers may also close over surrounding local variables:
 
 ```js
 var seed = 4
 
-class Bad {
-    value = seed + 1 -- not supported as a captured local in v1
+class Seeded {
+    value = seed + 1
 }
 ```
 
-Use constructor parameters when a value needs to come from the surrounding program:
+Use constructor parameters when each instance should receive a different value from the caller:
 
 ```js
 class Good {
@@ -213,4 +213,3 @@ Not implemented in v1:
 * `new`
 * external class reopening such as `fn MyClass:method(...) { ... }`
 * `protected`
-* initializer capture of surrounding locals

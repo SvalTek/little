@@ -1,0 +1,12 @@
+var seed = 1
+
+class Counter {
+    value() {
+        seed = seed + 1
+        return seed
+    }
+}
+
+var counter = Counter()
+io.print(counter:value())
+io.print(seed)

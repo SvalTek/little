@@ -1,0 +1,2 @@
+var [a, b] = unpack([], 0, 0)
+io.print(a, b)

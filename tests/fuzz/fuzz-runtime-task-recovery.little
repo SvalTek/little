@@ -1,0 +1,20 @@
+task.run("return missing + 1", null)
+    .catch(fn(err) {
+        io.print("bad", string.contains(err, "Expected arithmetic operands"))
+    })
+    .finally(fn() {
+        task.run("return state.value + 1", { value: 4 })
+            .next(fn(value) {
+                io.print("good", value)
+            })
+    })
+
+Promise(fn(resolve, reject) {
+    resolve("promise-ok")
+}).next(fn(value) {
+    io.print(value)
+})
+
+setTimeout(fn() {
+    io.print("timer-ok")
+}, 0)

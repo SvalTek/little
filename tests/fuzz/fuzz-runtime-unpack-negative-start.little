@@ -1,0 +1,4 @@
+var result = pcall(fn() {
+    return unpack([1, 2], -1)
+})
+io.print(result.ok, string.contains(result.error, "Expected unpack bounds to be non-negative!"))

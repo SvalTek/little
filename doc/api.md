@@ -8,7 +8,7 @@ Creates a new little VM, allocating itself with the `lt_AllocFn` provided. This 
 
 `lt_ErrorFn` has the signature `void (*lt_ErrorFn)(lt_VM* vm, const char* message)`, and is called whenever the VM encounters an error. `0` can be passed if desired.
 
-The defines `LT_STACK_SIZE 256`, `LT_CALLSTACK_SIZE 32` and `LT_DEDUP_TABLE_SIZE 64` can be set prior to including `little.h` to configure VM internals.
+The defines `LT_STACK_SIZE 256`, `LT_CALLSTACK_SIZE 32`, `LT_DEDUP_TABLE_SIZE 64`, `LT_MAX_FUNCTION_PARAMS 16`, `LT_MAX_CALL_ARGS 16`, `LT_MAX_BRANCHES 32`, `LT_MAX_RETURNS 255`, `LT_MAX_CONSTANTS 32767`, and `LT_MAX_LOCALS (LT_STACK_SIZE - 1)` can be set prior to including/building `little.h` to configure VM and compiler internals. See `doc/limits.md` for practical source-level limits and failure behavior.
 
 Additionally, the `vm->generate_debug` flag can be set to `0` to disable the generation of debug symbols for traceback, saving some memory.
 

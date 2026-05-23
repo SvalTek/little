@@ -24,6 +24,42 @@ typedef uint64_t lt_Value;
 #define LT_VALUE_NUMBER(x)  ((lt_Value)(lt_make_number((double)x)))
 #define LT_VALUE_OBJECT(x)  ((lt_Value)(LT_NAN_MASK | (LT_TYPE_OBJECT | (uint64_t)x)))
 
+#ifndef LT_STACK_SIZE
+#define LT_STACK_SIZE 256
+#endif
+
+#ifndef LT_CALLSTACK_SIZE
+#define LT_CALLSTACK_SIZE 32
+#endif
+
+#ifndef LT_DEDUP_TABLE_SIZE
+#define LT_DEDUP_TABLE_SIZE 64
+#endif
+
+#ifndef LT_MAX_FUNCTION_PARAMS
+#define LT_MAX_FUNCTION_PARAMS 16
+#endif
+
+#ifndef LT_MAX_CALL_ARGS
+#define LT_MAX_CALL_ARGS 16
+#endif
+
+#ifndef LT_MAX_BRANCHES
+#define LT_MAX_BRANCHES 32
+#endif
+
+#ifndef LT_MAX_RETURNS
+#define LT_MAX_RETURNS 255
+#endif
+
+#ifndef LT_MAX_CONSTANTS
+#define LT_MAX_CONSTANTS 32767
+#endif
+
+#ifndef LT_MAX_LOCALS
+#define LT_MAX_LOCALS (LT_STACK_SIZE - 1)
+#endif
+
 #define LT_IS_NUMBER(x)  (((x) & LT_NAN_MASK) != LT_NAN_MASK)
 #define LT_IS_NULL(x)    ((x) == LT_VALUE_NULL)
 #define LT_IS_BOOL(x)    (x == LT_VALUE_TRUE || x == LT_VALUE_FALSE)
@@ -40,6 +76,7 @@ typedef uint64_t lt_Value;
 #define LT_IS_CLASS(x)    (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_CLASS)
 #define LT_IS_INSTANCE(x) (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_INSTANCE)
 #define LT_IS_PTR(x)      (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_PTR)
+#define LT_IS_CELL(x)     (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_CELL)
 
 #define LT_GET_NUMBER(x) lt_get_number(x)
 #define LT_GET_STRING(vm, x) lt_get_string(vm, x)
@@ -273,7 +310,7 @@ typedef struct lt_AstNode {
 		} assign;
 
 		struct {
-			lt_Token* args[16];
+			lt_Token* args[LT_MAX_FUNCTION_PARAMS + 1];
 			struct lt_Scope* scope;
 			lt_Buffer body;
 			uint8_t is_async;
@@ -281,7 +318,7 @@ typedef struct lt_AstNode {
 
 		struct {
 			struct lt_AstNode* callee;
-			struct lt_AstNode* args[16];
+			struct lt_AstNode* args[LT_MAX_CALL_ARGS + 2];
 		} call;
 
 		struct {
@@ -312,6 +349,7 @@ typedef struct lt_Scope {
 	lt_Token* start;
 	lt_Buffer locals;
 	lt_Buffer upvals;
+	lt_Buffer captured;
 	lt_Token* end;
 } lt_Scope;
 
@@ -352,6 +390,7 @@ typedef enum {
 	LT_OBJECT_PROMISE,
 	LT_OBJECT_CLASS,
 	LT_OBJECT_INSTANCE,
+	LT_OBJECT_CELL,
 	LT_OBJECT_PTR,
 } lt_ObjectType;
 
@@ -392,6 +431,7 @@ typedef struct lt_Object {
 		{
 			lt_Value function;
 			lt_Buffer captures;
+			struct lt_Object* owner_class;
 		} closure;
 
 		struct
@@ -429,6 +469,7 @@ typedef struct lt_Object {
 			lt_Table public_fields;
 			lt_Table private_fields;
 		} instance;
+		lt_Value cell;
 		void* ptr;
 	};
 
@@ -448,18 +489,6 @@ typedef struct lt_Frame {
 typedef void* (*lt_AllocFn)(size_t);
 typedef void (*lt_FreeFn)(void*);
 typedef void (*lt_ErrorFn)(lt_VM* vm, const char*);
-
-#ifndef LT_STACK_SIZE
-#define LT_STACK_SIZE 256
-#endif
-
-#ifndef LT_CALLSTACK_SIZE
-#define LT_CALLSTACK_SIZE 32
-#endif
-
-#ifndef LT_DEDUP_TABLE_SIZE
-#define LT_DEDUP_TABLE_SIZE 64
-#endif
 
 struct lt_VM {
 	lt_Buffer heap;
