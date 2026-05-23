@@ -35,7 +35,7 @@ Here are some samples of how to extend the language through the C API. For brevi
 ## Optional library loading
 
 ```c
-    ltstd_open_all(vm);    // io, math, array, table, string, gc
+    ltstd_open_all(vm);    // pcall, io, math, array, table, string, gc
     ltasync_open_all(vm);  // Promise, timers, task.run
 ```
 

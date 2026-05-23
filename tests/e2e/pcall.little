@@ -1,0 +1,20 @@
+var ok = pcall(fn() {
+    return 42
+})
+
+io.print(ok.ok, ok.value)
+
+var with_args = pcall(fn(a, b) {
+    return a + b
+}, 2, 3)
+
+io.print(with_args.ok, with_args.value)
+
+var failed = pcall(fn() {
+    return 1 + "nope"
+})
+
+io.print(failed.ok)
+io.print(string.contains(failed.error, "Expected arithmetic operands to be numbers!"))
+
+io.print("after")

@@ -155,7 +155,9 @@ void lt_runtime_error(lt_VM* vm, const char* message)
 	const char* name = "<unknown>";
 	if (info) name = info->module_name;
 
-	uint32_t len = sprintf_s(sprint_buf, 1024, "%s|%d:%d: %s\ntraceback:", name, loc.line, loc.col, message);
+	int written = snprintf(sprint_buf, 1024, "%s|%d:%d: %s\ntraceback:", name, loc.line, loc.col, message);
+	uint32_t len = written > 0 ? (uint32_t)written : 0;
+	if (len >= 1024) len = 1023;
 	for (int32_t i = (int32_t)vm->depth - 1; i >= 0; --i)
 	{
 		lt_Frame* frame = &vm->callstack[i];
@@ -164,7 +166,9 @@ void lt_runtime_error(lt_VM* vm, const char* message)
 
 		const char* name = "<unknown>";
 		if (info) name = info->module_name;
-		len = sprintf_s(sprint_buf + len, 1024 - len, "\n(%s|%d:%d)", name, loc.line, loc.col);
+		written = snprintf(sprint_buf + len, 1024 - len, "\n(%s|%d:%d)", name, loc.line, loc.col);
+		if (written > 0) len += (uint32_t)written;
+		if (len >= 1024) { len = 1023; break; }
 	}
 
 	lt_error(vm, sprint_buf);
@@ -474,14 +478,20 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 					if (*current == '0' && (*(current + 1) == 'x' || *(current + 1) == 'X'))
 					{
 						current += 2;
-						if (!isxdigit(*current)) _lt_tokenize_error(vm, t.module, line, col, "Expected hex digits after 0x!");
+						uint8_t has_digits = isxdigit(*current);
+						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, "Expected hex digits after 0x!");
 						while (isxdigit(*current)) current++;
+						if (*current == '.' || isalnum(*current) || *current == '_')
+						{
+							_lt_tokenize_error(vm, t.module, line, col, "Invalid character in hex number literal!");
+							while (*current == '.' || isalnum(*current) || *current == '_') current++;
+						}
 
 						length = (uint32_t)(current - start);
 						char* end = 0;
 						unsigned long long parsed = strtoull(start + 2, &end, 16);
-						if (end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse hex number!");
-						number = (double)parsed;
+						if (has_digits && end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse hex number!");
+						number = has_digits ? (double)parsed : 0;
 					}
 					else
 					{
@@ -1640,6 +1650,8 @@ void lt_destroy(lt_VM* vm)
 	ltasync_destroy_state(vm);
 	lt_buffer_destroy(vm, &vm->keepalive);
 	lt_collect(vm);
+	if (vm->error_trap) vm->free(vm->error_trap);
+	free(vm->error_buf);
 	vm->free(vm);
 }
 
@@ -2071,8 +2083,15 @@ uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 
 void lt_error(lt_VM* vm, const char* msg)
 {
-	if (vm->error) vm->error(vm, msg);
-	longjmp(vm->error_buf, 1);
+	if (vm->trap_errors)
+	{
+		if (vm->error_trap) vm->free(vm->error_trap);
+		uint32_t len = (uint32_t)strlen(msg);
+		vm->error_trap = vm->alloc(len + 1);
+		memcpy(vm->error_trap, msg, len + 1);
+	}
+	else if (vm->error) vm->error(vm, msg);
+	longjmp(*(jmp_buf*)vm->error_buf, 1);
 }
 
 uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)

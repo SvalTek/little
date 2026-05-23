@@ -1,10 +1,89 @@
 #include "little_std.h"
 
+#include <setjmp.h>
 #include <stdio.h>
 #include <string.h>
 
+uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc);
+
+static uint8_t _ltstd_is_callable(lt_Value value)
+{
+    if (!LT_IS_OBJECT(value)) return 0;
+    lt_Object* obj = LT_GET_OBJECT(value);
+    return obj->type == LT_OBJECT_FN
+        || obj->type == LT_OBJECT_CLOSURE
+        || obj->type == LT_OBJECT_NATIVEFN
+        || obj->type == LT_OBJECT_BOUND_NATIVE
+        || obj->type == LT_OBJECT_CLASS;
+}
+
+static lt_Value _ltstd_pcall_result(lt_VM* vm, uint8_t ok, lt_Value value, const char* error)
+{
+    lt_Value result = lt_make_table(vm);
+    lt_table_set(vm, result, lt_make_string(vm, "ok"), ok ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    if (ok) lt_table_set(vm, result, lt_make_string(vm, "value"), value);
+    else lt_table_set(vm, result, lt_make_string(vm, "error"), lt_make_string(vm, error ? error : "Unknown error"));
+    return result;
+}
+
+static uint8_t _ltstd_pcall(lt_VM* vm, uint8_t argc)
+{
+    if (argc < 1) lt_runtime_error(vm, "Expected callable argument to pcall!");
+
+    uint16_t base = vm->top - argc;
+    lt_Value callable = vm->stack[base];
+    if (!_ltstd_is_callable(callable)) lt_runtime_error(vm, "Expected callable argument to pcall!");
+
+    for (uint16_t i = base + 1; i < vm->top; ++i)
+        vm->stack[i - 1] = vm->stack[i];
+    vm->top--;
+
+    uint16_t saved_depth = vm->depth;
+    lt_Frame* saved_current = vm->current;
+    void* saved_error_buf = vm->error_buf;
+    uint8_t saved_trap_errors = vm->trap_errors;
+    char* saved_error_trap = vm->error_trap;
+
+    jmp_buf error_buf;
+    vm->error_buf = &error_buf;
+    vm->trap_errors = 1;
+    vm->error_trap = 0;
+
+    if (!setjmp(error_buf))
+    {
+        uint16_t nret = _lt_exec(vm, callable, argc - 1);
+        lt_Value value = LT_VALUE_NULL;
+        if (nret > 0)
+        {
+            value = lt_pop(vm);
+            while (--nret > 0) lt_pop(vm);
+        }
+
+        vm->error_buf = saved_error_buf;
+        vm->trap_errors = saved_trap_errors;
+        if (vm->error_trap) vm->free(vm->error_trap);
+        vm->error_trap = saved_error_trap;
+
+        lt_push(vm, _ltstd_pcall_result(vm, 1, value, 0));
+        return 1;
+    }
+
+    char* error = vm->error_trap;
+    vm->top = base;
+    vm->depth = saved_depth;
+    vm->current = saved_current;
+    vm->error_buf = saved_error_buf;
+    vm->trap_errors = saved_trap_errors;
+    vm->error_trap = saved_error_trap;
+
+    lt_push(vm, _ltstd_pcall_result(vm, 0, LT_VALUE_NULL, error));
+    if (error) vm->free(error);
+    return 1;
+}
+
 void ltstd_open_all(lt_VM* vm)
 {
+    lt_table_set(vm, vm->global, lt_make_string(vm, "pcall"), lt_make_native(vm, _ltstd_pcall));
     ltstd_open_io(vm);
     ltstd_open_math(vm);
     ltstd_open_array(vm);
