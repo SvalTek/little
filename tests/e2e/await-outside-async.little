@@ -1,0 +1,3 @@
+var value = await Promise(fn(resolve, reject) {
+    resolve(1)
+})

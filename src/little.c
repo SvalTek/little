@@ -52,6 +52,7 @@ typedef enum {
 	LT_OP_LOAD, LT_OP_STORE,
 	LT_OP_LOADUP, LT_OP_STOREUP,
 	LT_OP_LOADB,
+	LT_OP_AWAIT,
 
 	LT_OP_CLOSE, LT_OP_CALL,
 
@@ -415,8 +416,8 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 				else PUSH_STR_TOKEN("while", LT_TOKEN_WHILE)
 				else PUSH_STR_TOKEN("break", LT_TOKEN_BREAK)
 				else PUSH_STR_TOKEN("return", LT_TOKEN_RETURN)
-				/* TODO: reserve and implement JS-like async fn/await syntax.
-				   await must only be valid inside an async function. */
+				else PUSH_STR_TOKEN("async", LT_TOKEN_ASYNC)
+				else PUSH_STR_TOKEN("await", LT_TOKEN_AWAIT)
 				else PUSH_STR_TOKEN("is", LT_TOKEN_EQUALS)
 				else PUSH_STR_TOKEN("isnt", LT_TOKEN_NOTEQUALS)
 				else PUSH_STR_TOKEN("and", LT_TOKEN_AND)
@@ -798,7 +799,8 @@ case LT_TOKEN_FALSE_LITERAL:   \
 case LT_TOKEN_TRUE_LITERAL:	   \
 case LT_TOKEN_NUMBER_LITERAL:  \
 case LT_TOKEN_STRING_LITERAL:  \
-case LT_TOKEN_FN
+case LT_TOKEN_FN:              \
+case LT_TOKEN_ASYNC
 
 lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstNode* dst)
 {
@@ -1091,10 +1093,38 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			lt_buffer_push(vm, &result, &table);
 		} break;
 
+		case LT_TOKEN_AWAIT: {
+			BREAK_ON_EXPR_BOUNDRY
+			if (!p->in_async)
+			{
+				char sprint_buf[128];
+				sprintf_s(sprint_buf, 128, "%s|%d:%d: 'await' is only valid inside async functions!", p->tkn->module, current->line, current->col);
+				if (vm->error) vm->error(vm, sprint_buf);
+				p->had_error = 1;
+				while (current->type != LT_TOKEN_END) current++;
+				goto expr_end;
+			}
+
+			lt_AstNode* await = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_AWAIT);
+			NEXT();
+			await->await.expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			current = _lt_parse_expression(vm, p, current, await->await.expr);
+			lt_buffer_push(vm, &result, &await);
+		} break;
+
+		case LT_TOKEN_ASYNC:
 		case LT_TOKEN_FN: {
 			BREAK_ON_EXPR_BOUNDRY
 
+			uint8_t is_async = current->type == LT_TOKEN_ASYNC;
+			if (is_async)
+			{
+				NEXT();
+				if (current->type != LT_TOKEN_FN) _lt_parse_error(vm, p->tkn->module, current, "Expected 'fn' to follow 'async'!");
+			}
+
 			lt_AstNode* func = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_FN);
+			func->fn.is_async = is_async;
 			NEXT();
 
 			if (current->type != LT_TOKEN_OPENPAREN) _lt_parse_error(vm, p->tkn->module, current, "Expected open parenthesis to follow 'fn'!");
@@ -1114,7 +1144,10 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			current++;
 
 			lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
+			uint8_t was_async = p->in_async;
+			p->in_async = is_async;
 			lt_Scope* fn_scope = _lt_parse_block(vm, p, current, &body, 1, 1, func->fn.args);
+			p->in_async = was_async;
 			current = fn_scope->end;
 
 			func->fn.scope = fn_scope;
@@ -1192,6 +1225,8 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 	if (!setjmp(*(jmp_buf*)vm->error_buf))
 	{
 		p.current = 0;
+		p.in_async = 0;
+		p.had_error = 0;
 		p.tkn = tkn;
 		p.ast_nodes = lt_buffer_new(sizeof(lt_AstNode*));
 		p.root = _lt_get_node_of_type(vm, (lt_Token*)tkn->token_buffer.data, &p, LT_AST_NODE_CHUNK);
@@ -1200,7 +1235,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 		lt_Scope* file_scope = _lt_parse_block(vm, &p, tkn->token_buffer.data, &p.root->chunk.body, 0, 1, 0);
 
 		p.root->chunk.scope = file_scope;
-		p.is_valid = 1;
+		p.is_valid = !p.had_error;
 	}
 
 	return p;
@@ -1717,7 +1752,14 @@ inst_loop:
 
 	case LT_OP_CALL: {
 		lt_Value callee = POP();
-		_lt_exec(vm, callee, (uint8_t)current.arg);
+		if (ltasync_is_async_callable(callee)) PUSH(ltasync_call(vm, callee, (uint8_t)current.arg));
+		else _lt_exec(vm, callee, (uint8_t)current.arg);
+	} NEXT;
+
+	case LT_OP_AWAIT: {
+		if (!ltasync_is_async_callable(LT_VALUE_OBJECT(frame->callee)))
+			lt_runtime_error(vm, "'await' is only valid inside async functions!");
+		PUSH(ltasync_await(vm, POP()));
 	} NEXT;
 
 	case LT_OP_JMP: frame->pc += current.arg; NEXT;
@@ -1923,6 +1965,7 @@ static void _lt_compile_node(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffe
 		while (*arg) { narg++; arg++; }
 
 		fn->fn.arity = narg;
+		fn->fn.is_async = node->fn.is_async;
 		fn->fn.code = lt_buffer_new(sizeof(lt_Op));
 		fn->fn.constants = lt_buffer_new(sizeof(lt_Value));
 		if (vm->generate_debug)
@@ -1973,6 +2016,11 @@ static void _lt_compile_node(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffe
 
 		_lt_compile_node(vm, p, name, debug, node->call.callee, scope, code_body, constants);
 		OPARG(CALL, narg);
+	} break;
+
+	case LT_AST_NODE_AWAIT: {
+		_lt_compile_node(vm, p, name, debug, node->await.expr, scope, code_body, constants);
+		OP(AWAIT);
 	} break;
 
 	case LT_AST_NODE_RETURN: {
@@ -2147,10 +2195,15 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 
 		switch (entry->type)
 		{
-		case LT_AST_NODE_CHUNK: lt_buffer_destroy(vm, &entry->chunk.body); lt_free_scope(vm, entry->chunk.scope); break;
+		case LT_AST_NODE_CHUNK:
+			lt_buffer_destroy(vm, &entry->chunk.body);
+			if (entry->chunk.scope) lt_free_scope(vm, entry->chunk.scope);
+			break;
 		case LT_AST_NODE_TABLE: lt_buffer_destroy(vm, &entry->table.keys); lt_buffer_destroy(vm, &entry->table.values); break;
 		case LT_AST_NODE_ARRAY: lt_buffer_destroy(vm, &entry->array.values); break;
-		case LT_AST_NODE_FN: /*lt_buffer_destroy(vm, &entry->fn.body);*/ lt_free_scope(vm, entry->fn.scope); break;
+		case LT_AST_NODE_FN:
+			if (entry->fn.scope) lt_free_scope(vm, entry->fn.scope);
+			break;
 		case LT_AST_NODE_IF: case LT_AST_NODE_ELSEIF: case LT_AST_NODE_ELSE: lt_buffer_destroy(vm, &entry->branch.body); break;
 		}
 
@@ -2192,7 +2245,7 @@ lt_Value lt_loadstring(lt_VM* vm, const char* source, const char* mod_name)
 	lt_Parser p = lt_parse(vm, &tok);
 	if (!p.is_valid)
 	{
-		lt_free_parser(vm, &p);
+		lt_free_tokenizer(vm, &tok);
 		return LT_VALUE_NULL;
 	}
 

@@ -94,6 +94,7 @@ Expressions consist of all literals and operators.
     * They are first-class objects, and can only be stored through assignment
     * Can be trivially passed as parameters as well
     * Parameter list is mandatory, even if empty
+* `async fn` literals return a promise when called, and may use `await`
 ### Operators
 The mathematical operators `+`, `-`, `*`, and `/` only operator on `number` values
 The comparison operators `<`, `<=`, `>`, `>=` also only work with `number`s
@@ -123,4 +124,20 @@ Promise(fn(resolve, reject) {
 
 `thread.run(source, state)` runs Little source text in an isolated worker VM and returns a promise. The worker receives a copied `state` global and resolves with the script's returned value. Only `null`, numbers, booleans, strings, arrays, and tables cross worker boundaries.
 
-`async fn` and `await` are reserved as future JS-like syntax; `await` will only be valid inside async functions once implemented.
+`async fn` creates an asynchronous function. Calling it returns a promise immediately; the function body is run by the VM event loop. `await` is only valid inside async functions and waits for a promise before continuing:
+```js
+var delay = fn(value) {
+    return Promise(fn(resolve, reject) {
+        setTimeout(fn() { resolve(value) }, 10)
+    })
+}
+
+var work = async fn() {
+    var value = await delay(7)
+    return value + 1
+}
+
+work().next(fn(value) {
+    io.print(value)
+})
+```

@@ -66,6 +66,8 @@ typedef enum {
 	LT_TOKEN_CLOSEBRACE,
 
 	LT_TOKEN_FN,
+	LT_TOKEN_ASYNC,
+	LT_TOKEN_AWAIT,
 	LT_TOKEN_BREAK,
 	LT_TOKEN_VAR,
 	LT_TOKEN_IF,
@@ -145,6 +147,7 @@ typedef enum {
 	LT_AST_NODE_ASSIGN,
 	LT_AST_NODE_FN,
 	LT_AST_NODE_CALL,
+	LT_AST_NODE_AWAIT,
 	LT_AST_NODE_RETURN,
 	LT_AST_NODE_IF,
 	LT_AST_NODE_ELSE,
@@ -226,12 +229,17 @@ typedef struct lt_AstNode {
 			lt_Token* args[16];
 			struct lt_Scope* scope;
 			lt_Buffer body;
+			uint8_t is_async;
 		} fn;
 
 		struct {
 			struct lt_AstNode* callee;
 			struct lt_AstNode* args[16];
 		} call;
+
+		struct {
+			struct lt_AstNode* expr;
+		} await;
 
 		struct {
 			struct lt_AstNode* expr;
@@ -268,6 +276,8 @@ typedef struct {
 	lt_Scope* current;
 
 	uint8_t is_valid;
+	uint8_t in_async;
+	uint8_t had_error;
 } lt_Parser;
 
 typedef struct {
@@ -316,6 +326,7 @@ typedef struct {
 		struct
 		{
 			uint8_t arity;
+			uint8_t is_async;
 			lt_Buffer code;
 			lt_Buffer constants;
 			lt_DebugInfo* debug;
@@ -395,6 +406,7 @@ struct lt_VM {
 
 	lt_Value global;
 	lt_Buffer microtasks;
+	lt_Buffer async_calls;
 	lt_Buffer timers;
 	lt_Buffer workers;
 	uint32_t next_timer_id;

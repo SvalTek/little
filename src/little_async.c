@@ -33,6 +33,13 @@ typedef struct {
 } lt_Microtask;
 
 typedef struct {
+	lt_Value promise;
+	lt_Value callee;
+	lt_Value args[16];
+	uint8_t argc;
+} lt_AsyncCall;
+
+typedef struct {
 	uint32_t id;
 	uint64_t due_ms;
 	uint64_t interval_ms;
@@ -260,6 +267,7 @@ static char* _lt_serialize_to_string(lt_VM* vm, lt_Value value, char* error, uin
 void ltasync_init_state(lt_VM* vm)
 {
 	vm->microtasks = lt_buffer_new(sizeof(lt_Microtask));
+	vm->async_calls = lt_buffer_new(sizeof(lt_AsyncCall));
 	vm->timers = lt_buffer_new(sizeof(lt_Timer));
 	vm->workers = lt_buffer_new(sizeof(lt_Worker*));
 	vm->next_timer_id = 1;
@@ -291,6 +299,7 @@ void ltasync_destroy_state(lt_VM* vm)
 		_lt_worker_destroy(vm, worker, 1);
 	}
 	lt_buffer_destroy(vm, &vm->microtasks);
+	lt_buffer_destroy(vm, &vm->async_calls);
 	lt_buffer_destroy(vm, &vm->timers);
 	lt_buffer_destroy(vm, &vm->workers);
 }
@@ -327,6 +336,14 @@ void ltasync_mark_roots(lt_VM* vm)
 		lt_sweep_v(vm, task->reaction.next_promise);
 	}
 
+	for (uint32_t i = 0; i < vm->async_calls.length; ++i)
+	{
+		lt_AsyncCall* task = lt_buffer_at(&vm->async_calls, i);
+		lt_sweep_v(vm, task->promise);
+		lt_sweep_v(vm, task->callee);
+		for (uint8_t j = 0; j < task->argc; ++j) lt_sweep_v(vm, task->args[j]);
+	}
+
 	for (uint32_t i = 0; i < vm->workers.length; ++i)
 	{
 		lt_Worker* worker = *(lt_Worker**)lt_buffer_at(&vm->workers, i);
@@ -339,6 +356,24 @@ uint8_t lt_poll(lt_VM* vm)
 {
 	uint8_t did_work = 0;
 	uint8_t has_pending = 0;
+
+	if (vm->async_calls.length > 0)
+	{
+		lt_AsyncCall task = *(lt_AsyncCall*)lt_buffer_at(&vm->async_calls, 0);
+		lt_buffer_cycle(&vm->async_calls, 0);
+
+		for (uint8_t i = 0; i < task.argc; ++i) lt_push(vm, task.args[i]);
+		uint16_t nret = lt_exec(vm, task.callee, task.argc);
+		lt_Value result = LT_VALUE_NULL;
+		if (nret > 0)
+		{
+			result = lt_pop(vm);
+			for (uint16_t i = 1; i < nret; ++i) lt_pop(vm);
+		}
+
+		_lt_settle_promise(vm, task.promise, LT_PROMISE_FULFILLED, result);
+		return 1;
+	}
 
 	if (vm->microtasks.length > 0)
 	{
@@ -447,7 +482,7 @@ uint8_t lt_poll(lt_VM* vm)
 	}
 
 	if (!did_work && (has_pending || vm->workers.length > 0)) _lt_sleep_ms(1);
-	return did_work || has_pending || vm->microtasks.length > 0 || vm->workers.length > 0;
+	return did_work || has_pending || vm->async_calls.length > 0 || vm->microtasks.length > 0 || vm->workers.length > 0;
 }
 
 void lt_runloop(lt_VM* vm)
@@ -588,6 +623,59 @@ lt_Value ltasync_get_promise_method(lt_VM* vm, lt_Value promise, lt_Value key)
 	if (strcmp(method, "catch") == 0) return _lt_make_bound_native(vm, _lt_promise_catch, promise);
 	if (strcmp(method, "finally") == 0) return _lt_make_bound_native(vm, _lt_promise_finally, promise);
 	return LT_VALUE_NULL;
+}
+
+uint8_t ltasync_is_async_callable(lt_Value callable)
+{
+	if (!LT_IS_OBJECT(callable)) return 0;
+	lt_Object* callee = LT_GET_OBJECT(callable);
+	if (callee->type == LT_OBJECT_FN) return callee->fn.is_async;
+	if (callee->type == LT_OBJECT_CLOSURE)
+	{
+		lt_Object* fn = LT_GET_OBJECT(callee->closure.function);
+		return fn->type == LT_OBJECT_FN && fn->fn.is_async;
+	}
+	return 0;
+}
+
+lt_Value ltasync_call(lt_VM* vm, lt_Value callee, uint8_t argc)
+{
+	lt_Value promise = _lt_make_promise(vm);
+	lt_AsyncCall task;
+	memset(&task, 0, sizeof(task));
+	task.promise = promise;
+	task.callee = callee;
+	task.argc = argc;
+
+	for (uint8_t i = 0; i < argc; ++i)
+		task.args[i] = vm->stack[vm->top - argc + i];
+	vm->top -= argc;
+
+	lt_buffer_push(vm, &vm->async_calls, &task);
+	return promise;
+}
+
+lt_Value ltasync_await(lt_VM* vm, lt_Value value)
+{
+	if (!LT_IS_OBJECT(value) || LT_GET_OBJECT(value)->type != LT_OBJECT_PROMISE) return value;
+
+	lt_Object* promise = LT_GET_OBJECT(value);
+	lt_nocollect(vm, promise);
+	while (promise->promise.state == LT_PROMISE_PENDING)
+	{
+		if (!lt_poll(vm)) break;
+	}
+
+	if (promise->promise.state == LT_PROMISE_REJECTED)
+	{
+		lt_resumecollect(vm, promise);
+		if (LT_IS_STRING(promise->promise.result)) lt_runtime_error(vm, lt_get_string(vm, promise->promise.result));
+		lt_runtime_error(vm, "Awaited promise rejected!");
+	}
+
+	lt_Value result = promise->promise.result;
+	lt_resumecollect(vm, promise);
+	return result;
 }
 
 static void _lt_worker_error(lt_VM* vm, const char* msg)

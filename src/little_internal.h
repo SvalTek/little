@@ -17,5 +17,8 @@ void ltasync_mark_roots(lt_VM* vm);
 void ltasync_mark_promise(lt_VM* vm, lt_Object* promise);
 void ltasync_free_promise(lt_VM* vm, lt_Object* promise);
 lt_Value ltasync_get_promise_method(lt_VM* vm, lt_Value promise, lt_Value key);
+uint8_t ltasync_is_async_callable(lt_Value callable);
+lt_Value ltasync_call(lt_VM* vm, lt_Value callee, uint8_t argc);
+lt_Value ltasync_await(lt_VM* vm, lt_Value value);
 
 #endif
