@@ -40,6 +40,8 @@ char* ltstd_tostring(lt_VM* vm, lt_Value val)
         case LT_OBJECT_NATIVEFN: len = sprintf_s(scratch, 256, "native 0x%llx", (uintptr_t)obj); break;
         case LT_OBJECT_BOUND_NATIVE: len = sprintf_s(scratch, 256, "bound_native 0x%llx", (uintptr_t)obj); break;
         case LT_OBJECT_PROMISE: len = sprintf_s(scratch, 256, "promise 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_CLASS: len = sprintf_s(scratch, 256, "class 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_INSTANCE: len = sprintf_s(scratch, 256, "instance 0x%llx", (uintptr_t)obj); break;
         }
     }
 
@@ -448,6 +450,8 @@ static uint8_t _lt_string_typeof(lt_VM* vm, uint8_t argc)
     else if (LT_IS_TABLE(val)) lt_push(vm, lt_make_string(vm, "table"));
     else if (LT_IS_NATIVE(val)) lt_push(vm, lt_make_string(vm, "native"));
     else if (LT_IS_OBJECT(val) && LT_GET_OBJECT(val)->type == LT_OBJECT_PROMISE) lt_push(vm, lt_make_string(vm, "promise"));
+    else if (LT_IS_CLASS(val)) lt_push(vm, lt_make_string(vm, "class"));
+    else if (LT_IS_INSTANCE(val)) lt_push(vm, lt_make_string(vm, "instance"));
     else if (LT_IS_PTR(val)) lt_push(vm, lt_make_string(vm, "ptr"));
     return 1;
 }

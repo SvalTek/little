@@ -1,0 +1,16 @@
+class Derived {
+    public x = 4 + 1
+    private y = this.x * 2
+
+    value() {
+        return this.y
+    }
+}
+
+var a = Derived()
+var b = Derived()
+b.x = 11
+io.print(a.x)
+io.print(a:value())
+io.print(b.x)
+io.print(b:value())

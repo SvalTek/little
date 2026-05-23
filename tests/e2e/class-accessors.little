@@ -1,0 +1,31 @@
+class Person {
+    private _name = ""
+
+    public get name() {
+        return this._name
+    }
+
+    public set name(value) {
+        this._name = value
+    }
+
+    private get secret() {
+        return this._name
+    }
+
+    private set secret(value) {
+        this._name = value
+    }
+
+    public rename(value) {
+        this.secret = value
+        return this.secret
+    }
+}
+
+var p = Person()
+p.name = "Ada"
+io.print(p.name)
+io.print(p.secret)
+io.print(p:rename("Grace"))
+io.print(p.name)

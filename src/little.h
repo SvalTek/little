@@ -37,6 +37,8 @@ typedef uint64_t lt_Value;
 #define LT_IS_FUNCTION(x) (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_FN)
 #define LT_IS_CLOSURE(x)  (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_CLOSURE)
 #define LT_IS_NATIVE(x)   (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_NATIVEFN)
+#define LT_IS_CLASS(x)    (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_CLASS)
+#define LT_IS_INSTANCE(x) (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_INSTANCE)
 #define LT_IS_PTR(x)      (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_PTR)
 
 #define LT_GET_NUMBER(x) lt_get_number(x)
@@ -68,6 +70,12 @@ typedef enum {
 	LT_TOKEN_FN,
 	LT_TOKEN_ASYNC,
 	LT_TOKEN_AWAIT,
+	LT_TOKEN_CLASS,
+	LT_TOKEN_PUBLIC,
+	LT_TOKEN_PRIVATE,
+	LT_TOKEN_CONSTRUCTOR,
+	LT_TOKEN_GET,
+	LT_TOKEN_SET,
 	LT_TOKEN_BREAK,
 	LT_TOKEN_VAR,
 	LT_TOKEN_IF,
@@ -144,6 +152,7 @@ typedef enum {
 	LT_AST_NODE_BINARYOP,
 	LT_AST_NODE_UNARYOP,
 	LT_AST_NODE_DECLARE,
+	LT_AST_NODE_CLASS,
 	LT_AST_NODE_ASSIGN,
 	LT_AST_NODE_FN,
 	LT_AST_NODE_CALL,
@@ -170,6 +179,26 @@ typedef struct
 	const char* module_name;
 	lt_Buffer locations;
 } lt_DebugInfo;
+
+typedef enum {
+	LT_VIS_PUBLIC,
+	LT_VIS_PRIVATE,
+} lt_Visibility;
+
+typedef enum {
+	LT_CLASS_FIELD,
+	LT_CLASS_METHOD,
+	LT_CLASS_CONSTRUCTOR,
+	LT_CLASS_GETTER,
+	LT_CLASS_SETTER,
+} lt_ClassMemberType;
+
+typedef struct {
+	lt_ClassMemberType type;
+	lt_Visibility visibility;
+	lt_Token* name;
+	struct lt_AstNode* value;
+} lt_ClassMember;
 
 typedef struct lt_AstNode {
 	lt_AstNodeType type;
@@ -219,6 +248,11 @@ typedef struct lt_AstNode {
 			lt_Token* identifier;
 			struct lt_AstNode* expr;
 		} declare;
+
+		struct {
+			lt_Token* identifier;
+			lt_Buffer members;
+		} class_decl;
 
 		struct {
 			struct lt_AstNode* left;
@@ -303,6 +337,8 @@ typedef enum {
 	LT_OBJECT_NATIVEFN,
 	LT_OBJECT_BOUND_NATIVE,
 	LT_OBJECT_PROMISE,
+	LT_OBJECT_CLASS,
+	LT_OBJECT_INSTANCE,
 	LT_OBJECT_PTR,
 } lt_ObjectType;
 
@@ -310,7 +346,7 @@ typedef struct lt_VM lt_VM;
 
 typedef uint8_t(*lt_NativeFn)(lt_VM* vm, uint8_t argc);
 
-typedef struct {
+typedef struct lt_Object {
 	lt_ObjectType type;
 
 	union
@@ -327,6 +363,7 @@ typedef struct {
 		{
 			uint8_t arity;
 			uint8_t is_async;
+			struct lt_Object* owner_class;
 			lt_Buffer code;
 			lt_Buffer constants;
 			lt_DebugInfo* debug;
@@ -360,6 +397,25 @@ typedef struct {
 			lt_Buffer reactions;
 			uint8_t handled;
 		} promise;
+		struct
+		{
+			lt_Value name;
+			lt_Table public_fields;
+			lt_Table private_fields;
+			lt_Table public_methods;
+			lt_Table private_methods;
+			lt_Table public_getters;
+			lt_Table private_getters;
+			lt_Table public_setters;
+			lt_Table private_setters;
+			lt_Value constructor;
+		} class_def;
+		struct
+		{
+			struct lt_Object* klass;
+			lt_Table public_fields;
+			lt_Table private_fields;
+		} instance;
 		void* ptr;
 	};
 
@@ -371,6 +427,7 @@ typedef struct lt_Frame {
 	lt_Buffer* code;
 	lt_Buffer* constants;
 	lt_Buffer* upvals;
+	lt_Object* class_context;
 	uint32_t pc;
 	uint16_t start;
 } lt_Frame;

@@ -1,0 +1,4 @@
+class Bad {
+    private value = 1
+    public value = 2
+}

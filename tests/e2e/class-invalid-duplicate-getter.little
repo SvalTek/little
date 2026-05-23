@@ -1,0 +1,9 @@
+class Bad {
+    get name() {
+        return "a"
+    }
+
+    get name() {
+        return "b"
+    }
+}

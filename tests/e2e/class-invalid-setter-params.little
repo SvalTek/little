@@ -1,0 +1,5 @@
+class Bad {
+    set name() {
+        return null
+    }
+}

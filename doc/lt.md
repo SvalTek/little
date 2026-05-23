@@ -95,6 +95,7 @@ Expressions consist of all literals and operators.
     * Can be trivially passed as parameters as well
     * Parameter list is mandatory, even if empty
 * `async fn` literals return a promise when called, and may use `await`
+* `class` declarations create callable class objects that construct instances
 ### Operators
 The mathematical operators `+`, `-`, `*`, and `/` only operator on `number` values
 The comparison operators `<`, `<=`, `>`, `>=` also only work with `number`s
@@ -106,6 +107,68 @@ The colon operator `:` is syntax sugar for receiver-passing method calls - `obj:
 
 ### Truthiness
 Any `null` or `false` values are considered `falsy`, anything else is logically `true`
+
+---
+## Classes
+Classes are declaration-style object templates with constructors, public members, private members, and implicit `this` inside class methods:
+```js
+class Counter {
+    private value = 0
+    public label = "counter"
+    private doubled = this.value * 2
+
+    constructor(start) {
+        this.value = start
+        this.label = "ready"
+    }
+
+    public add(amount) {
+        this.value = this.value + amount
+        return this.value
+    }
+
+    current() {
+        return this.value
+    }
+}
+
+var counter = Counter(2)
+io.print(counter.label)
+io.print(counter:add(3))
+```
+
+`public` is optional for fields and methods. `private` fields and methods can only be read or written from methods declared on the same class. Constructors are named `constructor(...)` and classes are called directly; there is no `new` keyword.
+
+Field initializers are evaluated once per instance before the constructor runs. They may use `this` to read fields initialized earlier in the class body:
+```js
+class Derived {
+    public x = 4 + 1
+    private y = this.x * 2
+}
+```
+Field initializers do not close over surrounding local variables in v1.
+
+Classes can declare public or private getters and setters:
+```js
+class Person {
+    private _name = ""
+
+    public get name() {
+        return this._name
+    }
+
+    public set name(value) {
+        this._name = value
+    }
+}
+
+var person = Person()
+person.name = "Ada"
+io.print(person.name)
+```
+Getters must have no user parameters. Setters must have exactly one user parameter. Class members cannot share names, except for one getter and one setter for the same property.
+
+See `doc/classes.md` for the full class model, lookup rules, initializer behavior, and v1 boundaries.
 
 ---
 ## Async

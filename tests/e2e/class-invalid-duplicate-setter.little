@@ -1,0 +1,7 @@
+class Bad {
+    set name(value) {
+    }
+
+    set name(value) {
+    }
+}

@@ -1,0 +1,16 @@
+class SecretBox {
+    private secret = "hidden"
+
+    private reveal() {
+        return this.secret
+    }
+
+    public read() {
+        return this:reveal()
+    }
+}
+
+var box = SecretBox()
+io.print(box.secret)
+io.print(box.reveal)
+io.print(box:read())

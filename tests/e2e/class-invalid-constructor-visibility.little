@@ -1,0 +1,4 @@
+class Bad {
+    public constructor() {
+    }
+}
