@@ -35,7 +35,9 @@ int main(int argc, char** argv)
 
     while (nreturn-- > 0)
     {
-        printf("Returned: %s\n", ltstd_tostring(vm, lt_pop(vm)));
+        char* returned = ltstd_tostring(vm, lt_pop(vm));
+        printf("Returned: %s\n", returned);
+        free(returned);
     }
 
     lt_destroy(vm);

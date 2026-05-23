@@ -1,0 +1,2 @@
+var values = [ 1, 2, 3 ]
+io.print(array.last(values))

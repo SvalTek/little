@@ -1,0 +1,28 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Build and run the end-to-end test suite
+    deps: [test]
+
+  build:
+    desc: Build the little CLI into build/little.exe
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File ./build.ps1
+    sources:
+      - main.c
+      - src/*.c
+      - src/*.h
+    generates:
+      - build/little.exe
+
+  test:
+    desc: Run end-to-end language tests
+    deps: [build]
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File ./test.ps1
+
+  clean:
+    desc: Remove generated build output
+    cmds:
+      - powershell -NoProfile -Command "if (Test-Path build) { Remove-Item -Recurse -Force build }"
