@@ -20,6 +20,11 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     (Join-Path $repo "src/little_buffer.c") `
     (Join-Path $repo "src/little.c") `
     (Join-Path $repo "src/little_std.c") `
+    (Join-Path $repo "src/little_std_io.c") `
+    (Join-Path $repo "src/little_std_math.c") `
+    (Join-Path $repo "src/little_std_array.c") `
+    (Join-Path $repo "src/little_std_string.c") `
+    (Join-Path $repo "src/little_std_gc.c") `
     (Join-Path $repo "src/little_async.c") `
     $threadFlags `
     -lm -o $outPath
