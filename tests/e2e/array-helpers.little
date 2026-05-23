@@ -1,0 +1,12 @@
+var values = [ "b", "c" ]
+array.insert(values, 0, "a")
+array.push(values, "d")
+io.print(array.first(values), array.last(values), array.len(values))
+io.print(array.contains(values, "c"), array.indexOf(values, "d"))
+io.print(array.join(values, "-"))
+var rev = array.reverse(values)
+io.print(array.join(rev, ""))
+var sliced = array.slice(values, 1, 2)
+io.print(array.join(sliced, ","))
+array.clear(values)
+io.print(array.len(values))

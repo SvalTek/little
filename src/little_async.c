@@ -744,12 +744,12 @@ static lt_Value _lt_eval_literal(lt_VM* vm, const char* literal)
 	return result;
 }
 
-uint8_t ltasync_native_thread_run(lt_VM* vm, uint8_t argc)
+uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 {
-	if (argc != 2) lt_runtime_error(vm, "Expected source and state for thread.run!");
+	if (argc != 2) lt_runtime_error(vm, "Expected source and state for task.run!");
 	lt_Value state = lt_pop(vm);
 	lt_Value source_value = lt_pop(vm);
-	if (!LT_IS_STRING(source_value)) lt_runtime_error(vm, "Expected thread.run source to be a string!");
+	if (!LT_IS_STRING(source_value)) lt_runtime_error(vm, "Expected task.run source to be a string!");
 
 	lt_Value promise = _lt_make_promise(vm);
 	lt_nocollect(vm, LT_GET_OBJECT(promise));
@@ -806,7 +806,7 @@ void ltasync_open_all(lt_VM* vm)
 {
 	ltasync_open_promise(vm);
 	ltasync_open_timer(vm);
-	ltasync_open_thread(vm);
+	ltasync_open_task(vm);
 }
 
 void ltasync_open_promise(lt_VM* vm)
@@ -822,9 +822,9 @@ void ltasync_open_timer(lt_VM* vm)
 	lt_table_set(vm, vm->global, lt_make_string(vm, "clearInterval"), lt_make_native(vm, ltasync_native_clear_timer));
 }
 
-void ltasync_open_thread(lt_VM* vm)
+void ltasync_open_task(lt_VM* vm)
 {
-	lt_Value thread = lt_make_table(vm);
-	lt_table_set(vm, thread, lt_make_string(vm, "run"), lt_make_native(vm, ltasync_native_thread_run));
-	lt_table_set(vm, vm->global, lt_make_string(vm, "thread"), thread);
+	lt_Value task = lt_make_table(vm);
+	lt_table_set(vm, task, lt_make_string(vm, "run"), lt_make_native(vm, ltasync_native_task_run));
+	lt_table_set(vm, vm->global, lt_make_string(vm, "task"), task);
 }

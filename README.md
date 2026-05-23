@@ -42,7 +42,7 @@ int main(char** argv, int argc)
 {
     lt_VM* vm = lt_open(malloc, free, my_error_callback);                    // open new VM
     ltstd_open_all(vm);                                                      // register stdlib
-    ltasync_open_all(vm);                                                    // optional async/timer/thread libs
+    ltasync_open_all(vm);                                                    // optional Promise, timer, and task libs
 
     const char* my_source_code = ...                                         // read source from file/stream/string
 
@@ -55,7 +55,7 @@ int main(char** argv, int argc)
 
 #### Linux
 ```
-gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_std.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_string.c src/little_std_gc.c src/little_async.c -lm -pthread -o little
+gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_std.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -lm -pthread -o little
 ```
 
 #### Windows
@@ -63,7 +63,7 @@ you need [msys2](https://www.msys2.org) _just follow the installation instructio
 ```
 pacman -S mingw-w64-ucrt-x86_64-gcc
 
-gcc main.c src/little_buffer.c src/little.c src/little_std.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_string.c src/little_std_gc.c src/little_async.c -o little
+gcc main.c src/little_buffer.c src/little.c src/little_std.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -o little
 ```
 ---
 ## Links
