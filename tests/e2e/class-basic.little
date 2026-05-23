@@ -1,0 +1,25 @@
+class Counter {
+    private value = 0
+    public label = "counter"
+
+    constructor(start) {
+        this.value = start
+        this.label = "ready"
+    }
+
+    public add(amount) {
+        this.value = this.value + amount
+        return this.value
+    }
+
+    current() {
+        return this.value
+    }
+}
+
+var a = Counter(2)
+var b = Counter(10)
+io.print(a.label)
+io.print(a:add(3))
+io.print(a:current())
+io.print(b:current())

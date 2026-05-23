@@ -1,0 +1,7 @@
+class Bad {
+    value = 1
+
+    value() {
+        return 2
+    }
+}

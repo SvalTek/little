@@ -1,0 +1,1 @@
+LT ERROR: module|3:15: class members cannot share a name except matching get/set accessors!
