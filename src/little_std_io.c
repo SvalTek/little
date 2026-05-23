@@ -40,6 +40,13 @@ static uint8_t _lt_write(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+static uint8_t _lt_writeline(lt_VM* vm, uint8_t argc)
+{
+    _lt_write_values(vm, argc);
+    printf("\n");
+    return 0;
+}
+
 static uint8_t _lt_clock(lt_VM* vm, uint8_t argc)
 {
     if (argc != 0) lt_runtime_error(vm, "Expected no arguments to io.clock!");
@@ -131,16 +138,37 @@ static uint8_t _lt_appendfile(lt_VM* vm, uint8_t argc)
     return _lt_writefile_mode(vm, argc, "ab", "Expected two arguments to io.appendFile!");
 }
 
+static uint8_t _lt_appendline(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt_runtime_error(vm, "Expected two arguments to io.appendLine!");
+    const char* contents = _lt_pop_string_arg(vm, "Expected contents argument to io.appendLine to be string!");
+    const char* path = _lt_pop_string_arg(vm, "Expected path argument to io.appendLine to be string!");
+
+    FILE* file = fopen(path, "ab");
+    if (!file) lt_runtime_error(vm, "Unable to open file for writing!");
+
+    size_t len = 0;
+    while (contents[len]) ++len;
+    size_t written = fwrite(contents, 1, len, file);
+    written += fwrite("\n", 1, 1, file);
+    fclose(file);
+
+    lt_push(vm, written == len + 1 ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
 void ltstd_open_io(lt_VM* vm)
 {
     lt_Value t = lt_make_table(vm);
     lt_table_set(vm, t, lt_make_string(vm, "print"), lt_make_native(vm, _lt_print));
     lt_table_set(vm, t, lt_make_string(vm, "write"), lt_make_native(vm, _lt_write));
+    lt_table_set(vm, t, lt_make_string(vm, "writeLine"), lt_make_native(vm, _lt_writeline));
     lt_table_set(vm, t, lt_make_string(vm, "clock"), lt_make_native(vm, _lt_clock));
     lt_table_set(vm, t, lt_make_string(vm, "readLine"), lt_make_native(vm, _lt_readline));
     lt_table_set(vm, t, lt_make_string(vm, "readFile"), lt_make_native(vm, _lt_readfile));
     lt_table_set(vm, t, lt_make_string(vm, "writeFile"), lt_make_native(vm, _lt_writefile));
     lt_table_set(vm, t, lt_make_string(vm, "appendFile"), lt_make_native(vm, _lt_appendfile));
+    lt_table_set(vm, t, lt_make_string(vm, "appendLine"), lt_make_native(vm, _lt_appendline));
 
     lt_table_set(vm, vm->global, lt_make_string(vm, "io"), t);
 }

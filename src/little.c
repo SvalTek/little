@@ -409,14 +409,49 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 				else if (*current == '"')
 				{
 					const char* start = ++current;
-					while (*current++ != '"') if (*current == '\n') { col = 0; line++; }
+					uint32_t raw_length = 0;
+					while (*current != '"')
+					{
+						if (*current == 0) break;
+						if (*current == '\\' && *(current + 1) != 0)
+						{
+							current += 2;
+							raw_length += 2;
+							continue;
+						}
+						if (*current == '\n') { col = 0; line++; }
+						current++;
+						raw_length++;
+					}
 
-					uint32_t length = (uint32_t)(current - start - 1);
+					const char* end = current;
+					if (*current == '"') current++;
 
 					lt_Literal newlit;
 					newlit.type = LT_TOKEN_STRING_LITERAL;
-					newlit.string = vm->alloc(length + 1);
-					strncpy_s(newlit.string, length + 1, start, length);
+					newlit.string = vm->alloc(raw_length + 1);
+
+					uint32_t length = 0;
+					for (const char* src = start; src < end; ++src)
+					{
+						if (*src == '\\' && src + 1 < end)
+						{
+							src++;
+							switch (*src)
+							{
+							case 'n': newlit.string[length++] = '\n'; break;
+							case 'r': newlit.string[length++] = '\r'; break;
+							case 't': newlit.string[length++] = '\t'; break;
+							case '"': newlit.string[length++] = '"'; break;
+							case '\\': newlit.string[length++] = '\\'; break;
+							default:
+								newlit.string[length++] = '\\';
+								newlit.string[length++] = *src;
+								break;
+							}
+						}
+						else newlit.string[length++] = *src;
+					}
 					newlit.string[length] = 0;
 
 					lt_buffer_push(vm, &t.literal_buffer, &newlit);
@@ -424,31 +459,49 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 					lt_Token tok;
 					tok.type = LT_TOKEN_STRING_LITERAL;
 					tok.line = line;
-					tok.col = col; col += length;
+					tok.col = col; col += raw_length;
 					tok.idx = t.literal_buffer.length - 1;
 					lt_buffer_push(vm, &t.token_buffer, &tok);
 				}
 				else if (isalnum(*current) && !isalpha(*current))
 				{
 					const char* start = current;
+					uint16_t start_col = col;
 					uint8_t has_decimal = 0;
+					double number = 0;
+					uint32_t length = 0;
 
-					while ((isalnum(*current) && !isalpha(*current)) || *current == '.')
+					if (*current == '0' && (*(current + 1) == 'x' || *(current + 1) == 'X'))
 					{
-						if (*current == '.')
+						current += 2;
+						if (!isxdigit(*current)) _lt_tokenize_error(vm, t.module, line, col, "Expected hex digits after 0x!");
+						while (isxdigit(*current)) current++;
+
+						length = (uint32_t)(current - start);
+						char* end = 0;
+						unsigned long long parsed = strtoull(start + 2, &end, 16);
+						if (end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse hex number!");
+						number = (double)parsed;
+					}
+					else
+					{
+						while ((isalnum(*current) && !isalpha(*current)) || *current == '.')
 						{
-							if (has_decimal) _lt_tokenize_error(vm, t.module, line, col, "Can't have multiple decimals in number literal!");
-							has_decimal = 1;
+							if (*current == '.')
+							{
+								if (has_decimal) _lt_tokenize_error(vm, t.module, line, col, "Can't have multiple decimals in number literal!");
+								has_decimal = 1;
+							}
+
+							current++;
 						}
 
-						current++;
+						length = (uint32_t)(current - start);
+						char* end = 0;
+						number = strtod(start, &end);
+
+						if (end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse number!");
 					}
-
-					uint32_t length = (uint32_t)(current - start);
-					char* end = 0;
-					double number = strtod(start, &end);
-
-					if (end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse number!");
 
 					lt_Literal newlit;
 					newlit.type = LT_TOKEN_NUMBER_LITERAL;
@@ -459,7 +512,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 					lt_Token tok;
 					tok.type = LT_TOKEN_NUMBER_LITERAL;
 					tok.line = line;
-					tok.col = col; col += length;
+					tok.col = start_col; col += length;
 					tok.idx = t.literal_buffer.length - 1;
 					lt_buffer_push(vm, &t.token_buffer, &tok);
 				}

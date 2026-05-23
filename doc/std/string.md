@@ -1,5 +1,7 @@
 # string
 
+String literals support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
+
 `string.from(x)` converts an argument into a string representation.
 
 `string.concat(...)` concatenates string arguments in order.

@@ -1,6 +1,8 @@
 io.write("a")
 io.write("b", "c")
 io.print("d")
+io.writeLine("e", "f")
 io.print(io.writeFile("build/io-helper.txt", "hello"))
 io.print(io.appendFile("build/io-helper.txt", " world"))
+io.print(io.appendLine("build/io-helper.txt", " plus line"))
 io.print(io.readFile("build/io-helper.txt"))

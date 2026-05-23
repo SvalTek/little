@@ -85,9 +85,9 @@ Expressions consist of all literals and operators.
 ---
 ### Literals
 * `null` is both a type and a literal value
-* `number` literals are any decimal number strings - `123`, `0.5`, `123.123` etc
+* `number` literals are decimal number strings like `123`, `0.5`, and `123.123`, or hexadecimal integer strings like `0xff` and `0X10`
 * `boolean` literals are either `true` or `false`
-* `string` literals are any double-quoted strings - `"hello world!"`, `"i love apples"`
+* `string` literals are any double-quoted strings - `"hello world!"`, `"i love apples"`. Supported escapes are `\n`, `\r`, `\t`, `\"`, and `\\`.
 * `array` literals are a list of values between brackets - `[ 1, true, null, "banana" ]`
 * `table` literals are `key: value` pairs grouped between braces - `{ a: 10 b: 20 c: true }`
 * `function` literals are declared with this syntax: `var my_fn = fn(a, b) { return a + b }`

@@ -1,0 +1,4 @@
+io.print(0xff)
+io.print(0X10)
+io.print(0x336699)
+io.print(0x10 + 5)
