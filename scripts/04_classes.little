@@ -1,0 +1,30 @@
+io.print("classes")
+
+class Counter {
+    private value = 0
+    public label = "counter"
+
+    constructor(start) {
+        this.value = start
+    }
+
+    public add(amount) {
+        this.value = this.value + amount
+        return this.value
+    }
+
+    public get current() {
+        return this.value
+    }
+
+    public set current(value) {
+        this.value = value
+    }
+}
+
+var a = Counter(2)
+var b = Counter(10)
+
+io.print(a.label, a:add(3), a.current)
+b.current = 20
+io.print("independent", a.current, b.current)

@@ -1,0 +1,34 @@
+io.print("async promises tasks")
+
+Promise(fn(resolve, reject) {
+    resolve("promise resolved")
+}).next(fn(value) {
+    io.print(value)
+})
+
+setTimeout(fn() {
+    io.print("timer fired")
+}, 1)
+
+var delay = fn(value) {
+    return Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            resolve(value)
+        }, 1)
+    })
+}
+
+var work = async fn() {
+    var value = await delay(7)
+    return value + 1
+}
+
+work().next(fn(value) {
+    io.print("async result", value)
+})
+
+task.run("return state.a + state.b", { a: 2 b: 4 }).next(fn(value) {
+    io.print("task result", value)
+})
+
+io.print("top level done")
