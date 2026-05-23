@@ -17,6 +17,16 @@ var emptyPop = pcall(fn() {
 })
 io.print("empty-pop", emptyPop.ok, string.contains(emptyPop.error, "empty"))
 
+var removeBad = pcall(fn() {
+    array.remove([ "a" ], 2)
+})
+io.print("remove-bad", removeBad.ok)
+
+var removeNegative = pcall(fn() {
+    array.remove([ "a" ], -1)
+})
+io.print("remove-negative", removeNegative.ok)
+
 var subExtra = pcall(fn() {
     return string.sub("abcdef", 1, 2, 3)
 })

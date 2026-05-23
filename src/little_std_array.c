@@ -185,7 +185,12 @@ static uint8_t _lt_array_remove(lt_VM* vm, uint8_t argc)
     if (!LT_IS_ARRAY(arr)) lt_runtime_error(vm, "Expected first argument to array.remove to be array!");
     if (!LT_IS_NUMBER(idx)) lt_runtime_error(vm, "Expected second argument to array.remove to be number!");
 
-    lt_array_remove(vm, arr, (uint32_t)lt_get_number(idx));
+    double index_number = lt_get_number(idx);
+    uint32_t len = lt_array_length(arr);
+    if (index_number < 0 || index_number >= len || index_number != (double)(uint32_t)index_number)
+        lt_runtime_error(vm, "Expected array.remove index to be in range!");
+
+    lt_array_remove(vm, arr, (uint32_t)index_number);
     return 0;
 }
 

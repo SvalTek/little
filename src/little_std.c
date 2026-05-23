@@ -126,28 +126,28 @@ char* ltstd_tostring(lt_VM* vm, lt_Value val)
     char scratch[256];
     int len = 0;
 
-    if (LT_IS_NUMBER(val)) len = sprintf_s(scratch, 256, "%f", LT_GET_NUMBER(val));
-    if (LT_IS_NULL(val)) len = sprintf_s(scratch, 256, "null");
-    if (LT_IS_TRUE(val)) len = sprintf_s(scratch, 256, "true");
-    if (LT_IS_FALSE(val)) len = sprintf_s(scratch, 256, "false");
-    if (LT_IS_STRING(val)) len = sprintf_s(scratch, 256, "%s", lt_get_string(vm, val));
+    if (LT_IS_NUMBER(val)) len = snprintf(scratch, sizeof(scratch), "%f", LT_GET_NUMBER(val));
+    if (LT_IS_NULL(val)) len = snprintf(scratch, sizeof(scratch), "null");
+    if (LT_IS_TRUE(val)) len = snprintf(scratch, sizeof(scratch), "true");
+    if (LT_IS_FALSE(val)) len = snprintf(scratch, sizeof(scratch), "false");
+    if (LT_IS_STRING(val)) len = snprintf(scratch, sizeof(scratch), "%s", lt_get_string(vm, val));
 
     if (LT_IS_OBJECT(val))
     {
         lt_Object* obj = LT_GET_OBJECT(val);
         switch (obj->type)
         {
-        case LT_OBJECT_CHUNK: len = sprintf_s(scratch, 256, "chunk 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_CLOSURE: len = sprintf_s(scratch, 256, "closure 0x%llx | %d upvals", (uintptr_t)LT_GET_OBJECT(obj->closure.function), obj->closure.captures.length); break;
-        case LT_OBJECT_FN: len = sprintf_s(scratch, 256, "function 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_TABLE: len = sprintf_s(scratch, 256, "table 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_ARRAY: len = sprintf_s(scratch, 256, "array | %d", lt_array_length(val)); break;
-        case LT_OBJECT_NATIVEFN: len = sprintf_s(scratch, 256, "native 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_BOUND_NATIVE: len = sprintf_s(scratch, 256, "bound_native 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_PROMISE: len = sprintf_s(scratch, 256, "promise 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_CLASS: len = sprintf_s(scratch, 256, "class 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_INSTANCE: len = sprintf_s(scratch, 256, "instance 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_PTR: len = sprintf_s(scratch, 256, "ptr 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_CHUNK: len = snprintf(scratch, sizeof(scratch), "chunk 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_CLOSURE: len = snprintf(scratch, sizeof(scratch), "closure 0x%llx | %d upvals", (uintptr_t)LT_GET_OBJECT(obj->closure.function), obj->closure.captures.length); break;
+        case LT_OBJECT_FN: len = snprintf(scratch, sizeof(scratch), "function 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_TABLE: len = snprintf(scratch, sizeof(scratch), "table 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_ARRAY: len = snprintf(scratch, sizeof(scratch), "array | %d", lt_array_length(val)); break;
+        case LT_OBJECT_NATIVEFN: len = snprintf(scratch, sizeof(scratch), "native 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_BOUND_NATIVE: len = snprintf(scratch, sizeof(scratch), "bound_native 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_PROMISE: len = snprintf(scratch, sizeof(scratch), "promise 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_CLASS: len = snprintf(scratch, sizeof(scratch), "class 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_INSTANCE: len = snprintf(scratch, sizeof(scratch), "instance 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_PTR: len = snprintf(scratch, sizeof(scratch), "ptr 0x%llx", (uintptr_t)obj); break;
         }
     }
 

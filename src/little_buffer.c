@@ -30,6 +30,7 @@ uint8_t lt_buffer_push(lt_VM* vm, lt_Buffer* buf, void* element)
 		has_allocated = 1;
 
 		void* new_buffer = vm->alloc(buf->element_size * (buf->capacity + 16));
+		if (!new_buffer) lt_runtime_error(vm, "Failed to grow buffer!");
 
 		if (buf->data != 0)
 		{

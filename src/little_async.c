@@ -9,6 +9,12 @@
 #include <time.h>
 
 #if defined(_WIN32)
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+#ifndef WINVER
+#define WINVER 0x0600
+#endif
 #include <windows.h>
 #else
 #include <pthread.h>
@@ -139,7 +145,11 @@ static void _lt_worker_set_error(lt_Worker* worker, const char* msg)
 static uint64_t _lt_now_ms(void)
 {
 #if defined(_WIN32)
-	return (uint64_t)GetTickCount();
+	LARGE_INTEGER freq;
+	LARGE_INTEGER counter;
+	QueryPerformanceFrequency(&freq);
+	QueryPerformanceCounter(&counter);
+	return (uint64_t)((counter.QuadPart * 1000ULL) / freq.QuadPart);
 #else
 	struct timespec ts;
 	clock_gettime(CLOCK_MONOTONIC, &ts);

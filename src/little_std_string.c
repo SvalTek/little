@@ -433,7 +433,7 @@ static uint8_t _lt_string_format(lt_VM* vm, uint8_t argc)
                     if (fmtloc + 1 >= sizeof(fmtbuf)) lt_runtime_error(vm, "Invalid or too long format specifier!");
                     fmtbuf[fmtloc++] = *format++;
                     fmtbuf[fmtloc] = 0;
-                    int written = sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, (int32_t)LT_GET_NUMBER(arg));
+                    int written = snprintf(output + o_idx, 1024 - o_idx, fmtbuf, (int32_t)LT_GET_NUMBER(arg));
                     if (written < 0 || written >= 1024 - o_idx) lt_runtime_error(vm, "string.format output too long!");
                     o_idx += written;
                 } break;
@@ -444,7 +444,7 @@ static uint8_t _lt_string_format(lt_VM* vm, uint8_t argc)
                     if (fmtloc + 1 >= sizeof(fmtbuf)) lt_runtime_error(vm, "Invalid or too long format specifier!");
                     fmtbuf[fmtloc++] = *format++;
                     fmtbuf[fmtloc] = 0;
-                    int written = sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, (uint32_t)LT_GET_NUMBER(arg));
+                    int written = snprintf(output + o_idx, 1024 - o_idx, fmtbuf, (uint32_t)LT_GET_NUMBER(arg));
                     if (written < 0 || written >= 1024 - o_idx) lt_runtime_error(vm, "string.format output too long!");
                     o_idx += written;
                 } break;
@@ -455,7 +455,7 @@ static uint8_t _lt_string_format(lt_VM* vm, uint8_t argc)
                     if (fmtloc + 1 >= sizeof(fmtbuf)) lt_runtime_error(vm, "Invalid or too long format specifier!");
                     fmtbuf[fmtloc++] = *format++;
                     fmtbuf[fmtloc] = 0;
-                    int written = sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, LT_GET_NUMBER(arg));
+                    int written = snprintf(output + o_idx, 1024 - o_idx, fmtbuf, LT_GET_NUMBER(arg));
                     if (written < 0 || written >= 1024 - o_idx) lt_runtime_error(vm, "string.format output too long!");
                     o_idx += written;
                 } break;
@@ -466,7 +466,7 @@ static uint8_t _lt_string_format(lt_VM* vm, uint8_t argc)
                     if (fmtloc + 1 >= sizeof(fmtbuf)) lt_runtime_error(vm, "Invalid or too long format specifier!");
                     fmtbuf[fmtloc++] = *format++;
                     fmtbuf[fmtloc] = 0;
-                    int written = sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, lt_get_string(vm, arg));
+                    int written = snprintf(output + o_idx, 1024 - o_idx, fmtbuf, lt_get_string(vm, arg));
                     if (written < 0 || written >= 1024 - o_idx) lt_runtime_error(vm, "string.format output too long!");
                     o_idx += written;
                 } break;
