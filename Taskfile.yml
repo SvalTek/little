@@ -22,6 +22,12 @@ tasks:
     cmds:
       - powershell -ExecutionPolicy Bypass -File ./test.ps1
 
+  scripts:
+    desc: Run the runnable Little scripts
+    deps: [build]
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File ./scripts/run.ps1
+
   clean:
     desc: Remove generated build output
     cmds:

@@ -1,0 +1,16 @@
+io.print("math and strings")
+
+var angle = math.rad(90)
+io.print("sin90", math.round(math.sin(angle)))
+io.print("clamp", math.clamp(42, 0, 10))
+io.print("lerp", math.lerp(10, 20, 0.25))
+
+math.seed(7)
+var roll = math.randomInt(1, 6)
+io.print("roll-ok", roll >= 1 and roll <= 6)
+
+var title = "  little language  "
+io.print(string.upper(string.trim(title)))
+io.print(string.replace("one fish one fish", "one", "two"))
+io.print(string.startsWith("little", "lit"), string.endsWith("little", "tle"))
+io.print(string.repeat("ha", 3))

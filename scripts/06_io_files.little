@@ -1,0 +1,12 @@
+io.print("io files")
+
+var path = "build/example-note.txt"
+var message = string.expand("{{name}} wrote this with {{tool}}", { name: "Little" tool: "io.writeFile" })
+
+io.print(io.writeFile(path, message))
+io.print(io.appendFile(path, " plus appendFile"))
+io.print(io.readFile(path))
+
+io.write("write")
+io.write("without", "newline")
+io.print(" done")
