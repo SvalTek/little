@@ -200,6 +200,17 @@ typedef struct {
 	struct lt_AstNode* value;
 } lt_ClassMember;
 
+typedef enum {
+	LT_DESTRUCT_NONE,
+	LT_DESTRUCT_ARRAY,
+	LT_DESTRUCT_TABLE,
+} lt_DestructureType;
+
+typedef struct {
+	lt_Token* key;
+	lt_Token* local;
+} lt_DestructureEntry;
+
 typedef struct lt_AstNode {
 	lt_AstNodeType type;
 	lt_DebugLoc loc;
@@ -247,6 +258,8 @@ typedef struct lt_AstNode {
 		struct {
 			lt_Token* identifier;
 			struct lt_AstNode* expr;
+			lt_DestructureType destructure;
+			lt_Buffer entries;
 		} declare;
 
 		struct {
@@ -467,6 +480,7 @@ struct lt_VM {
 	lt_Buffer timers;
 	lt_Buffer workers;
 	uint32_t next_timer_id;
+	uint8_t last_call_returns;
 
 	lt_AllocFn alloc;
 	lt_FreeFn free;

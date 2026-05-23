@@ -24,8 +24,24 @@ These are grouped into `Value` and `Object` types, which are passed by value and
 var a
 var b = 10
 var c = (a or 10) + b
+var [first, second] = values
+var { id, name } = user
+var { id: userId } = user
 ```
-Variables are declared with the `var` keyword. Only a single name is permitted per `var` statement, with an optional expression following the `=` assignment operator.
+Variables are declared with the `var` keyword. A declaration may bind a single name, or destructure values from an array or table.
+
+Array destructuring reads 0-based positions and binds missing slots as `null`:
+```js
+var [a, b, c] = [ 10, 20 ]
+```
+
+Table destructuring supports shorthand keys and rename forms. Missing keys bind as `null`:
+```js
+var { id, name } = user
+var { id: userId, name: displayName } = user
+```
+
+Destructuring is declaration-only in v1. It is not supported in assignment targets, parameters, nested patterns, defaults, or rest patterns.
 
 ---
 ### if
@@ -64,8 +80,9 @@ while true { break }
 ### return
 ```js
 return "any expression!"
+return unpack(values)
 ```
-`return` exits the current execution frame, and returns a single value to the caller.
+`return` exits the current execution frame. It normally returns a single value to the caller. `return unpack(array)` returns multiple values.
 
 ---
 ### assignment
@@ -90,6 +107,7 @@ Expressions consist of all literals and operators.
 * `string` literals are any double-quoted strings - `"hello world!"`, `"i love apples"`. Supported escapes are `\n`, `\r`, `\t`, `\"`, and `\\`.
 * `array` literals are a list of values between brackets - `[ 1, true, null, "banana" ]`
 * `table` literals are `key: value` pairs grouped between braces - `{ a: 10 b: 20 c: true }`
+    * Identifier shorthand is supported: `{ id, name }` expands to `{ id: id name: name }`
 * `function` literals are declared with this syntax: `var my_fn = fn(a, b) { return a + b }`
     * They are first-class objects, and can only be stored through assignment
     * Can be trivially passed as parameters as well
@@ -104,6 +122,24 @@ The logical operators `or`, `and` and `not` compare values based on their `truth
 The index operator `[expression]` works on any `table` and `array` values
 The dot operator `.` is syntax sugar for indexsing `table`s - `my_table.my_index = 10`
 The colon operator `:` is syntax sugar for receiver-passing method calls - `obj:method(a)` is equivalent to `obj.method(obj, a)`. Methods conventionally name the first parameter `this`.
+
+### Multiple returns
+Little supports multiple return values through `unpack(array)`. In scalar contexts, only the first returned value is used, or `null` when no values are returned.
+
+Final call arguments expand:
+```js
+fn(1, unpack([ 2, 3 ])) // fn(1, 2, 3)
+```
+
+Non-final call arguments use only the first value:
+```js
+fn(unpack([ 1, 2 ]), 3) // fn(1, 3)
+```
+
+Destructuring declarations consume multiple returns and pad missing values with `null`:
+```js
+var [a, b, c] = unpack([ 1, 2 ])
+```
 
 ### Truthiness
 Any `null` or `false` values are considered `falsy`, anything else is logically `true`

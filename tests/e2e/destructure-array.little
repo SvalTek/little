@@ -1,0 +1,16 @@
+var values = [ 10, 20, 30, 40 ]
+var [a, b, c] = values
+io.print(a, b, c)
+
+var [first, missing, extra] = [ 1 ]
+io.print(first, missing, extra)
+
+var [u, v, w] = unpack([ 7, 8, 9 ])
+io.print(u, v, w)
+
+var make_values = fn() {
+    return [ "x", "y" ]
+}
+
+var [x, y] = make_values()
+io.print(x, y)

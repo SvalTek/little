@@ -54,13 +54,13 @@ typedef enum {
 	LT_OP_LOADB,
 	LT_OP_AWAIT,
 
-	LT_OP_CLOSE, LT_OP_CALL,
+	LT_OP_CLOSE, LT_OP_CALL, LT_OP_CALLM, LT_OP_FIXRET, LT_OP_PACKRET,
 
-	LT_OP_MAKET, LT_OP_MAKEA, LT_OP_SETT, LT_OP_GETT, LT_OP_GETG,
+	LT_OP_MAKET, LT_OP_MAKEA, LT_OP_SETT, LT_OP_GETT, LT_OP_GETD, LT_OP_GETG,
 
 	LT_OP_JMP, LT_OP_JMPC, LT_OP_JMPN,
 
-	LT_OP_RET,
+	LT_OP_RET, LT_OP_RETM,
 } lt_OpCode;
 
 typedef struct {
@@ -731,6 +731,21 @@ static lt_Token* _lt_make_identifier_token(lt_VM* vm, lt_Parser* p, const char* 
 	return tok;
 }
 
+static lt_Token* _lt_make_number_token(lt_VM* vm, lt_Parser* p, double number, lt_Token* loc)
+{
+	lt_Literal literal;
+	literal.type = LT_TOKEN_NUMBER_LITERAL;
+	literal.number = number;
+	lt_buffer_push(vm, &p->tkn->literal_buffer, &literal);
+
+	lt_Token* tok = vm->alloc(sizeof(lt_Token));
+	tok->type = LT_TOKEN_NUMBER_LITERAL;
+	tok->line = loc->line;
+	tok->col = loc->col;
+	tok->idx = p->tkn->literal_buffer.length - 1;
+	return tok;
+}
+
 static void _lt_parse_soft_error(lt_VM* vm, lt_Parser* p, lt_Token* t, const char* message)
 {
 	char sprint_buf[128];
@@ -820,6 +835,91 @@ static lt_AstNode* _lt_make_field_initializer_fn(lt_VM* vm, lt_Parser* p, lt_Tok
 }
 
 static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* fn, uint8_t add_this);
+
+static lt_Token* _lt_skip_destructure_pattern(lt_Token* current, lt_TokenType close_type)
+{
+	while (current->type != LT_TOKEN_END && current->type != close_type) current++;
+	if (current->type == close_type) return current + 1;
+	return current;
+}
+
+static lt_Token* _lt_parse_destructure_pattern(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* declare)
+{
+	declare->declare.entries = lt_buffer_new(sizeof(lt_DestructureEntry));
+
+	if (current->type == LT_TOKEN_OPENBRACKET)
+	{
+		declare->declare.destructure = LT_DESTRUCT_ARRAY;
+		current++;
+		while (current->type != LT_TOKEN_CLOSEBRACKET)
+		{
+			if (current->type == LT_TOKEN_END)
+			{
+				_lt_parse_soft_error(vm, p, current, "Unexpected end of file in array destructuring pattern!");
+				return current;
+			}
+			if (current->type != LT_TOKEN_IDENTIFIER)
+			{
+				_lt_parse_soft_error(vm, p, current, "Expected identifier in array destructuring pattern!");
+				return _lt_skip_destructure_pattern(current, LT_TOKEN_CLOSEBRACKET);
+			}
+			lt_DestructureEntry entry = { 0 };
+			entry.local = current++;
+			_lt_make_local(vm, p->current, entry.local);
+			lt_buffer_push(vm, &declare->declare.entries, &entry);
+			if (current->type == LT_TOKEN_COMMA) current++;
+			else if (current->type != LT_TOKEN_CLOSEBRACKET)
+			{
+				_lt_parse_soft_error(vm, p, current, "Expected comma or closing bracket in array destructuring pattern!");
+				return _lt_skip_destructure_pattern(current, LT_TOKEN_CLOSEBRACKET);
+			}
+		}
+		return current + 1;
+	}
+
+	if (current->type == LT_TOKEN_OPENBRACE)
+	{
+		declare->declare.destructure = LT_DESTRUCT_TABLE;
+		current++;
+		while (current->type != LT_TOKEN_CLOSEBRACE)
+		{
+			if (current->type == LT_TOKEN_END)
+			{
+				_lt_parse_soft_error(vm, p, current, "Unexpected end of file in table destructuring pattern!");
+				return current;
+			}
+			if (current->type != LT_TOKEN_IDENTIFIER)
+			{
+				_lt_parse_soft_error(vm, p, current, "Expected identifier key in table destructuring pattern!");
+				return _lt_skip_destructure_pattern(current, LT_TOKEN_CLOSEBRACE);
+			}
+			lt_DestructureEntry entry = { 0 };
+			entry.key = current++;
+			entry.local = entry.key;
+			if (current->type == LT_TOKEN_COLON)
+			{
+				current++;
+				if (current->type != LT_TOKEN_IDENTIFIER)
+				{
+					_lt_parse_soft_error(vm, p, current, "Expected local identifier after ':' in table destructuring pattern!");
+					return _lt_skip_destructure_pattern(current, LT_TOKEN_CLOSEBRACE);
+				}
+				entry.local = current++;
+			}
+			_lt_make_local(vm, p->current, entry.local);
+			lt_buffer_push(vm, &declare->declare.entries, &entry);
+			if (current->type == LT_TOKEN_COMMA) current++;
+			else if (current->type != LT_TOKEN_CLOSEBRACE)
+			{
+				_lt_parse_soft_error(vm, p, current, "Expected comma or closing brace in table destructuring pattern!");
+				return _lt_skip_destructure_pattern(current, LT_TOKEN_CLOSEBRACE);
+			}
+		}
+		return current + 1;
+	}
+
+	return current;
+}
 
 lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* dst, uint8_t expects_terminator, uint8_t makes_scope, lt_Token** argnames)
 {
@@ -1089,7 +1189,11 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 				declare->declare.identifier = current++;
 				_lt_make_local(vm, p->current, declare->declare.identifier);
 			}
-			else _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow 'var'!");
+			else if (current->type == LT_TOKEN_OPENBRACKET || current->type == LT_TOKEN_OPENBRACE)
+			{
+				current = _lt_parse_destructure_pattern(vm, p, current, declare);
+			}
+			else _lt_parse_error(vm, p->tkn->module, current, "Expected identifier or destructuring pattern to follow 'var'!");
 
 			lt_AstNode* rhs = 0;
 			if (current->type == LT_TOKEN_ASSIGN)
@@ -1098,6 +1202,8 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 				rhs = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 				current = _lt_parse_expression(vm, p, current, rhs);
 			}
+			else if (declare->declare.destructure != LT_DESTRUCT_NONE)
+				_lt_parse_soft_error(vm, p, current, "Expected assignment after destructuring declaration!");
 
 			declare->declare.expr = rhs;
 			lt_buffer_push(vm, dst, &declare);
@@ -1459,16 +1565,26 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			while (current->type != LT_TOKEN_CLOSEBRACE)
 			{
 				lt_AstNode* key = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
-				key->literal.token = NEXT();
+				lt_Token* key_token = NEXT();
+				key->literal.token = key_token;
 
-				if (current->type != LT_TOKEN_COLON) lt_error(vm, "Expected colon to follow table index!");
-				NEXT(); // eat colon
-
-				lt_AstNode* value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
-				current = _lt_parse_expression(vm, p, current, value);
+				lt_AstNode* value = 0;
+				if (current->type == LT_TOKEN_COLON)
+				{
+					NEXT(); // eat colon
+					value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+					current = _lt_parse_expression(vm, p, current, value);
+				}
+				else if (key_token->type == LT_TOKEN_IDENTIFIER)
+				{
+					value = _lt_get_node_of_type(vm, key_token, p, LT_AST_NODE_IDENTIFIER);
+					value->identifier.token = key_token;
+				}
+				else lt_error(vm, "Expected colon to follow table index!");
 
 				lt_buffer_push(vm, &table->table.keys, &key);
 				lt_buffer_push(vm, &table->table.values, &value);
+				if (current->type == LT_TOKEN_COMMA) current++;
 			}
 
 			NEXT();
@@ -2248,6 +2364,26 @@ inst_loop:
 		else PUSH(LT_VALUE_NULL);
 	} NEXT;
 
+	case LT_OP_GETD: {
+		lt_Value key = POP();
+		lt_Value t = POP();
+
+		if (LT_IS_TABLE(t))
+		{
+			PUSH(lt_table_get(vm, t, key));
+		}
+		else if (LT_IS_INSTANCE(t))
+		{
+			PUSH(_lt_instance_get(vm, t, key));
+		}
+		else if (LT_IS_ARRAY(t) && LT_IS_NUMBER(key))
+		{
+			uint32_t idx = (uint32_t)lt_get_number(key);
+			PUSH(idx < lt_array_length(t) ? *lt_array_at(t, idx) : LT_VALUE_NULL);
+		}
+		else PUSH(LT_VALUE_NULL);
+	} NEXT;
+
 	case LT_OP_GETG: {
 		lt_Value key = POP();
 		PUSH(lt_table_get(vm, vm->global, key));
@@ -2350,13 +2486,57 @@ inst_loop:
 		{
 			lt_Value result = _lt_class_call(vm, callee, (uint8_t)current.arg);
 			PUSH(result);
+			vm->last_call_returns = 1;
 		}
 		else if (ltasync_is_async_callable(callee))
 		{
 			lt_Value result = ltasync_call(vm, callee, (uint8_t)current.arg);
 			PUSH(result);
+			vm->last_call_returns = 1;
 		}
-		else _lt_exec(vm, callee, (uint8_t)current.arg);
+		else vm->last_call_returns = (uint8_t)_lt_exec(vm, callee, (uint8_t)current.arg);
+	} NEXT;
+
+	case LT_OP_CALLM: {
+		uint8_t spread = vm->last_call_returns;
+		lt_Value callee = POP();
+		uint8_t argc = (uint8_t)(current.arg + spread);
+		if (LT_IS_CLASS(callee))
+		{
+			lt_Value result = _lt_class_call(vm, callee, argc);
+			PUSH(result);
+			vm->last_call_returns = 1;
+		}
+		else if (ltasync_is_async_callable(callee))
+		{
+			lt_Value result = ltasync_call(vm, callee, argc);
+			PUSH(result);
+			vm->last_call_returns = 1;
+		}
+		else vm->last_call_returns = (uint8_t)_lt_exec(vm, callee, argc);
+	} NEXT;
+
+	case LT_OP_FIXRET: {
+		uint8_t nret = vm->last_call_returns;
+		uint16_t start = vm->top - nret;
+		if (nret > current.arg) vm->top = start + current.arg;
+		else while (nret++ < current.arg) PUSH(LT_VALUE_NULL);
+		vm->last_call_returns = (uint8_t)current.arg;
+	} NEXT;
+
+	case LT_OP_PACKRET: {
+		uint8_t nret = vm->last_call_returns;
+		if (nret == 0) PUSH(LT_VALUE_NULL);
+		else if (nret > 1)
+		{
+			lt_Value a = LT_VALUE_OBJECT(lt_allocate(vm, LT_OBJECT_ARRAY));
+			uint16_t start = vm->top - nret;
+			for (uint32_t i = 0; i < nret; ++i)
+				lt_array_push(vm, a, vm->stack[start + i]);
+			vm->top = start;
+			PUSH(a);
+		}
+		vm->last_call_returns = 1;
 	} NEXT;
 
 	case LT_OP_AWAIT: {
@@ -2395,6 +2575,18 @@ inst_loop:
 		}
 	} NEXT;
 
+	case LT_OP_RETM: {
+		uint8_t nret = vm->last_call_returns;
+		lt_Value values[255];
+		for (uint8_t i = 0; i < nret; ++i)
+			values[i] = vm->stack[vm->top - nret + i];
+		vm->top = frame->start;
+		--vm->depth;
+		vm->current = vm->depth > 0 ? &vm->callstack[vm->depth - 1] : 0;
+		for (uint8_t i = 0; i < nret; ++i) PUSH(values[i]);
+		return nret;
+	} NEXT;
+
 	default: lt_runtime_error(vm, "VM encountered unknown opcode!");
 	}
 
@@ -2416,7 +2608,12 @@ uint16_t _lt_push_constant(lt_VM* vm, lt_Buffer* constants, lt_Value constant)
 }
 
 static void _lt_compile_body(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffer* debug, lt_Buffer* ast_body, lt_Scope* scope, lt_Buffer* code_body, lt_Buffer* constants);
-static void _lt_compile_node(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffer* debug, lt_AstNode* node, lt_Scope* scope, lt_Buffer* code_body, lt_Buffer* constants);
+static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffer* debug, lt_AstNode* node, lt_Scope* scope, lt_Buffer* code_body, lt_Buffer* constants, uint8_t allow_multi);
+uint16_t _lt_push_constant(lt_VM* vm, lt_Buffer* constants, lt_Value constant);
+static void _lt_compile_node(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffer* debug, lt_AstNode* node, lt_Scope* scope, lt_Buffer* code_body, lt_Buffer* constants)
+{
+	_lt_compile_node_ex(vm, p, name, debug, node, scope, code_body, constants, 0);
+}
 
 static lt_Value _lt_compile_function_value(lt_VM* vm, lt_Parser* p, const char* name, lt_AstNode* node, lt_Object* owner_class)
 {
@@ -2456,7 +2653,26 @@ static void _lt_compile_index(lt_VM* vm, lt_Parser* p, const char* name, lt_Buff
 	_lt_compile_node(vm, p, name, debug, node->index.idx, scope, code_body, constants);
 }
 
-static void _lt_compile_node(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffer* debug, lt_AstNode* node, lt_Scope* scope, lt_Buffer* code_body, lt_Buffer* constants)
+static void _lt_compile_push_token_value(lt_VM* vm, lt_Parser* p, lt_Token* token, lt_Buffer* debug, lt_Buffer* code_body, lt_Buffer* constants, lt_DebugLoc* loc)
+{
+	uint16_t constant = 0;
+	if (token->type == LT_TOKEN_NUMBER_LITERAL)
+	{
+		lt_Literal* literal = lt_buffer_at(&p->tkn->literal_buffer, token->idx);
+		constant = _lt_push_constant(vm, constants, LT_VALUE_NUMBER(literal->number));
+	}
+	else
+	{
+		lt_Identifier* ident = lt_buffer_at(&p->tkn->identifier_buffer, token->idx);
+		constant = _lt_push_constant(vm, constants, lt_make_string(vm, ident->name));
+	}
+
+	lt_Op op = { LT_OP_PUSHC, constant };
+	lt_buffer_push(vm, code_body, &op);
+	if (debug) lt_buffer_push(vm, debug, loc);
+}
+
+static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffer* debug, lt_AstNode* node, lt_Scope* scope, lt_Buffer* code_body, lt_Buffer* constants, uint8_t allow_multi)
 {
 	switch (node->type)
 	{
@@ -2567,11 +2783,34 @@ static void _lt_compile_node(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffe
 	} break;
 
 	case LT_AST_NODE_DECLARE: {
-		uint16_t idx = _lt_make_local(vm, scope, node->declare.identifier);
-		if (node->declare.expr)
+		if (node->declare.destructure == LT_DESTRUCT_NONE)
 		{
-			_lt_compile_node(vm, p, name, debug, node->declare.expr, scope, code_body, constants);
-			OPARG(STORE, idx);
+			uint16_t idx = _lt_make_local(vm, scope, node->declare.identifier);
+			if (node->declare.expr)
+			{
+				_lt_compile_node(vm, p, name, debug, node->declare.expr, scope, code_body, constants);
+				OPARG(STORE, idx);
+			}
+		}
+		else
+		{
+			uint8_t rhs_is_call = node->declare.expr && node->declare.expr->type == LT_AST_NODE_CALL;
+			_lt_compile_node_ex(vm, p, name, debug, node->declare.expr, scope, code_body, constants, rhs_is_call);
+			if (rhs_is_call) OP(PACKRET);
+
+			for (uint32_t i = 0; i < node->declare.entries.length; ++i)
+			{
+				lt_DestructureEntry* entry = lt_buffer_at(&node->declare.entries, i);
+				OP(DUP);
+				if (node->declare.destructure == LT_DESTRUCT_ARRAY)
+					_lt_compile_push_token_value(vm, p, _lt_make_number_token(vm, p, (double)i, entry->local), debug, code_body, constants, &node->loc);
+				else
+					_lt_compile_push_token_value(vm, p, entry->key, debug, code_body, constants, &node->loc);
+				OP(GETD);
+				uint32_t idx = _lt_find_local(vm, scope, entry->local);
+				OPARG(STORE, idx & 0xFFFF);
+			}
+			OPARG(POP, 1);
 		}
 	} break;
 
@@ -2661,14 +2900,20 @@ static void _lt_compile_node(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffe
 	case LT_AST_NODE_CALL: {
 		lt_AstNode** arg = node->call.args;
 		uint8_t narg = 0;
+		uint8_t total = 0;
+		while (node->call.args[total]) total++;
 		while (*arg)
 		{
+			uint8_t is_last = narg == total - 1;
+			uint8_t arg_multi = is_last && (*arg)->type == LT_AST_NODE_CALL;
+			_lt_compile_node_ex(vm, p, name, debug, *arg++, scope, code_body, constants, arg_multi);
 			narg++;
-			_lt_compile_node(vm, p, name, debug, *arg++, scope, code_body, constants);
 		}
 
 		_lt_compile_node(vm, p, name, debug, node->call.callee, scope, code_body, constants);
-		OPARG(CALL, narg);
+		if (total > 0 && node->call.args[total - 1]->type == LT_AST_NODE_CALL) OPARG(CALLM, narg - 1)
+		else OPARG(CALL, narg);
+		if (!allow_multi) OPARG(FIXRET, 1);
 	} break;
 
 	case LT_AST_NODE_AWAIT: {
@@ -2679,8 +2924,16 @@ static void _lt_compile_node(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffe
 	case LT_AST_NODE_RETURN: {
 		if (node->ret.expr)
 		{
-			_lt_compile_node(vm, p, name, debug, node->ret.expr, scope, code_body, constants);
-			OPARG(RET, 1);
+			if (node->ret.expr->type == LT_AST_NODE_CALL)
+			{
+				_lt_compile_node_ex(vm, p, name, debug, node->ret.expr, scope, code_body, constants, 1);
+				OP(RETM);
+			}
+			else
+			{
+				_lt_compile_node(vm, p, name, debug, node->ret.expr, scope, code_body, constants);
+				OPARG(RET, 1);
+			}
 		}
 		else OP(RET);
 	} break;
@@ -2793,7 +3046,10 @@ static void _lt_compile_body(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffe
 	for (uint32_t i = 0; i < ast_body->length; i++)
 	{
 		lt_AstNode* node = *(lt_AstNode**)lt_buffer_at(ast_body, i);
-		_lt_compile_node(vm, p, name, debug, node, scope, code_body, constants);
+		if (node->type == LT_AST_NODE_CALL)
+			_lt_compile_node_ex(vm, p, name, debug, node, scope, code_body, constants, 1);
+		else
+			_lt_compile_node(vm, p, name, debug, node, scope, code_body, constants);
 	}
 }
 
@@ -2854,6 +3110,9 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 			break;
 		case LT_AST_NODE_CLASS:
 			lt_buffer_destroy(vm, &entry->class_decl.members);
+			break;
+		case LT_AST_NODE_DECLARE:
+			if (entry->declare.destructure != LT_DESTRUCT_NONE) lt_buffer_destroy(vm, &entry->declare.entries);
 			break;
 		case LT_AST_NODE_TABLE: lt_buffer_destroy(vm, &entry->table.keys); lt_buffer_destroy(vm, &entry->table.values); break;
 		case LT_AST_NODE_ARRAY: lt_buffer_destroy(vm, &entry->array.values); break;

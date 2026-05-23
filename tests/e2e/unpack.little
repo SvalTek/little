@@ -1,0 +1,20 @@
+var sum3 = fn(a, b, c) {
+    return a + b + c
+}
+
+var sum2 = fn(a, b) {
+    return a + b
+}
+
+io.print(unpack([ 1, 2, 3 ]))
+io.print(unpack([ 1, 2, 3 ], 1))
+io.print(unpack([ 1, 2, 3 ], 1, 1))
+io.print(sum3(1, unpack([ 2, 3 ])))
+io.print(sum2(unpack([ 1, 2 ]), 3))
+
+var multi = fn() {
+    return unpack([ "a", "b", "c" ])
+}
+
+var [a, b, c] = multi()
+io.print(a, b, c)
