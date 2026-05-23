@@ -487,6 +487,7 @@ struct lt_VM {
 	lt_ErrorFn error;
 
 	void* error_buf;
+	void* error_context;
 	char* error_trap;
 	uint8_t trap_errors;
 	uint8_t generate_debug;

@@ -33,8 +33,8 @@ uint8_t lt_buffer_push(lt_VM* vm, lt_Buffer* buf, void* element)
 
 		if (buf->data != 0)
 		{
-			memcpy(new_buffer, buf->data, buf->element_size * buf->capacity);
-			free(buf->data);
+			memcpy(new_buffer, buf->data, buf->element_size * buf->length);
+			vm->free(buf->data);
 		}
 
 		buf->data = new_buffer;

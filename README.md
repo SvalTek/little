@@ -60,7 +60,7 @@ gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_std.c src/little
 
 #### Windows
 you need [msys2](https://www.msys2.org) _just follow the installation instructions_ 
-```
+```powershell
 pacman -S mingw-w64-ucrt-x86_64-gcc
 
 gcc main.c src/little_buffer.c src/little.c src/little_std.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -o little

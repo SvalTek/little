@@ -6,7 +6,7 @@ Little supports a set of basic types:
 * `boolean` - either true or false
 * `string` - a reference to an immutable string
 * `function` - a little-defined function
-* `closure` - any function that captures surroudning values
+* `closure` - any function that captures surrounding values
 * `array` - 0-indexed array of values
 * `table` - a table of key-value pairs
 * `promise` - an asynchronous value that can be fulfilled or rejected

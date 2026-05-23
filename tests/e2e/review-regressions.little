@@ -1,0 +1,40 @@
+io.print("pow", math.pow(2, 3))
+io.print("mod", math.mod(5, 2))
+
+var down = []
+for item in array.range(3, 0, -1) {
+    array.push(down, item)
+}
+io.print("range-down", array.join(down, ","))
+
+var zeroStep = pcall(fn() {
+    return array.range(0, 3, 0)
+})
+io.print("zero-step", zeroStep.ok)
+
+var emptyPop = pcall(fn() {
+    return array.pop([])
+})
+io.print("empty-pop", emptyPop.ok, string.contains(emptyPop.error, "empty"))
+
+var subExtra = pcall(fn() {
+    return string.sub("abcdef", 1, 2, 3)
+})
+io.print("sub-extra", subExtra.ok)
+
+var repeatNegative = pcall(fn() {
+    return string.repeat("x", -1)
+})
+io.print("repeat-negative", repeatNegative.ok)
+
+var repeatFraction = pcall(fn() {
+    return string.repeat("x", 1.5)
+})
+io.print("repeat-fraction", repeatFraction.ok)
+
+io.print("format", string.format("%s:%d", "id", 7))
+
+var formatMissing = pcall(fn() {
+    return string.format("%s:%d", "id")
+})
+io.print("format-missing", formatMissing.ok)

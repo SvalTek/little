@@ -42,10 +42,18 @@ static uint8_t _lt_range_iter(lt_VM* vm, uint8_t argc)
     lt_Value start = lt_getupval(vm, 2);
     lt_Value end = lt_getupval(vm, 1);
     lt_Value step = lt_getupval(vm, 0);
+    double current = lt_get_number(start);
+    double limit = lt_get_number(end);
+    double amount = lt_get_number(step);
 
-    if (lt_get_number(start) >= lt_get_number(end)) { lt_push(vm, LT_VALUE_NULL); return 1; }
+    if (amount == 0) lt_runtime_error(vm, "Expected array.range step to be non-zero!");
+    if ((amount > 0 && current >= limit) || (amount < 0 && current <= limit))
+    {
+        lt_push(vm, LT_VALUE_NULL);
+        return 1;
+    }
 
-    lt_setupval(vm, 2, lt_make_number(lt_get_number(start) + lt_get_number(step)));
+    lt_setupval(vm, 2, lt_make_number(current + amount));
 
     lt_push(vm, start);
     return 1;
@@ -76,6 +84,7 @@ static uint8_t _lt_range(lt_VM* vm, uint8_t argc)
 
     if (!LT_IS_NUMBER(start) || !LT_IS_NUMBER(end) || !LT_IS_NUMBER(step))
         lt_runtime_error(vm, "Expected all arguments to array.range to be numbers!");
+    if (LT_GET_NUMBER(step) == 0) lt_runtime_error(vm, "Expected array.range step to be non-zero!");
 
     lt_push(vm, lt_make_native(vm, _lt_range_iter));
     lt_push(vm, start);
@@ -101,6 +110,7 @@ static uint8_t _lt_array_pop(lt_VM* vm, uint8_t argc)
     if (argc != 1) lt_runtime_error(vm, "Expected one argument to array.pop!");
     lt_Value arr = lt_pop(vm);
     if (!LT_IS_ARRAY(arr)) lt_runtime_error(vm, "Expected argument to array.pop to be array!");
+    if (lt_array_length(arr) == 0) lt_runtime_error(vm, "Cannot pop from empty array!");
 
     lt_push(vm, lt_array_remove(vm, arr, lt_array_length(arr) - 1));
     return 1;

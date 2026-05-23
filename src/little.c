@@ -1754,6 +1754,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 {
 	lt_VM* vm = alloc(sizeof(lt_VM));
+	if (!vm) return 0;
 	memset(vm, 0, sizeof(lt_VM));
 	
 	vm->alloc = alloc;
@@ -2116,6 +2117,7 @@ static lt_Value _lt_instance_get(lt_VM* vm, lt_Value instance_value, lt_Value ke
 {
 	lt_Object* instance = LT_GET_OBJECT(instance_value);
 	lt_Object* klass = instance->instance.klass;
+	lt_Value result = LT_VALUE_NULL;
 
 	if (_lt_has_class_access(vm, klass))
 	{
@@ -2124,7 +2126,12 @@ static lt_Value _lt_instance_get(lt_VM* vm, lt_Value instance_value, lt_Value ke
 		{
 			lt_push(vm, instance_value);
 			uint16_t nret = _lt_exec(vm, private_getter->value, 1);
-			return nret > 0 ? lt_pop(vm) : LT_VALUE_NULL;
+			if (nret > 0)
+			{
+				result = vm->stack[vm->top - nret];
+				while (nret-- > 0) lt_pop(vm);
+			}
+			return result;
 		}
 	}
 
@@ -2133,7 +2140,12 @@ static lt_Value _lt_instance_get(lt_VM* vm, lt_Value instance_value, lt_Value ke
 	{
 		lt_push(vm, instance_value);
 		uint16_t nret = _lt_exec(vm, public_getter->value, 1);
-		return nret > 0 ? lt_pop(vm) : LT_VALUE_NULL;
+		if (nret > 0)
+		{
+			result = vm->stack[vm->top - nret];
+			while (nret-- > 0) lt_pop(vm);
+		}
+		return result;
 	}
 
 	if (_lt_has_class_access(vm, klass))
@@ -3179,6 +3191,7 @@ lt_Value lt_loadstring(lt_VM* vm, const char* source, const char* mod_name)
 	lt_Parser p = lt_parse(vm, &tok);
 	if (!p.is_valid)
 	{
+		lt_free_parser(vm, &p);
 		lt_free_tokenizer(vm, &tok);
 		return LT_VALUE_NULL;
 	}

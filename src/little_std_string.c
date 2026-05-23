@@ -90,7 +90,7 @@ static uint8_t _lt_string_len(lt_VM* vm, uint8_t argc)
 
 static uint8_t _lt_string_sub(lt_VM* vm, uint8_t argc)
 {
-    if (argc < 2) lt_runtime_error(vm, "Expected at least two arguments to string.sub!");
+    if (argc < 2 || argc > 3) lt_runtime_error(vm, "Expected 2-3 arguments to string.sub!");
 
     lt_Value lenval = LT_VALUE_NULL;
     if (argc == 3) lenval = lt_pop(vm);
@@ -298,9 +298,15 @@ static uint8_t _lt_string_repeat(lt_VM* vm, uint8_t argc)
     const char* str;
     _lt_expect_string(vm, lt_pop(vm), "Non-string source to string.repeat!", &str);
     if (!LT_IS_NUMBER(countval)) lt_runtime_error(vm, "Non-number count to string.repeat!");
-    uint32_t count = (uint32_t)LT_GET_NUMBER(countval);
-    uint32_t str_len = strlen(str);
+    double count_number = LT_GET_NUMBER(countval);
+    if (count_number < 0 || count_number > UINT32_MAX || count_number != (double)(uint32_t)count_number)
+        lt_runtime_error(vm, "Expected count argument to string.repeat to be a non-negative integer!");
+    uint32_t count = (uint32_t)count_number;
+    uint32_t str_len = (uint32_t)strlen(str);
+    if (str_len != 0 && count > (UINT32_MAX - 1) / str_len)
+        lt_runtime_error(vm, "string.repeat result is too large!");
     char* out = vm->alloc(str_len * count + 1);
+    if (!out) lt_runtime_error(vm, "Unable to allocate string.repeat result!");
     uint32_t len = 0;
     for (uint32_t i = 0; i < count; ++i)
     {
@@ -410,6 +416,7 @@ static uint8_t _lt_string_format(lt_VM* vm, uint8_t argc)
         {
             if (*(format + 1) == '%')
             {
+                if (o_idx + 1 >= sizeof(output)) lt_runtime_error(vm, "string.format output too long!");
                 output[o_idx++] = '%';
                 format += 2;
             }
@@ -420,26 +427,52 @@ static uint8_t _lt_string_format(lt_VM* vm, uint8_t argc)
                 scan_format: switch (*format)
                 {
                 case 'd': case 'i': {
+                    if (current_arg >= argc) lt_runtime_error(vm, "Not enough arguments to string.format!");
+                    lt_Value arg = vm->stack[vm->top - argc + current_arg++];
+                    if (!LT_IS_NUMBER(arg)) lt_runtime_error(vm, "Expected numeric argument to string.format!");
+                    if (fmtloc + 1 >= sizeof(fmtbuf)) lt_runtime_error(vm, "Invalid or too long format specifier!");
                     fmtbuf[fmtloc++] = *format++;
                     fmtbuf[fmtloc] = 0;
-                    o_idx += sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, (int32_t)LT_GET_NUMBER(vm->stack[vm->top - argc + current_arg++]));
+                    int written = sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, (int32_t)LT_GET_NUMBER(arg));
+                    if (written < 0 || written >= 1024 - o_idx) lt_runtime_error(vm, "string.format output too long!");
+                    o_idx += written;
                 } break;
                 case 'o': case 'u': case 'x': case 'X': {
+                    if (current_arg >= argc) lt_runtime_error(vm, "Not enough arguments to string.format!");
+                    lt_Value arg = vm->stack[vm->top - argc + current_arg++];
+                    if (!LT_IS_NUMBER(arg)) lt_runtime_error(vm, "Expected numeric argument to string.format!");
+                    if (fmtloc + 1 >= sizeof(fmtbuf)) lt_runtime_error(vm, "Invalid or too long format specifier!");
                     fmtbuf[fmtloc++] = *format++;
                     fmtbuf[fmtloc] = 0;
-                    o_idx += sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, (uint32_t)LT_GET_NUMBER(vm->stack[vm->top - argc + current_arg++]));
+                    int written = sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, (uint32_t)LT_GET_NUMBER(arg));
+                    if (written < 0 || written >= 1024 - o_idx) lt_runtime_error(vm, "string.format output too long!");
+                    o_idx += written;
                 } break;
                 case 'e': case 'E': case 'f': case 'g': case 'G': {
+                    if (current_arg >= argc) lt_runtime_error(vm, "Not enough arguments to string.format!");
+                    lt_Value arg = vm->stack[vm->top - argc + current_arg++];
+                    if (!LT_IS_NUMBER(arg)) lt_runtime_error(vm, "Expected numeric argument to string.format!");
+                    if (fmtloc + 1 >= sizeof(fmtbuf)) lt_runtime_error(vm, "Invalid or too long format specifier!");
                     fmtbuf[fmtloc++] = *format++;
                     fmtbuf[fmtloc] = 0;
-                    o_idx += sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, LT_GET_NUMBER(vm->stack[vm->top - argc + current_arg++]));
+                    int written = sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, LT_GET_NUMBER(arg));
+                    if (written < 0 || written >= 1024 - o_idx) lt_runtime_error(vm, "string.format output too long!");
+                    o_idx += written;
                 } break;
                 case 's': {
+                    if (current_arg >= argc) lt_runtime_error(vm, "Not enough arguments to string.format!");
+                    lt_Value arg = vm->stack[vm->top - argc + current_arg++];
+                    if (!LT_IS_STRING(arg)) lt_runtime_error(vm, "Expected string argument to string.format!");
+                    if (fmtloc + 1 >= sizeof(fmtbuf)) lt_runtime_error(vm, "Invalid or too long format specifier!");
                     fmtbuf[fmtloc++] = *format++;
                     fmtbuf[fmtloc] = 0;
-                    o_idx += sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, lt_get_string(vm, vm->stack[vm->top - argc + current_arg++]));
+                    int written = sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, lt_get_string(vm, arg));
+                    if (written < 0 || written >= 1024 - o_idx) lt_runtime_error(vm, "string.format output too long!");
+                    o_idx += written;
                 } break;
                 default:
+                    if (*format == 0) lt_runtime_error(vm, "Incomplete format specifier!");
+                    if (fmtloc + 1 >= sizeof(fmtbuf)) lt_runtime_error(vm, "Invalid or too long format specifier!");
                     fmtbuf[fmtloc++] = *format++;
                     goto scan_format;
                     break;
@@ -448,11 +481,13 @@ static uint8_t _lt_string_format(lt_VM* vm, uint8_t argc)
         }
         else
         {
+            if (o_idx + 1 >= sizeof(output)) lt_runtime_error(vm, "string.format output too long!");
             output[o_idx++] = *format++;
         }
     }
 
     output[o_idx] = 0;
+    vm->top -= argc;
     lt_push(vm, lt_make_string(vm, output));
     return 1;
 }

@@ -59,8 +59,10 @@ typedef struct {
 	uint8_t done;
 #if defined(_WIN32)
 	HANDLE handle;
+	CRITICAL_SECTION lock;
 #else
 	pthread_t thread;
+	pthread_mutex_t lock;
 #endif
 } lt_Worker;
 
@@ -71,7 +73,68 @@ static uint8_t _lt_promise_resolve_native(lt_VM* vm, uint8_t argc);
 static uint8_t _lt_promise_reject_native(lt_VM* vm, uint8_t argc);
 static lt_Value _lt_eval_literal(lt_VM* vm, const char* literal);
 
-static lt_Worker* _lt_current_worker = 0;
+static void _lt_worker_lock(lt_Worker* worker)
+{
+#if defined(_WIN32)
+	EnterCriticalSection(&worker->lock);
+#else
+	pthread_mutex_lock(&worker->lock);
+#endif
+}
+
+static void _lt_worker_unlock(lt_Worker* worker)
+{
+#if defined(_WIN32)
+	LeaveCriticalSection(&worker->lock);
+#else
+	pthread_mutex_unlock(&worker->lock);
+#endif
+}
+
+static void _lt_worker_init_lock(lt_Worker* worker)
+{
+#if defined(_WIN32)
+	InitializeCriticalSection(&worker->lock);
+#else
+	pthread_mutex_init(&worker->lock, 0);
+#endif
+}
+
+static void _lt_worker_destroy_lock(lt_Worker* worker)
+{
+#if defined(_WIN32)
+	DeleteCriticalSection(&worker->lock);
+#else
+	pthread_mutex_destroy(&worker->lock);
+#endif
+}
+
+static uint8_t _lt_worker_is_done(lt_Worker* worker)
+{
+	_lt_worker_lock(worker);
+	uint8_t done = worker->done;
+	_lt_worker_unlock(worker);
+	return done;
+}
+
+static void _lt_worker_mark_done(lt_Worker* worker)
+{
+	_lt_worker_lock(worker);
+	worker->done = 1;
+	_lt_worker_unlock(worker);
+}
+
+static void _lt_worker_set_error(lt_Worker* worker, const char* msg)
+{
+	_lt_worker_lock(worker);
+	if (!worker->error)
+	{
+		uint32_t len = (uint32_t)strlen(msg);
+		worker->error = malloc(len + 1);
+		if (worker->error) memcpy(worker->error, msg, len + 1);
+	}
+	_lt_worker_unlock(worker);
+}
 
 static uint64_t _lt_now_ms(void)
 {
@@ -284,6 +347,7 @@ static void _lt_worker_destroy(lt_VM* vm, lt_Worker* worker, uint8_t join)
 		pthread_join(worker->thread, 0);
 #endif
 	}
+	_lt_worker_destroy_lock(worker);
 	if (worker->error) free(worker->error);
 	if (worker->result_literal) free(worker->result_literal);
 	vm->free(worker->state_literal);
@@ -356,6 +420,8 @@ uint8_t lt_poll(lt_VM* vm)
 {
 	uint8_t did_work = 0;
 	uint8_t has_pending = 0;
+	uint8_t has_next_timer = 0;
+	uint64_t next_timer_due = 0;
 
 	if (vm->async_calls.length > 0)
 	{
@@ -434,7 +500,7 @@ uint8_t lt_poll(lt_VM* vm)
 	for (uint32_t i = 0; i < vm->workers.length; ++i)
 	{
 		lt_Worker* worker = *(lt_Worker**)lt_buffer_at(&vm->workers, i);
-		if (!worker->done)
+		if (!_lt_worker_is_done(worker))
 		{
 			has_pending = 1;
 			continue;
@@ -464,24 +530,61 @@ uint8_t lt_poll(lt_VM* vm)
 
 		if (timer->due_ms <= now)
 		{
-			uint16_t nret = lt_exec(vm, timer->callback, 0);
+			lt_Timer fired = *timer;
+			uint16_t nret = lt_exec(vm, fired.callback, 0);
 			while (nret-- > 0) lt_pop(vm);
-			did_work = 1;
 
-			if (timer->repeat && !timer->cancelled)
+			uint32_t current_idx = UINT32_MAX;
+			for (uint32_t j = 0; j < vm->timers.length; ++j)
 			{
-				timer->due_ms = _lt_now_ms() + timer->interval_ms;
-				has_pending = 1;
+				lt_Timer* current = lt_buffer_at(&vm->timers, j);
+				if (current->id == fired.id)
+				{
+					current_idx = j;
+					break;
+				}
 			}
-			else
+
+			if (current_idx != UINT32_MAX)
 			{
-				lt_buffer_cycle(&vm->timers, i--);
+				lt_Timer* current = lt_buffer_at(&vm->timers, current_idx);
+				if (current->repeat && !current->cancelled)
+				{
+					current->due_ms = _lt_now_ms() + current->interval_ms;
+					has_pending = 1;
+				}
+				else
+				{
+					lt_buffer_cycle(&vm->timers, current_idx);
+				}
+			}
+
+			return 1;
+		}
+		else
+		{
+			has_pending = 1;
+			if (!has_next_timer || timer->due_ms < next_timer_due)
+			{
+				has_next_timer = 1;
+				next_timer_due = timer->due_ms;
 			}
 		}
-		else has_pending = 1;
 	}
 
-	if (!did_work && (has_pending || vm->workers.length > 0)) _lt_sleep_ms(1);
+	if (!did_work && (has_pending || vm->workers.length > 0))
+	{
+		uint32_t sleep_ms = 1;
+		if (has_next_timer && next_timer_due > now)
+		{
+			uint64_t until_due = next_timer_due - now;
+			if (vm->workers.length > 0 && until_due > 10) until_due = 10;
+			if (until_due > UINT32_MAX) until_due = UINT32_MAX;
+			sleep_ms = (uint32_t)until_due;
+		}
+		if (sleep_ms == 0) sleep_ms = 1;
+		_lt_sleep_ms(sleep_ms);
+	}
 	return did_work || has_pending || vm->async_calls.length > 0 || vm->microtasks.length > 0 || vm->workers.length > 0;
 }
 
@@ -498,7 +601,9 @@ static uint8_t _lt_add_timer(lt_VM* vm, uint8_t argc, uint8_t repeat)
 	if (!LT_IS_NUMBER(delay)) lt_runtime_error(vm, "Expected timer delay to be a number!");
 	if (!_lt_is_callable(callback)) lt_runtime_error(vm, "Expected timer callback to be callable!");
 
-	uint64_t delay_ms = (uint64_t)lt_get_number(delay);
+	double delay_number = lt_get_number(delay);
+	if (delay_number < 0) lt_runtime_error(vm, "Expected timer delay to be non-negative!");
+	uint64_t delay_ms = (uint64_t)delay_number;
 	lt_Timer timer;
 	timer.id = vm->next_timer_id++;
 	timer.due_ms = _lt_now_ms() + delay_ms;
@@ -666,6 +771,12 @@ lt_Value ltasync_await(lt_VM* vm, lt_Value value)
 		if (!lt_poll(vm)) break;
 	}
 
+	if (promise->promise.state == LT_PROMISE_PENDING)
+	{
+		lt_resumecollect(vm, promise);
+		lt_runtime_error(vm, "Awaited promise was not resolved!");
+	}
+
 	if (promise->promise.state == LT_PROMISE_REJECTED)
 	{
 		lt_resumecollect(vm, promise);
@@ -680,13 +791,10 @@ lt_Value ltasync_await(lt_VM* vm, lt_Value value)
 
 static void _lt_worker_error(lt_VM* vm, const char* msg)
 {
-	(void)vm;
-	if (_lt_current_worker && !_lt_current_worker->error)
-	{
-		uint32_t len = (uint32_t)strlen(msg);
-		_lt_current_worker->error = malloc(len + 1);
-		memcpy(_lt_current_worker->error, msg, len + 1);
-	}
+	lt_Worker* worker = vm->error_context;
+	if (!worker) return;
+
+	_lt_worker_set_error(worker, msg);
 }
 
 #if defined(_WIN32)
@@ -696,34 +804,61 @@ static void* _lt_worker_main(void* arg)
 #endif
 {
 	lt_Worker* worker = (lt_Worker*)arg;
-	_lt_current_worker = worker;
 
 	lt_VM* vm = lt_open(malloc, free, _lt_worker_error);
+	if (!vm)
+	{
+		_lt_worker_set_error(worker, "Failed to create worker VM!");
+		_lt_worker_mark_done(worker);
+#if defined(_WIN32)
+		return 0;
+#else
+		return 0;
+#endif
+	}
+	vm->error_context = worker;
 	ltstd_open_all(vm);
 
 	uint32_t len = (uint32_t)(strlen(worker->state_literal) + strlen(worker->source) + 32);
 	char* source = malloc(len);
+	if (!source)
+	{
+		_lt_worker_set_error(worker, "Failed to allocate worker source!");
+		lt_destroy(vm);
+		_lt_worker_mark_done(worker);
+#if defined(_WIN32)
+		return 0;
+#else
+		return 0;
+#endif
+	}
 	snprintf(source, len, "var state = %s\n%s", worker->state_literal, worker->source);
 
 	uint32_t nret = lt_dostring(vm, source, "worker");
 	free(source);
 
-	if (!worker->error)
+	_lt_worker_lock(worker);
+	uint8_t has_error = worker->error != 0;
+	_lt_worker_unlock(worker);
+
+	if (!has_error)
 	{
 		lt_Value value = nret > 0 ? lt_pop(vm) : LT_VALUE_NULL;
 		char error[128] = { 0 };
-		worker->result_literal = _lt_serialize_to_string(vm, value, error, 128);
-		if (!worker->result_literal)
+		char* result_literal = _lt_serialize_to_string(vm, value, error, 128);
+		_lt_worker_lock(worker);
+		worker->result_literal = result_literal;
+		if (!worker->result_literal && !worker->error)
 		{
-			uint32_t error_len = (uint32_t)strlen(error);
-			worker->error = malloc(error_len + 1);
-			memcpy(worker->error, error, error_len + 1);
+			_lt_worker_unlock(worker);
+			_lt_worker_set_error(worker, error);
+			_lt_worker_lock(worker);
 		}
+		_lt_worker_unlock(worker);
 	}
 
 	lt_destroy(vm);
-	worker->done = 1;
-	_lt_current_worker = 0;
+	_lt_worker_mark_done(worker);
 #if defined(_WIN32)
 	return 0;
 #else
@@ -766,6 +901,7 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 
 	lt_Worker* worker = vm->alloc(sizeof(lt_Worker));
 	memset(worker, 0, sizeof(lt_Worker));
+	_lt_worker_init_lock(worker);
 	worker->parent = vm;
 	worker->promise = LT_GET_OBJECT(promise);
 	worker->state_literal = state_literal;
@@ -783,6 +919,7 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 		_lt_settle_promise(vm, promise, LT_PROMISE_REJECTED, lt_make_string(vm, "Failed to create worker thread!"));
 		vm->free(worker->source);
 		vm->free(worker->state_literal);
+		_lt_worker_destroy_lock(worker);
 		vm->free(worker);
 	}
 	else lt_buffer_push(vm, &vm->workers, &worker);
@@ -792,6 +929,7 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 		_lt_settle_promise(vm, promise, LT_PROMISE_REJECTED, lt_make_string(vm, "Failed to create worker thread!"));
 		vm->free(worker->source);
 		vm->free(worker->state_literal);
+		_lt_worker_destroy_lock(worker);
 		vm->free(worker);
 	}
 	else lt_buffer_push(vm, &vm->workers, &worker);

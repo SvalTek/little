@@ -1,10 +1,9 @@
 #include "little_std.h"
+#include "little_internal.h"
 
 #include <setjmp.h>
 #include <stdio.h>
 #include <string.h>
-
-uint16_t _lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc);
 
 static uint8_t _ltstd_is_callable(lt_Value value)
 {
@@ -125,7 +124,7 @@ void ltstd_open_all(lt_VM* vm)
 char* ltstd_tostring(lt_VM* vm, lt_Value val)
 {
     char scratch[256];
-    uint8_t len = 0;
+    int len = 0;
 
     if (LT_IS_NUMBER(val)) len = sprintf_s(scratch, 256, "%f", LT_GET_NUMBER(val));
     if (LT_IS_NULL(val)) len = sprintf_s(scratch, 256, "null");
@@ -148,12 +147,21 @@ char* ltstd_tostring(lt_VM* vm, lt_Value val)
         case LT_OBJECT_PROMISE: len = sprintf_s(scratch, 256, "promise 0x%llx", (uintptr_t)obj); break;
         case LT_OBJECT_CLASS: len = sprintf_s(scratch, 256, "class 0x%llx", (uintptr_t)obj); break;
         case LT_OBJECT_INSTANCE: len = sprintf_s(scratch, 256, "instance 0x%llx", (uintptr_t)obj); break;
+        case LT_OBJECT_PTR: len = sprintf_s(scratch, 256, "ptr 0x%llx", (uintptr_t)obj); break;
         }
     }
 
-    char* str = vm->alloc(len + 1);
-    memcpy(str, scratch, len);
-    str[len] = 0;
+    uint32_t out_len = 0;
+    if (len < 0)
+    {
+        while (out_len < sizeof(scratch) && scratch[out_len]) ++out_len;
+    }
+    else out_len = (uint32_t)len;
+    if (out_len >= sizeof(scratch)) out_len = sizeof(scratch) - 1;
+
+    char* str = vm->alloc(out_len + 1);
+    memcpy(str, scratch, out_len);
+    str[out_len] = 0;
 
     return str;
 }

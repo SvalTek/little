@@ -1,0 +1,9 @@
+class MultiValue {
+    public get value() {
+        return unpack([ "first", "second", "third" ])
+    }
+}
+
+var item = MultiValue()
+io.print(item.value)
+io.print("after", 123)

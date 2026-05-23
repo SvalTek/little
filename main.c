@@ -30,6 +30,11 @@ int main(int argc, char** argv)
 
     // Init VM and run program
     lt_VM* vm = lt_open(malloc, free, error);
+    if (!vm)
+    {
+        printf("ERROR: Failed to initialize VM\n");
+        return 1;
+    }
     ltstd_open_all(vm);
     ltasync_open_all(vm);
 

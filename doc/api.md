@@ -84,7 +84,7 @@ Tokenizes, parses, and compiles the source string, passing `mod_name` for debug 
 ```c
 uint32_t lt_dostring(lt_VM* vm, const char* source, const char* mod_name);
 ```
-Tokenizes, parses, and compiles the source string, passing `mod_name` for debug purposes. Then executes the resulting chunk, and returns the number of values returns onto the VM stack.
+Tokenizes, parses, and compiles the source string, passing `mod_name` for debug purposes. Then executes the resulting chunk and returns the number of values pushed onto the VM stack.
 
 ---
 ```c

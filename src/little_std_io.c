@@ -100,8 +100,20 @@ static uint8_t _lt_readfile(lt_VM* vm, uint8_t argc)
     }
     fseek(file, 0, SEEK_SET);
 
-    char* contents = vm->alloc((uint32_t)size + 1);
-    size_t read = fread(contents, 1, (size_t)size, file);
+    if ((unsigned long)size > UINT32_MAX - 1)
+    {
+        fclose(file);
+        lt_runtime_error(vm, "File too large to read into memory!");
+    }
+
+    uint32_t alloc_size = (uint32_t)size;
+    char* contents = vm->alloc(alloc_size + 1);
+    if (!contents)
+    {
+        fclose(file);
+        lt_runtime_error(vm, "Unable to allocate file buffer!");
+    }
+    size_t read = fread(contents, 1, (size_t)alloc_size, file);
     fclose(file);
     contents[read] = 0;
 

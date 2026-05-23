@@ -43,7 +43,7 @@ LT_SIMPLE_MATH_FN(fabs);
     lt_Value arg1 = lt_pop(vm); \
     lt_Value arg2 = lt_pop(vm); \
     if (!LT_IS_NUMBER(arg1) || !LT_IS_NUMBER(arg2)) lt_runtime_error(vm, "Expected argument to math." #name " to be number!"); \
-    lt_push(vm, LT_VALUE_NUMBER(name(LT_GET_NUMBER(arg1), LT_GET_NUMBER(arg2)))); \
+    lt_push(vm, LT_VALUE_NUMBER(name(LT_GET_NUMBER(arg2), LT_GET_NUMBER(arg1)))); \
     return 1; \
 }
 
