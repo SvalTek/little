@@ -25,7 +25,7 @@ typedef uint64_t lt_Value;
 #define LT_VALUE_OBJECT(x)  ((lt_Value)(LT_NAN_MASK | (LT_TYPE_OBJECT | (uint64_t)x)))
 
 #define LT_IS_NUMBER(x)  (((x) & LT_NAN_MASK) != LT_NAN_MASK)
-#define LT_IS_NULL(x)    ((x) == LT_TYPE_NULL)
+#define LT_IS_NULL(x)    ((x) == LT_VALUE_NULL)
 #define LT_IS_BOOL(x)    (x == LT_VALUE_TRUE || x == LT_VALUE_FALSE)
 #define LT_IS_TRUE(x)    (x == LT_VALUE_TRUE)
 #define LT_IS_FALSE(x)   (x == LT_VALUE_FALSE)
@@ -288,9 +288,9 @@ typedef enum {
 	LT_OBJECT_PTR,
 } lt_ObjectType;
 
-struct lt_VM;
+typedef struct lt_VM lt_VM;
 
-typedef uint8_t(*lt_NativeFn)(struct lt_VM* vm, uint8_t argc);
+typedef uint8_t(*lt_NativeFn)(lt_VM* vm, uint8_t argc);
 
 typedef struct {
 	lt_ObjectType type;
@@ -346,7 +346,7 @@ typedef struct lt_Frame {
 
 typedef void* (*lt_AllocFn)(size_t);
 typedef void (*lt_FreeFn)(void*);
-typedef void (*lt_ErrorFn)(struct lt_VM* vm, const char*);
+typedef void (*lt_ErrorFn)(lt_VM* vm, const char*);
 
 #ifndef LT_STACK_SIZE
 #define LT_STACK_SIZE 256
@@ -360,7 +360,7 @@ typedef void (*lt_ErrorFn)(struct lt_VM* vm, const char*);
 #define LT_DEDUP_TABLE_SIZE 64
 #endif
 
-typedef struct {
+struct lt_VM {
 	lt_Buffer heap;
 	lt_Buffer keepalive;
 
@@ -381,7 +381,7 @@ typedef struct {
 
 	void* error_buf;
 	uint8_t generate_debug;
-} lt_VM;
+};
 
 lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error);
 void lt_destroy(lt_VM* vm);

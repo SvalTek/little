@@ -1,0 +1,3 @@
+var t = { a: 10 b: 20 }
+t.c = t.a + t["b"]
+io.print(t.c)

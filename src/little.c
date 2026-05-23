@@ -211,7 +211,7 @@ void lt_runtime_error(lt_VM* vm, const char* message)
 	if (info) name = info->module_name;
 
 	uint32_t len = sprintf_s(sprint_buf, 1024, "%s|%d:%d: %s\ntraceback:", name, loc.line, loc.col, message);
-	for (uint32_t i = vm->depth - 1; i >= 0; --i)
+	for (int32_t i = (int32_t)vm->depth - 1; i >= 0; --i)
 	{
 		lt_Frame* frame = &vm->callstack[i];
 		lt_DebugInfo* info = _lt_get_debuginfo(frame->callee);
@@ -788,7 +788,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			current++; // eat 'break'
 
 			lt_buffer_push(vm, dst, &brk);
-		}
+		} break;
 		case LT_TOKEN_VAR: {
 			lt_AstNode* declare = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_DECLARE);
 			current++;
@@ -927,7 +927,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 				NEXT(); // eat bracket
 				lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 				current = _lt_parse_expression(vm, p, current, idx_expr);
-				if (!PEEK()->type == LT_TOKEN_CLOSEBRACKET) _lt_parse_error(vm, p->tkn->module, current, "Expected closing bracket to follow index expression!");
+				if (current->type != LT_TOKEN_CLOSEBRACKET) _lt_parse_error(vm, p->tkn->module, current, "Expected closing bracket to follow index expression!");
 				NEXT();
 
 				lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
@@ -1095,7 +1095,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 				lt_AstNode* key = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
 				key->literal.token = NEXT();
 
-				if (!current->type == LT_TOKEN_COLON) lt_error(vm, "Expected colon to follow table index!");
+				if (current->type != LT_TOKEN_COLON) lt_error(vm, "Expected colon to follow table index!");
 				NEXT(); // eat colon
 
 				lt_AstNode* value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
@@ -1190,7 +1190,9 @@ expr_end:
 
 	if (value_stack.length > 0)
 	{
-		memcpy(dst, *(void**)lt_buffer_at(&value_stack, 0), sizeof(lt_AstNode));
+		lt_AstNode* source = *(lt_AstNode**)lt_buffer_at(&value_stack, 0);
+		memcpy(dst, source, sizeof(lt_AstNode));
+		source->type = LT_AST_NODE_EMPTY;
 	}
 
 	lt_buffer_destroy(vm, &result);
@@ -1359,7 +1361,7 @@ void lt_sweep(lt_VM* vm, lt_Object* obj)
 	case LT_OBJECT_ARRAY: {
 		for (uint32_t j = 0; j < obj->array.length; ++j)
 		{
-			lt_sweep_v(vm, ((lt_TablePair*)lt_buffer_at(&obj->array, j))->key);
+			lt_sweep_v(vm, *(lt_Value*)lt_buffer_at(&obj->array, j));
 		}
 	} break;
 	}
@@ -1615,7 +1617,8 @@ inst_loop:
 #define IMPL_ARITH(op){                                                       \
 		lt_Value right = POP();		                                          \
 		lt_Value left = POP();		                                          \
-		if (!LT_IS_NUMBER(right) || !LT_IS_NUMBER(left)) {}		              \
+		if (!LT_IS_NUMBER(right) || !LT_IS_NUMBER(left))                       \
+			lt_runtime_error(vm, "Expected arithmetic operands to be numbers!"); \
 		PUSH(lt_make_number(lt_get_number(left) PASTE(op) lt_get_number(right)));  \
 	} NEXT;
 
@@ -1639,18 +1642,23 @@ inst_loop:
 	case LT_OP_GT: {
 		lt_Value right = POP();
 		lt_Value left = POP();
+		if (!LT_IS_NUMBER(right) || !LT_IS_NUMBER(left))
+			lt_runtime_error(vm, "Expected comparison operands to be numbers!");
 		PUSH(lt_get_number(left) > lt_get_number(right) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
 	} NEXT;
 
 	case LT_OP_GTE: {
 		lt_Value right = POP();
 		lt_Value left = POP();
+		if (!LT_IS_NUMBER(right) || !LT_IS_NUMBER(left))
+			lt_runtime_error(vm, "Expected comparison operands to be numbers!");
 		PUSH(lt_get_number(left) >= lt_get_number(right) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
 	} NEXT;
 
 	case LT_OP_NEG: {
 		lt_Value right = POP();
-		if (!LT_IS_NUMBER(right)) {}
+		if (!LT_IS_NUMBER(right))
+			lt_runtime_error(vm, "Expected negation operand to be a number!");
 		PUSH(lt_make_number(lt_get_number(right) * -1.0));
 	} NEXT;
 
@@ -2129,6 +2137,7 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 		{
 		case LT_AST_NODE_CHUNK: lt_buffer_destroy(vm, &entry->chunk.body); lt_free_scope(vm, entry->chunk.scope); break;
 		case LT_AST_NODE_TABLE: lt_buffer_destroy(vm, &entry->table.keys); lt_buffer_destroy(vm, &entry->table.values); break;
+		case LT_AST_NODE_ARRAY: lt_buffer_destroy(vm, &entry->array.values); break;
 		case LT_AST_NODE_FN: /*lt_buffer_destroy(vm, &entry->fn.body);*/ lt_free_scope(vm, entry->fn.scope); break;
 		case LT_AST_NODE_IF: case LT_AST_NODE_ELSEIF: case LT_AST_NODE_ELSE: lt_buffer_destroy(vm, &entry->branch.body); break;
 		}

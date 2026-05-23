@@ -232,8 +232,9 @@ static uint8_t _lt_array_last(lt_VM* vm, uint8_t argc)
     if (argc != 1) lt_runtime_error(vm, "Expected one argument to array.last!");
     lt_Value arr = lt_pop(vm);
     if (!LT_IS_ARRAY(arr)) lt_runtime_error(vm, "Expected argument to array.last to be array!");
+    if (lt_array_length(arr) == 0) lt_runtime_error(vm, "Expected argument to array.last to be non-empty!");
 
-    lt_push(vm, lt_array_at(arr, lt_array_length(arr) - 1));
+    lt_push(vm, *lt_array_at(arr, lt_array_length(arr) - 1));
     return 1;
 }
 
