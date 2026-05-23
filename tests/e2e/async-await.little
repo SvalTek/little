@@ -1,0 +1,19 @@
+var delay = fn(value) {
+    return Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            resolve(value)
+        }, 1)
+    })
+}
+
+var work = async fn() {
+    io.print("async-start")
+    var value = await delay(7)
+    return value + 1
+}
+
+var promise = work()
+io.print("after-call")
+promise.next(fn(value) {
+    io.print(value)
+})

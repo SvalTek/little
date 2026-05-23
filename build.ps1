@@ -8,13 +8,20 @@ $ErrorActionPreference = "Stop"
 $repo = $PSScriptRoot
 $outPath = Join-Path $repo $Output
 $outDir = Split-Path -Parent $outPath
+$threadFlags = @()
+if ($env:OS -ne "Windows_NT") {
+    $threadFlags += "-pthread"
+}
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 & $Compiler -std=c11 `
     (Join-Path $repo "main.c") `
+    (Join-Path $repo "src/little_buffer.c") `
     (Join-Path $repo "src/little.c") `
     (Join-Path $repo "src/little_std.c") `
+    (Join-Path $repo "src/little_async.c") `
+    $threadFlags `
     -lm -o $outPath
 
 if ($LASTEXITCODE -ne 0) {

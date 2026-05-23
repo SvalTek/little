@@ -12,11 +12,18 @@ $exe = if ($Exe) { $Exe } else { Join-Path $buildDir "little-e2e.exe" }
 
 if (!$SkipBuild) {
     New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+    $threadFlags = @()
+    if ($env:OS -ne "Windows_NT") {
+        $threadFlags += "-pthread"
+    }
 
     & $Compiler -std=c11 `
         (Join-Path $repo "main.c") `
+        (Join-Path $repo "src/little_buffer.c") `
         (Join-Path $repo "src/little.c") `
         (Join-Path $repo "src/little_std.c") `
+        (Join-Path $repo "src/little_async.c") `
+        $threadFlags `
         -lm -o $exe
 
     if ($LASTEXITCODE -ne 0) {

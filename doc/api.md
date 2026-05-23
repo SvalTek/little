@@ -88,6 +88,22 @@ Tokenizes, parses, and compiles the source string, passing `mod_name` for debug 
 
 ---
 ```c
+uint8_t lt_poll(lt_VM* vm);
+void lt_runloop(lt_VM* vm);
+```
+Polls or drains asynchronous work owned by the VM, including promise callbacks, timers, and worker completions. `lt_poll` returns non-zero while work was performed or remains pending.
+
+---
+## Library loading
+
+```c
+void ltstd_open_all(lt_VM* vm);
+void ltasync_open_all(lt_VM* vm);
+```
+The VM starts without standard libraries. Use `ltstd_open_all` for the traditional stdlib modules and `ltasync_open_all` for optional Promise, timer, and thread globals. The CLI opens both because it is designed to run full Little scripts.
+
+---
+```c
 lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name);
 ```
 Tokenizes the passed source string, with `mod_name` for debug purposes, and returns the resulting tokenizer.

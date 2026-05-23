@@ -1,0 +1,7 @@
+Promise(fn(resolve, reject) {
+    resolve("value")
+}).next(fn(value) {
+    io.print(value)
+})
+
+io.print("sync")

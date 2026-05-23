@@ -9,6 +9,7 @@ Little supports a set of basic types:
 * `closure` - any function that captures surroudning values
 * `array` - 0-indexed array of values
 * `table` - a table of key-value pairs
+* `promise` - an asynchronous value that can be fulfilled or rejected
 * `native` - reference to a natively defined C function
 * `ptr` - userdata pointer set by C api
 
@@ -93,6 +94,7 @@ Expressions consist of all literals and operators.
     * They are first-class objects, and can only be stored through assignment
     * Can be trivially passed as parameters as well
     * Parameter list is mandatory, even if empty
+* `async fn` literals return a promise when called, and may use `await`
 ### Operators
 The mathematical operators `+`, `-`, `*`, and `/` only operator on `number` values
 The comparison operators `<`, `<=`, `>`, `>=` also only work with `number`s
@@ -100,6 +102,42 @@ The comparison operators `is` and `isnt` work on all types
 The logical operators `or`, `and` and `not` compare values based on their `truthiness`, and return their last operand
 The index operator `[expression]` works on any `table` and `array` values
 The dot operator `.` is syntax sugar for indexsing `table`s - `my_table.my_index = 10`
+The colon operator `:` is syntax sugar for receiver-passing method calls - `obj:method(a)` is equivalent to `obj.method(obj, a)`. Methods conventionally name the first parameter `this`.
 
 ### Truthiness
 Any `null` or `false` values are considered `falsy`, anything else is logically `true`
+
+---
+## Async
+Little supports JS-style Promise and timer primitives:
+```js
+Promise(fn(resolve, reject) {
+    setTimeout(fn() { resolve("done") }, 10)
+}).next(fn(value) {
+    io.print(value)
+}).catch(fn(reason) {
+    io.print(reason)
+}).finally(fn() {
+    io.print("settled")
+})
+```
+
+`thread.run(source, state)` runs Little source text in an isolated worker VM and returns a promise. The worker receives a copied `state` global and resolves with the script's returned value. Only `null`, numbers, booleans, strings, arrays, and tables cross worker boundaries.
+
+`async fn` creates an asynchronous function. Calling it returns a promise immediately; the function body is run by the VM event loop. `await` is only valid inside async functions and waits for a promise before continuing:
+```js
+var delay = fn(value) {
+    return Promise(fn(resolve, reject) {
+        setTimeout(fn() { resolve(value) }, 10)
+    })
+}
+
+var work = async fn() {
+    var value = await delay(7)
+    return value + 1
+}
+
+work().next(fn(value) {
+    io.print(value)
+})
+```

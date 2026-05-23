@@ -1,0 +1,5 @@
+setTimeout(fn() {
+    io.print("later")
+}, 1)
+
+io.print("now")

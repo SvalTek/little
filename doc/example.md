@@ -31,3 +31,12 @@ Here are some samples of how to extend the language through the C API. For brevi
 
     lt_table_set(vm, vm->global, lt_make_string(vm, "module"), my_module);
 ```
+
+## Optional library loading
+
+```c
+    ltstd_open_all(vm);    // io, math, array, string, gc
+    ltasync_open_all(vm);  // Promise, timers, thread.run
+```
+
+The CLI opens both sets of libraries, but embedders can choose only the modules they want.

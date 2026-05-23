@@ -31,3 +31,13 @@ The little stdlib is divided into a few modules. These can all be loaded separat
 `gc.collect()` performs a collection sweep, and returns the number of objects freed.
 `gc.addroot(x)` adds object `x` to the gc's rootset, preventing it and everything it references from being collected.
 `gc.removeroot(x)` removes `x` from the rootset.
+
+## async
+
+`Promise(fn(resolve, reject) { ... })` creates a promise. Promise methods are `next(fn(value) { ... })`, `catch(fn(reason) { ... })`, and `finally(fn() { ... })`.
+
+`setTimeout(callback, ms)` runs `callback` once after `ms` milliseconds and returns a timer id.
+`setInterval(callback, ms)` runs `callback` repeatedly until cleared.
+`clearTimeout(id)` and `clearInterval(id)` cancel timers.
+
+`thread.run(source, state)` runs Little `source` in an isolated worker VM with copied global `state`, returning a promise that resolves to the worker return value or rejects with an error string.
