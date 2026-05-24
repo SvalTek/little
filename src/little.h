@@ -362,6 +362,7 @@ typedef struct {
 
 	uint8_t is_valid;
 	uint8_t in_async;
+	uint8_t allow_table_call;
 	uint8_t had_error;
 } lt_Parser;
 

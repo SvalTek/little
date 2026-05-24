@@ -881,6 +881,21 @@ static lt_Token* _lt_skip_destructure_pattern(lt_Token* current, lt_TokenType cl
 	return current;
 }
 
+static uint8_t _lt_is_postfix_source(lt_Token* last)
+{
+	if (!last) return 0;
+	switch (last->type)
+	{
+	case LT_TOKEN_CLOSEBRACE:
+	case LT_TOKEN_CLOSEBRACKET:
+	case LT_TOKEN_CLOSEPAREN:
+	case LT_TOKEN_IDENTIFIER:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
 static lt_Token* _lt_parse_destructure_pattern(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* declare)
 {
 	declare->declare.entries = lt_buffer_new(sizeof(lt_DestructureEntry));
@@ -981,6 +996,9 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 #define PEEK() (current + 1)
 #define NEXT() (last = current, current++)
+#define REQUIRE_STATEMENT_BOUNDARY() \
+	if (current->type != LT_TOKEN_END && current->type != LT_TOKEN_CLOSEBRACE && current > start && (current - 1)->line == current->line) \
+		_lt_parse_error(vm, p->tkn->module, current, "Expected newline between statements!")
 
 	while (current->type != LT_TOKEN_END)
 	{
@@ -995,7 +1013,10 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			lt_AstNode* if_statement = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_IF);
 			current++;
 			lt_AstNode* expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			uint8_t was_allow_table_call = p->allow_table_call;
+			p->allow_table_call = 0;
 			current = _lt_parse_expression(vm, p, current, expr);
+			p->allow_table_call = was_allow_table_call;
 
 			if (current->type != LT_TOKEN_OPENBRACE) _lt_parse_error(vm, p->tkn->module, current, "Expeceted open brace to follow if expression!");
 			current++;
@@ -1022,7 +1043,10 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 					node->type = LT_AST_NODE_ELSEIF;
 
 					lt_AstNode* expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+					uint8_t was_allow_table_call = p->allow_table_call;
+					p->allow_table_call = 0;
 					current = _lt_parse_expression(vm, p, current, expr);
+					p->allow_table_call = was_allow_table_call;
 
 					node->branch.expr = expr;
 				}
@@ -1045,6 +1069,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			}
 
 			lt_buffer_push(vm, dst, &if_statement);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 
 		case LT_TOKEN_FOR: {
@@ -1058,7 +1083,10 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			current++;
 
 			lt_AstNode* iter_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			uint8_t was_allow_table_call = p->allow_table_call;
+			p->allow_table_call = 0;
 			current = _lt_parse_expression(vm, p, current, iter_expr);
+			p->allow_table_call = was_allow_table_call;
 
 			for_expr->loop.identifier = iteridx;
 			
@@ -1091,6 +1119,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			for_expr->loop.body = body;
 
 			lt_buffer_push(vm, dst, &for_expr);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 
 		case LT_TOKEN_WHILE: {
@@ -1098,7 +1127,10 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			current++; // eat while
 
 			lt_AstNode* iter_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			uint8_t was_allow_table_call = p->allow_table_call;
+			p->allow_table_call = 0;
 			current = _lt_parse_expression(vm, p, current, iter_expr);
+			p->allow_table_call = was_allow_table_call;
 
 			while_expr->loop.iterator = iter_expr;
 
@@ -1111,6 +1143,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			while_expr->loop.body = body;
 
 			lt_buffer_push(vm, dst, &while_expr);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 
 		case LT_TOKEN_RETURN: {
@@ -1127,12 +1160,14 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			}
 
 			lt_buffer_push(vm, dst, &ret);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		case LT_TOKEN_BREAK: {
 			lt_AstNode* brk = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_BREAK);
 			current++; // eat 'break'
 
 			lt_buffer_push(vm, dst, &brk);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		case LT_TOKEN_CLASS: {
 			lt_AstNode* klass = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_CLASS);
@@ -1219,6 +1254,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 			current++; // eat closing brace
 			lt_buffer_push(vm, dst, &klass);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		case LT_TOKEN_VAR: {
 			lt_AstNode* declare = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_DECLARE);
@@ -1246,6 +1282,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 			declare->declare.expr = rhs;
 			lt_buffer_push(vm, dst, &declare);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		default: {
 			lt_AstNode* result = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
@@ -1265,6 +1302,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			}
 
 			lt_buffer_push(vm, dst, &result);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		}
 	}
@@ -1329,6 +1367,45 @@ case LT_TOKEN_NUMBER_LITERAL:  \
 case LT_TOKEN_STRING_LITERAL:  \
 case LT_TOKEN_FN:              \
 case LT_TOKEN_ASYNC
+
+static lt_Token* _lt_parse_table_literal(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode** out)
+{
+	lt_AstNode* table = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_TABLE);
+	table->table.keys = lt_buffer_new(sizeof(lt_AstNode*));
+	table->table.values = lt_buffer_new(sizeof(lt_AstNode*));
+
+	current++; // eat brace
+
+	while (current->type != LT_TOKEN_CLOSEBRACE)
+	{
+		if (current->type == LT_TOKEN_END) _lt_parse_error(vm, p->tkn->module, current, "Unexpected end of file in table literal!");
+
+		lt_AstNode* key = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
+		lt_Token* key_token = current++;
+		key->literal.token = key_token;
+
+		lt_AstNode* value = 0;
+		if (current->type == LT_TOKEN_COLON)
+		{
+			current++; // eat colon
+			value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			current = _lt_parse_expression(vm, p, current, value);
+		}
+		else if (key_token->type == LT_TOKEN_IDENTIFIER)
+		{
+			value = _lt_get_node_of_type(vm, key_token, p, LT_AST_NODE_IDENTIFIER);
+			value->identifier.token = key_token;
+		}
+		else lt_error(vm, "Expected colon to follow table index!");
+
+		lt_buffer_push(vm, &table->table.keys, &key);
+		lt_buffer_push(vm, &table->table.values, &value);
+		if (current->type == LT_TOKEN_COMMA) current++;
+	}
+
+	*out = table;
+	return current + 1; // eat closing brace
+}
 
 lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstNode* dst)
 {
@@ -1466,9 +1543,6 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
 			idx_expr->literal.token = NEXT();
 
-			if (current->type != LT_TOKEN_OPENPAREN) _lt_parse_error(vm, p->tkn->module, current, "Expected call arguments to follow ':' method access!");
-			NEXT(); // eat open paren
-
 			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
 			lt_AstNode* index = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_INDEX);
 			index->index.source = source;
@@ -1477,21 +1551,34 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			lt_AstNode* call = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_CALL);
 			uint8_t nargs = 0;
 			call->call.args[nargs++] = source;
-
-			while (current->type != LT_TOKEN_CLOSEPAREN)
-			{
-				if (current->type == LT_TOKEN_END) _lt_parse_error(vm, p->tkn->module, current, "Unexpected end of file in expression. (Unclosed method call?)");
-				if (current->type == LT_TOKEN_COMMA) NEXT();
-
-				lt_AstNode* arg = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
-				current = _lt_parse_expression(vm, p, current, arg);
-				if (nargs >= LT_MAX_CALL_ARGS) _lt_parse_error(vm, p->tkn->module, current, "Too many call arguments!");
-				call->call.args[nargs++] = arg;
-			}
-
 			call->call.callee = index;
+
+			if (current->type == LT_TOKEN_OPENPAREN)
+			{
+				NEXT(); // eat open paren
+				while (current->type != LT_TOKEN_CLOSEPAREN)
+				{
+					if (current->type == LT_TOKEN_END) _lt_parse_error(vm, p->tkn->module, current, "Unexpected end of file in expression. (Unclosed method call?)");
+					if (current->type == LT_TOKEN_COMMA) NEXT();
+
+					lt_AstNode* arg = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+					current = _lt_parse_expression(vm, p, current, arg);
+					if (nargs >= LT_MAX_CALL_ARGS) _lt_parse_error(vm, p->tkn->module, current, "Too many call arguments!");
+					call->call.args[nargs++] = arg;
+				}
+
+				NEXT(); // eat close paren
+			}
+			else if (p->allow_table_call && current->type == LT_TOKEN_OPENBRACE)
+			{
+				lt_AstNode* table = 0;
+				current = _lt_parse_table_literal(vm, p, current, &table);
+				last = current - 1;
+				call->call.args[nargs++] = table;
+			}
+			else _lt_parse_error(vm, p->tkn->module, current, "Expected call arguments to follow ':' method access!");
+
 			lt_buffer_push(vm, &result, &call);
-			NEXT(); // eat close paren
 		} break;
 
 		case LT_TOKEN_NUMBER_LITERAL: case LT_TOKEN_NULL_LITERAL: case LT_TOKEN_TRUE_LITERAL: case LT_TOKEN_FALSE_LITERAL: case LT_TOKEN_STRING_LITERAL: {
@@ -1595,42 +1682,23 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 		} break;
 
 		case LT_TOKEN_OPENBRACE: {
-			BREAK_ON_EXPR_BOUNDRY
+			uint8_t is_table_call = p->allow_table_call && _lt_is_postfix_source(last);
+			if (!is_table_call) BREAK_ON_EXPR_BOUNDRY
 
-			// any time we see this, assume it's a table lieral. all other braces should be handled at block level
-			lt_AstNode* table = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_TABLE);
-			table->table.keys = lt_buffer_new(sizeof(lt_AstNode*));
-			table->table.values = lt_buffer_new(sizeof(lt_AstNode*));
-
-			NEXT(); // eat brace
-
-			while (current->type != LT_TOKEN_CLOSEBRACE)
+			lt_AstNode* table = 0;
+			current = _lt_parse_table_literal(vm, p, current, &table);
+			last = current - 1;
+			if (is_table_call)
 			{
-				lt_AstNode* key = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
-				lt_Token* key_token = NEXT();
-				key->literal.token = key_token;
+				lt_AstNode* callee = *(lt_AstNode**)lt_buffer_last(&result);
+				lt_buffer_pop(&result);
 
-				lt_AstNode* value = 0;
-				if (current->type == LT_TOKEN_COLON)
-				{
-					NEXT(); // eat colon
-					value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
-					current = _lt_parse_expression(vm, p, current, value);
-				}
-				else if (key_token->type == LT_TOKEN_IDENTIFIER)
-				{
-					value = _lt_get_node_of_type(vm, key_token, p, LT_AST_NODE_IDENTIFIER);
-					value->identifier.token = key_token;
-				}
-				else lt_error(vm, "Expected colon to follow table index!");
-
-				lt_buffer_push(vm, &table->table.keys, &key);
-				lt_buffer_push(vm, &table->table.values, &value);
-				if (current->type == LT_TOKEN_COMMA) current++;
+				lt_AstNode* call = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_CALL);
+				call->call.callee = callee;
+				call->call.args[0] = table;
+				lt_buffer_push(vm, &result, &call);
 			}
-
-			NEXT();
-			lt_buffer_push(vm, &result, &table);
+			else lt_buffer_push(vm, &result, &table);
 		} break;
 
 		case LT_TOKEN_AWAIT: {
@@ -1774,6 +1842,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 	{
 		p.current = 0;
 		p.in_async = 0;
+		p.allow_table_call = 1;
 		p.had_error = 0;
 		p.root = _lt_get_node_of_type(vm, (lt_Token*)tkn->token_buffer.data, &p, LT_AST_NODE_CHUNK);
 		p.root->chunk.body = lt_buffer_new(sizeof(lt_AstNode*));
