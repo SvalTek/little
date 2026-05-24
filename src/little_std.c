@@ -262,6 +262,13 @@ static char* _ltstd_read_module_file(lt_VM* vm, const char* requested, char** re
     char* source = vm->alloc((size_t)size + 1);
     size_t read = fread(source, 1, (size_t)size, file);
     fclose(file);
+    if (read != (size_t)size)
+    {
+        vm->free(source);
+        vm->free(*resolved);
+        *resolved = 0;
+        return 0;
+    }
     source[read] = 0;
 
     return source;
