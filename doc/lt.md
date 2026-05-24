@@ -53,7 +53,21 @@ elseif a is 150 { ... }
 elseif b is a { ... }
 else { ... }
 ```
-Branching is done with the `if` statement, followed by an expression to evaluate and then a mandatory set of braces, containing the body to execute. `if`s can be followed by any number of `elseif` statements, and optionally a final `else`statement,
+Branching is done with the `if` statement, followed by an expression to evaluate and then a mandatory set of braces containing the body to execute. `if` conditions do not require parentheses:
+
+```js
+if score >= 10 and status isnt "blocked" {
+    io.print("ready")
+}
+elseif not enabled {
+    io.print("disabled")
+}
+else {
+    io.print("waiting")
+}
+```
+
+`if` can be followed by any number of `elseif` statements, and optionally a final `else` statement. Each `if` and `elseif` condition is an ordinary expression. `null` and `false` are falsy; every other value is truthy.
 
 ---
 ### for
@@ -69,7 +83,13 @@ for item in array.each(a) { ... }
 var a = 0
 while a < 10 { a = a + 1 }
 ```
-`while` loops continually evaluate their condition and execute their bodies.
+`while` loops continually evaluate an ordinary expression condition and execute their bodies while it is truthy. Parentheses are not required around the condition; braces are required around the body:
+
+```js
+while remaining > 0 and not stopped {
+    remaining = remaining - 1
+}
+```
 
 ---
 ### break
@@ -91,8 +111,18 @@ return unpack(values)
 ```js
 var a = 10
 a = 20
+user.name = "Ada"
+items[0] = "first"
 ```
-Any identifier followed by `=` assignment.
+Assignment uses a single `=`. Little does not have compound assignment operators such as `+=` or `-=`.
+
+Valid assignment targets are:
+
+* an existing local or upvalue name: `a = 20`
+* a table, array, or instance index: `items[0] = value`
+* dot sugar for an index: `user.name = "Ada"`
+
+Assigning to an undeclared bare name is an error. Use `var name = value` for a local declaration or `global name = value` for an intentional VM-global write.
 
 ---
 Any top-level statement that doesn't match any of these is instead executed as an `expression`
@@ -119,13 +149,110 @@ Expressions consist of all literals and operators.
 * `async fn` literals return a promise when called, and may use `await`
 * `class` declarations create callable class objects that construct instances
 ### Operators
-The mathematical operators `+`, `-`, `*`, and `/` only operator on `number` values
-The comparison operators `<`, `<=`, `>`, `>=` also only work with `number`s
-The comparison operators `is` and `isnt` work on all types
-The logical operators `or`, `and` and `not` compare values based on their `truthiness`, and return their last operand
-The index operator `[expression]` works on any `table` and `array` values
-The dot operator `.` is syntax sugar for indexsing `table`s - `my_table.my_index = 10`
+The mathematical operators `+`, `-`, `*`, and `/` only operate on `number` values.
+The comparison operators `<`, `<=`, `>`, and `>=` also only work with `number`s.
+The equality operators `is` and `isnt` work on all types. Little does not have `==` or `!=`; use `is` and `isnt`.
+The logical operators `or`, `and`, and `not` compare values based on truthiness. `not` returns a boolean. `and` returns a boolean. `or` returns the left operand when it is truthy, otherwise the right operand when it is truthy, otherwise `false`.
+The index operator `[expression]` works on any `table` and `array` values.
+The dot operator `.` is syntax sugar for indexing `tables` - `my_table.my_index = 10`.
 The colon operator `:` is syntax sugar for receiver-passing method calls - `obj:method(a)` is equivalent to `obj.method(obj, a)`. Methods conventionally name the first parameter `this`.
+
+Important: `and` is not a value-selection operator in Little. It always returns a boolean. Use `if` for guarded access or guarded calls:
+
+```js
+var label = null
+
+if user {
+    label = user.name
+}
+```
+
+Do not write Lua-style guards such as `user and user.name` when you need `user.name`; that expression returns `true` or `false`, not the selected value. `or` can be used for simple defaults:
+
+```js
+var label = requestedLabel or "untitled"
+```
+
+Operator precedence, from highest to lowest:
+
+1. Calls, indexing, dot access, and receiver calls: `fn()`, `value[key]`, `table.key`, `obj:method()`
+2. Unary operators: `not value`, `-value`
+3. Multiplication and division: `*`, `/`
+4. Addition and subtraction: `+`, `-`
+5. Comparisons and equality: `<`, `<=`, `>`, `>=`, `is`, `isnt`
+6. Logical operators: `and`, `or`
+
+Binary operators associate left-to-right within the same precedence level. Prefix unary operators associate right-to-left, so `not not false` works as `not (not false)`.
+
+This means:
+
+```js
+1 + 2 * 3 is 7        ; true, because * runs before +
+not false is true     ; true, because not runs before is
+1 is 1 and false      ; false, because is runs before and
+false or "fallback"   ; "fallback"
+true and "value"      ; true
+10 - 3 - 2            ; 5, because binary operators group left-to-right
+```
+
+Use parentheses to group an expression when the default precedence is not what you want:
+
+```js
+(1 + 2) * 3           ; 9
+if (score + bonus) >= 10 { ... }
+while (count < max) and running { ... }
+```
+
+Because `and` and `or` have the same precedence, prefer simple expressions or split complex conditions into named locals when mixing them heavily.
+
+### Function and method calls
+
+Normal calls evaluate the callee expression, then the argument expressions:
+
+```js
+fn add(a, b) {
+    return a + b
+}
+
+io.print(add(2, 3))
+```
+
+Functions are lexically scoped and can close over surrounding locals:
+
+```js
+fn makeAdder(amount) {
+    return fn(value) {
+        return value + amount
+    }
+}
+```
+
+The colon form passes the receiver as the first argument:
+
+```js
+var counter = {
+    value: 0
+    add: fn(this, amount) {
+        @value = @value + amount
+        return @value
+    }
+}
+
+counter:add(2) ; same as counter.add(counter, 2)
+```
+
+Inside a function whose first parameter is named `this`, `@name` is shorthand for `this.name`.
+
+Table-call sugar lets a table literal immediately after a callable become one argument:
+
+```js
+configure {
+    name: "little"
+    debug: true
+}
+```
+
+See [syntax.md](syntax.md) for details on table-call sugar and expression boundaries.
 
 ### Multiple returns
 Little supports multiple return values through `unpack(array)`. In scalar contexts, only the first returned value is used, or `null` when no values are returned.

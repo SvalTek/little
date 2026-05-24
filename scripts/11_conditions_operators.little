@@ -1,0 +1,77 @@
+io.print("conditions and operators")
+
+; Conditions in `if`, `elseif`, and `while` are ordinary expressions.
+; You do not need parentheses around the condition, but the body must use braces.
+var score = 12
+var status = "ready"
+
+if score >= 10 and status isnt "blocked" {
+    io.print("if", "ready")
+}
+elseif not status {
+    io.print("if", "missing status")
+}
+else {
+    io.print("if", "waiting")
+}
+
+; `is` and `isnt` compare any value type.
+; Little does not have == or !=. Use `is` and `isnt` instead.
+io.print("same number", score is 12)
+io.print("different string", status isnt "blocked")
+io.print("null check", null is null)
+
+; Truthiness is what control flow uses. Only null and false are falsy.
+if "non-empty strings are truthy" {
+    io.print("truthy string")
+}
+
+if 0 {
+    io.print("zero is truthy")
+}
+
+if not null {
+    io.print("not null")
+}
+
+; `or` is useful for fallback values. It returns a truthy operand, not just a
+; boolean, when one exists.
+var requestedName = null
+var displayName = requestedName or "anonymous"
+io.print("fallback", displayName)
+
+; `and` returns a boolean in Little.
+; It is not a Lua-style value selector, so `true and "value"` is true, not
+; "value". Use `if` for guarded access or guarded calls.
+io.print("and result", true and "value")
+io.print("or result", false or "value")
+
+var maybeUser = { name: "Ada" }
+var guardedName = null
+
+if maybeUser {
+    guardedName = maybeUser.name
+}
+
+io.print("guarded", guardedName)
+
+; Precedence matters. `*` runs before `+`, comparisons run before `and`, and
+; unary `not` runs before comparisons.
+io.print("math precedence", 1 + 2 * 3)
+io.print("comparison before and", 1 is 1 and false)
+io.print("not before is", not false is true)
+io.print("left associative", 10 - 3 - 2)
+
+; Parentheses can make a nested part explicit. When an expression is becoming
+; hard to read, prefer a named local over a clever one-liner.
+var grouped = 1 * (2 + 3)
+var allowed = (score >= 10) and (status is "ready")
+io.print("grouped", grouped)
+io.print("allowed", allowed)
+
+; `while` conditions use the same expression rules.
+var remaining = 3
+while (remaining > 0) and allowed {
+    io.print("remaining", remaining)
+    remaining = remaining - 1
+}

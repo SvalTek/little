@@ -2,11 +2,12 @@ version: '3'
 
 tasks:
   default:
-    desc: Build and run the end-to-end test suite
-    deps: [test]
+    desc: Show available tasks
+    cmds:
+      - task --list-all
 
   build:
-    desc: Build the little CLI into build/little.exe
+    desc: Build the baseline little CLI into build/little.exe
     cmds:
       - powershell -ExecutionPolicy Bypass -File ./build.ps1
     sources:
@@ -15,6 +16,64 @@ tasks:
       - src/*.h
     generates:
       - build/little.exe
+
+  build:baseline:
+    desc: Build baseline CLI into build/little-baseline.exe
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-baseline.exe
+    sources:
+      - main.c
+      - src/*.c
+      - src/*.h
+    generates:
+      - build/little-baseline.exe
+
+  build:release:
+    desc: Build normal release CLI with -O2 -DNDEBUG -s
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-release.exe -CFlags "-O2 -DNDEBUG" -LdFlags "-s"
+    sources:
+      - main.c
+      - src/*.c
+      - src/*.h
+    generates:
+      - build/little-release.exe
+
+  build:small:
+    desc: Build small release CLI with -Os -DNDEBUG -s
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-small.exe -CFlags "-Os -DNDEBUG" -LdFlags "-s"
+    sources:
+      - main.c
+      - src/*.c
+      - src/*.h
+    generates:
+      - build/little-small.exe
+
+  build:small-aggressive:
+    desc: Build aggressive small release CLI with LTO, function section GC, and no unwind tables
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-small-aggressive.exe -CFlags "-Os -DNDEBUG -flto -ffunction-sections -fno-asynchronous-unwind-tables -fno-unwind-tables" -LdFlags "-flto -Wl,--gc-sections -s"
+    sources:
+      - main.c
+      - src/*.c
+      - src/*.h
+    generates:
+      - build/little-small-aggressive.exe
+
+  build:variants:
+    desc: Build baseline and release-size variants
+    deps:
+      - build:baseline
+      - build:release
+      - build:small
+      - build:small-aggressive
+
+  sizes:
+    desc: Build release-size variants and print artifact sizes
+    deps: [build:variants]
+    cmds:
+      - powershell -NoProfile -Command "Get-Item build/little-baseline.exe, build/little-release.exe, build/little-small.exe, build/little-small-aggressive.exe | Sort-Object Name | Format-Table Name,Length"
 
   test:
     desc: Run end-to-end language tests

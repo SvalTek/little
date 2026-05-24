@@ -24,7 +24,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run.ps1
 
 Tour order:
 
-1. `01_language_basics.little` covers comments, named functions, function values, globals, arrays, tables, receiver calls, table-call sugar, `with`, and loops.
+1. `01_language_basics.little` covers comments, named functions, function values, closures, globals, arrays, tables, receiver calls, table-call sugar, `with`, and loops.
 2. `02_stdlib_collections.little` covers array, table, and string collection helpers.
 3. `03_math_and_strings.little` covers math helpers, formatting, and string expansion.
 4. `04_classes.little` covers constructors, private/public members, accessors, inheritance, `super`, and `override`.
@@ -34,6 +34,7 @@ Tour order:
 8. `08_task_real_work.little` covers a larger task state workflow.
 9. `09_mainloop_scheduler.little` covers coordinating timers, tasks, and `mainloop.run`.
 10. `10_modules.little` covers module returns, named imports, directory modules, search paths, and package path templates.
+11. `11_conditions_operators.little` covers `if`, `elseif`, `else`, `while`, truthiness, `is`/`isnt`, logical operators, and operator precedence.
 
 The file IO script writes to `build/example-note.txt`.
 The module tutorial imports fixture modules from `scripts/tutorial_modules/` and

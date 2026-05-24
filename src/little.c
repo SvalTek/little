@@ -249,7 +249,9 @@ static uint8_t faststrcmp(const char* a, uint64_t a_len, const char* b, uint64_t
 
 uint8_t lt_equals(lt_Value a, lt_Value b)
 {
-	if (LT_IS_NUMBER(a) != LT_IS_NUMBER(b) || (a & LT_TYPE_MASK) != (b & LT_TYPE_MASK)) return 0;
+	if (LT_IS_NUMBER(a) || LT_IS_NUMBER(b))
+		return LT_IS_NUMBER(a) && LT_IS_NUMBER(b) && lt_get_number(a) == lt_get_number(b);
+	if ((a & LT_TYPE_MASK) != (b & LT_TYPE_MASK)) return 0;
 	switch (a & LT_TYPE_MASK)
 	{
 	case LT_TYPE_NULL:
@@ -1612,6 +1614,18 @@ uint8_t _lt_get_prec(lt_TokenType op)
 	return 0;
 }
 
+static uint8_t _lt_is_unary_operator(lt_TokenType op)
+{
+	return op == LT_TOKEN_NOT || op == LT_TOKEN_NEGATE;
+}
+
+static uint8_t _lt_should_pop_operator(lt_TokenType top, lt_TokenType current)
+{
+	uint8_t top_prec = _lt_get_prec(top);
+	uint8_t current_prec = _lt_get_prec(current);
+	return top_prec > current_prec || (top_prec == current_prec && !_lt_is_unary_operator(current));
+}
+
 #define LT_TOKEN_ANY_LITERAL   \
 	 LT_TOKEN_NULL_LITERAL:    \
 case LT_TOKEN_FALSE_LITERAL:   \
@@ -1895,7 +1909,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 			while (operator_stack.length > 0)
 			{
-				if (_lt_get_prec(*(lt_TokenType*)lt_buffer_last(&operator_stack)) > _lt_get_prec(optype))
+				if (_lt_should_pop_operator(*(lt_TokenType*)lt_buffer_last(&operator_stack), optype))
 				{
 					lt_TokenType shunted = *(lt_TokenType*)lt_buffer_last(&operator_stack);
 					lt_buffer_pop(&operator_stack);
@@ -1910,13 +1924,20 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 		} break;
 
 		case LT_TOKEN_OPENPAREN: {
+			uint8_t is_call = 0;
 			if (last) switch (last->type)
 			{
 			case LT_TOKEN_CLOSEPAREN:
 			case LT_TOKEN_CLOSEBRACE:
 			case LT_TOKEN_IDENTIFIER:
 			case LT_TOKEN_SUPER:
-			case LT_TOKEN_CLOSEBRACKET: {
+			case LT_TOKEN_CLOSEBRACKET:
+				is_call = 1;
+				break;
+			}
+
+			if (is_call)
+			{
 				NEXT();
 				lt_AstNode* callee = *(lt_AstNode**)lt_buffer_last(&result); lt_buffer_pop(&result);
 
@@ -1937,8 +1958,9 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 				call->call.callee = callee;
 				lt_buffer_push(vm, &result, &call);
 				NEXT();
-			} break;
-			default:
+			}
+			else
+			{
 				n_open++;
 				lt_buffer_push(vm, &operator_stack, &current->type); NEXT();
 			}

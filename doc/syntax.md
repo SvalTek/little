@@ -112,6 +112,33 @@ var value = source
 
 The dot operator requires an identifier after it. The colon operator requires an identifier and call arguments after it.
 
+## Operators And Grouping
+
+Equality is spelled with words:
+
+```js
+if name is "Ada" { ... }
+if status isnt "blocked" { ... }
+```
+
+Little does not have `==` or `!=`. Use `is` and `isnt`.
+
+Parentheses group expressions and may also wrap control-flow conditions:
+
+```js
+var total = (base + bonus) * scale
+
+if (total >= 10) and ready {
+    io.print("ready")
+}
+
+while (count < max) {
+    count = count + 1
+}
+```
+
+See [lt.md](lt.md) for the full operator precedence and truthiness rules.
+
 ## Table Call Sugar
 
 A table literal immediately after a callable expression is treated as a single call argument.

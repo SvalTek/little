@@ -19,6 +19,16 @@ var double = fn(value) {
     return value * 2
 }
 
+; Functions close over surrounding locals.
+fn makeAdder(amount) {
+    return fn(value) {
+        return value + amount
+    }
+}
+
+var addFive = makeAdder(5)
+io.print("closure", addFive(10))
+
 ; Globals are explicit. Plain top-level `var` is local to this module/script.
 global appName = "Little Basics"
 global fn announce(name) {
