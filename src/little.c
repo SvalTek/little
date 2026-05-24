@@ -54,9 +54,9 @@ typedef enum {
 	LT_OP_LOADB,
 	LT_OP_AWAIT,
 
-	LT_OP_CLOSE, LT_OP_CALL, LT_OP_CALLM, LT_OP_FIXRET, LT_OP_PACKRET,
+	LT_OP_CLOSE, LT_OP_CALL, LT_OP_CALLM, LT_OP_FIXRET, LT_OP_PACKRET, LT_OP_SUPERC, LT_OP_SUPERM,
 
-	LT_OP_MAKET, LT_OP_MAKEA, LT_OP_MAKEC, LT_OP_SETT, LT_OP_SETC, LT_OP_GETT, LT_OP_GETD, LT_OP_GETG, LT_OP_SETG,
+	LT_OP_MAKET, LT_OP_MAKEA, LT_OP_MAKEC, LT_OP_SETSUPER, LT_OP_SETT, LT_OP_SETC, LT_OP_GETT, LT_OP_GETD, LT_OP_GETG, LT_OP_SETG,
 
 	LT_OP_JMP, LT_OP_JMPC, LT_OP_JMPN,
 
@@ -572,6 +572,9 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 				else PUSH_STR_TOKEN("async", LT_TOKEN_ASYNC)
 				else PUSH_STR_TOKEN("await", LT_TOKEN_AWAIT)
 				else PUSH_STR_TOKEN("class", LT_TOKEN_CLASS)
+				else PUSH_STR_TOKEN("extends", LT_TOKEN_EXTENDS)
+				else PUSH_STR_TOKEN("override", LT_TOKEN_OVERRIDE)
+				else PUSH_STR_TOKEN("super", LT_TOKEN_SUPER)
 				else PUSH_STR_TOKEN("public", LT_TOKEN_PUBLIC)
 				else PUSH_STR_TOKEN("private", LT_TOKEN_PRIVATE)
 				else PUSH_STR_TOKEN("constructor", LT_TOKEN_CONSTRUCTOR)
@@ -931,7 +934,7 @@ static lt_AstNode* _lt_make_field_initializer_fn(lt_VM* vm, lt_Parser* p, lt_Tok
 	return fn;
 }
 
-static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* fn, uint8_t add_this, uint8_t allow_auto_assign);
+static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* fn, uint8_t add_this, uint8_t allow_auto_assign, uint8_t is_constructor);
 static lt_Token* _lt_parse_destructure_pattern(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* declare);
 
 static lt_Token* _lt_parse_var_declaration(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* declare, uint8_t is_global)
@@ -981,7 +984,7 @@ static lt_Token* _lt_parse_named_function_declaration(lt_VM* vm, lt_Parser* p, l
 
 	lt_AstNode* func = _lt_get_node_of_type(vm, loc, p, LT_AST_NODE_FN);
 	func->fn.is_async = is_async;
-	current = _lt_parse_class_function(vm, p, current, func, 0, 0);
+	current = _lt_parse_class_function(vm, p, current, func, 0, 0, 0);
 	declare->declare.expr = func;
 	declare->declare.is_global = is_global;
 	return current;
@@ -1338,6 +1341,13 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			klass->class_decl.members = lt_buffer_new(sizeof(lt_ClassMember));
 			_lt_make_local(vm, p->current, klass->class_decl.identifier);
 
+			if (current->type == LT_TOKEN_EXTENDS)
+			{
+				current++;
+				if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected superclass name to follow 'extends'!");
+				klass->class_decl.superclass = current++;
+			}
+
 			if (current->type != LT_TOKEN_OPENBRACE) _lt_parse_error(vm, p->tkn->module, current, "Expected open brace to follow class name!");
 			current++;
 
@@ -1347,31 +1357,45 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 				lt_Visibility visibility = LT_VIS_PUBLIC;
 				uint8_t has_visibility = 0;
-				if (current->type == LT_TOKEN_PUBLIC || current->type == LT_TOKEN_PRIVATE)
+				uint8_t is_override = 0;
+				while (current->type == LT_TOKEN_PUBLIC || current->type == LT_TOKEN_PRIVATE || current->type == LT_TOKEN_OVERRIDE)
 				{
-					has_visibility = 1;
-					visibility = current++->type == LT_TOKEN_PRIVATE ? LT_VIS_PRIVATE : LT_VIS_PUBLIC;
+					if (current->type == LT_TOKEN_OVERRIDE)
+					{
+						if (is_override) _lt_parse_soft_error(vm, p, current, "duplicate override modifier!");
+						is_override = 1;
+						current++;
+					}
+					else
+					{
+						if (has_visibility) _lt_parse_soft_error(vm, p, current, "duplicate visibility modifier!");
+						has_visibility = 1;
+						visibility = current++->type == LT_TOKEN_PRIVATE ? LT_VIS_PRIVATE : LT_VIS_PUBLIC;
+					}
 				}
 
 				lt_ClassMember member;
 				memset(&member, 0, sizeof(member));
 				member.visibility = visibility;
+				member.is_override = is_override;
 
 				if (current->type == LT_TOKEN_CONSTRUCTOR)
 				{
 					if (has_visibility) _lt_parse_soft_error(vm, p, current, "constructor cannot be public/private/get/set!");
+					if (is_override) _lt_parse_soft_error(vm, p, current, "constructor cannot be override!");
 					member.type = LT_CLASS_CONSTRUCTOR;
 					member.name = current++;
 					member.value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_FN);
-					current = _lt_parse_class_function(vm, p, current, member.value, 1, 1);
+					current = _lt_parse_class_function(vm, p, current, member.value, 1, 1, 1);
 				}
 				else if (current->type == LT_TOKEN_GET || current->type == LT_TOKEN_SET)
 				{
+					if (is_override && visibility == LT_VIS_PRIVATE) _lt_parse_soft_error(vm, p, current, "private members cannot be override!");
 					member.type = current++->type == LT_TOKEN_GET ? LT_CLASS_GETTER : LT_CLASS_SETTER;
 					if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected property name to follow get/set!");
 					member.name = current++;
 					member.value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_FN);
-					current = _lt_parse_class_function(vm, p, current, member.value, member.type == LT_CLASS_GETTER ? 1 : 1, 0);
+					current = _lt_parse_class_function(vm, p, current, member.value, member.type == LT_CLASS_GETTER ? 1 : 1, 0, 0);
 					uint8_t arity = 0;
 					while (member.value->fn.args[arity]) arity++;
 					if (member.type == LT_CLASS_GETTER && arity != 1) _lt_parse_soft_error(vm, p, member.name, "getter must have 0 parameters!");
@@ -1388,14 +1412,16 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 					if (current->type == LT_TOKEN_OPENPAREN)
 					{
 						member.type = LT_CLASS_METHOD;
+						if (is_override && visibility == LT_VIS_PRIVATE) _lt_parse_soft_error(vm, p, member.name, "private members cannot be override!");
 						if (_lt_class_has_conflicting_member(&klass->class_decl.members, member.name, member.type))
 							_lt_parse_soft_error(vm, p, member.name, "class members cannot share a name except matching get/set accessors!");
 						member.value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_FN);
-						current = _lt_parse_class_function(vm, p, current, member.value, 1, 0);
+						current = _lt_parse_class_function(vm, p, current, member.value, 1, 0, 0);
 					}
 					else
 					{
 						member.type = LT_CLASS_FIELD;
+						if (is_override) _lt_parse_soft_error(vm, p, member.name, "fields cannot be override!");
 						if (_lt_class_has_conflicting_member(&klass->class_decl.members, member.name, member.type))
 							_lt_parse_soft_error(vm, p, member.name, "class members cannot share a name except matching get/set accessors!");
 						if (current->type == LT_TOKEN_ASSIGN)
@@ -1506,7 +1532,7 @@ end_block:
 	return new_scope;
 }
 
-static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* fn, uint8_t add_this, uint8_t allow_auto_assign)
+static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* fn, uint8_t add_this, uint8_t allow_auto_assign, uint8_t is_constructor)
 {
 	if (current->type != LT_TOKEN_OPENPAREN) _lt_parse_error(vm, p->tkn->module, current, "Expected open parenthesis to follow method name!");
 	current++;
@@ -1538,11 +1564,14 @@ static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* cur
 
 	lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
 	uint8_t was_async = p->in_async;
+	uint8_t was_constructor = p->in_constructor;
 	lt_Token* previous_self = p->self_token;
 	p->in_async = fn->fn.is_async;
+	p->in_constructor = is_constructor;
 	if (add_this) p->self_token = fn->fn.args[0];
 	lt_Scope* fn_scope = _lt_parse_block(vm, p, current, &body, 1, 1, fn->fn.args);
 	p->in_async = was_async;
+	p->in_constructor = was_constructor;
 	p->self_token = previous_self;
 	current = fn_scope->end;
 
@@ -1687,6 +1716,28 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			lt_AstNode* index = _lt_make_self_index_node(vm, p, loc, NEXT());
 			lt_buffer_push(vm, &result, &index);
 			} break;
+		case LT_TOKEN_SUPER: {
+			BREAK_ON_EXPR_BOUNDRY
+			lt_Token* loc = current;
+			NEXT();
+			if (!p->self_token) _lt_parse_error(vm, p->tkn->module, loc, "'super' is only valid inside class methods!");
+			lt_AstNode* super = _lt_get_node_of_type(vm, loc, p, LT_AST_NODE_SUPER);
+			if (current->type == LT_TOKEN_PERIOD)
+			{
+				current++;
+				if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected method name after 'super.'!");
+				super->super_expr.method = current++;
+			}
+			else
+			{
+				if (!p->in_constructor)
+					_lt_parse_error(vm, p->tkn->module, loc, "super(...) is only valid inside constructors!");
+				if (current->type != LT_TOKEN_OPENPAREN)
+					_lt_parse_error(vm, p->tkn->module, current, "Expected '(' after 'super'!");
+			}
+			lt_buffer_push(vm, &result, &super);
+			last = super->super_expr.method ? super->super_expr.method : loc;
+		} break;
 		case LT_TOKEN_OPENBRACKET: {
 			uint8_t is_index = last != 0;
 			if (last) switch(last->type)
@@ -1864,6 +1915,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			case LT_TOKEN_CLOSEPAREN:
 			case LT_TOKEN_CLOSEBRACE:
 			case LT_TOKEN_IDENTIFIER:
+			case LT_TOKEN_SUPER:
 			case LT_TOKEN_CLOSEBRACKET: {
 				NEXT();
 				lt_AstNode* callee = *(lt_AstNode**)lt_buffer_last(&result); lt_buffer_pop(&result);
@@ -1997,12 +2049,15 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 			lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
 			uint8_t was_async = p->in_async;
+			uint8_t was_constructor = p->in_constructor;
 			lt_Token* previous_self = p->self_token;
 			lt_Token* this_token = _lt_make_identifier_token(vm, p, "this", current);
 			p->in_async = is_async;
+			p->in_constructor = 0;
 			if (nargs > 0 && _lt_tokens_equal(func->fn.args[0], this_token)) p->self_token = func->fn.args[0];
 			lt_Scope* fn_scope = _lt_parse_block(vm, p, current, &body, 1, 1, func->fn.args);
 			p->in_async = was_async;
+			p->in_constructor = was_constructor;
 			p->self_token = previous_self;
 			current = fn_scope->end;
 
@@ -2284,6 +2339,7 @@ void lt_sweep(lt_VM* vm, lt_Object* obj)
 		ltasync_mark_promise(vm, obj);
 	} break;
 	case LT_OBJECT_CLASS: {
+		if (obj->class_def.superclass) lt_sweep(vm, obj->class_def.superclass);
 		lt_sweep_v(vm, obj->class_def.name);
 		lt_sweep_v(vm, obj->class_def.constructor);
 		_lt_table_mark(vm, &obj->class_def.public_fields);
@@ -2460,6 +2516,24 @@ static uint8_t _lt_has_class_access(lt_VM* vm, lt_Object* klass)
 	return vm->current && vm->current->class_context == klass;
 }
 
+static lt_Table* _lt_instance_private_fields_for(lt_VM* vm, lt_Object* instance, lt_Object* klass, uint8_t create)
+{
+	lt_Value key = LT_VALUE_OBJECT(klass);
+	lt_Value fields = _lt_table_get_raw(&instance->instance.private_fields, key);
+	if (!LT_IS_TABLE(fields))
+	{
+		if (!create) return 0;
+		fields = lt_make_table(vm);
+		_lt_table_set_raw(vm, &instance->instance.private_fields, key, fields);
+	}
+	return &LT_GET_OBJECT(fields)->table;
+}
+
+static lt_Object* _lt_superclass_of(lt_Object* klass)
+{
+	return klass ? klass->class_def.superclass : 0;
+}
+
 static void _lt_class_set_member(lt_VM* vm, lt_Value class_value, lt_Value key, lt_Value value, int16_t encoded)
 {
 	lt_Object* klass = LT_GET_OBJECT(class_value);
@@ -2469,12 +2543,38 @@ static void _lt_class_set_member(lt_VM* vm, lt_Value class_value, lt_Value key, 
 
 	lt_ClassMemberType type = (lt_ClassMemberType)(encoded & 0x0F);
 	lt_Visibility visibility = (encoded & 0x10) ? LT_VIS_PRIVATE : LT_VIS_PUBLIC;
+	uint8_t is_override = (encoded & 0x20) != 0;
 
 	if (type == LT_CLASS_CONSTRUCTOR)
 	{
 		klass->class_def.constructor = value;
 		return;
 	}
+
+	if (visibility == LT_VIS_PUBLIC)
+	{
+		uint8_t found_any_in_super = 0;
+		uint8_t found_same_in_super = 0;
+		for (lt_Object* current = _lt_superclass_of(klass); current; current = _lt_superclass_of(current))
+		{
+			if (_lt_table_index_raw(vm, &current->class_def.public_fields, key, 0) ||
+				_lt_table_index_raw(vm, &current->class_def.public_getters, key, 0) ||
+				_lt_table_index_raw(vm, &current->class_def.public_setters, key, 0) ||
+				_lt_table_index_raw(vm, &current->class_def.public_methods, key, 0))
+				found_any_in_super = 1;
+
+			lt_Table* same_table = type == LT_CLASS_FIELD ? &current->class_def.public_fields :
+				type == LT_CLASS_GETTER ? &current->class_def.public_getters :
+				type == LT_CLASS_SETTER ? &current->class_def.public_setters : &current->class_def.public_methods;
+			if (_lt_table_index_raw(vm, same_table, key, 0))
+			{
+				found_same_in_super = 1;
+			}
+		}
+		if (found_any_in_super && !is_override) lt_runtime_error(vm, "Class member conflicts with inherited member; use override!");
+		if (!found_same_in_super && is_override) lt_runtime_error(vm, "Override member has no matching inherited member!");
+	}
+	else if (is_override) lt_runtime_error(vm, "Private members cannot be override!");
 
 	lt_Table* table = 0;
 	if (type == LT_CLASS_FIELD) table = visibility == LT_VIS_PRIVATE ? &klass->class_def.private_fields : &klass->class_def.public_fields;
@@ -2499,6 +2599,16 @@ static lt_Value _lt_make_class(lt_VM* vm, lt_Value name)
 	_lt_table_init(&klass->class_def.private_setters);
 	klass->class_def.constructor = LT_VALUE_NULL;
 	return LT_VALUE_OBJECT(klass);
+}
+
+static void _lt_class_set_superclass(lt_VM* vm, lt_Value class_value, lt_Value superclass_value)
+{
+	if (!LT_IS_CLASS(class_value) || !LT_IS_CLASS(superclass_value)) lt_runtime_error(vm, "Expected class superclass!");
+	lt_Object* klass = LT_GET_OBJECT(class_value);
+	lt_Object* superclass = LT_GET_OBJECT(superclass_value);
+	for (lt_Object* current = superclass; current; current = _lt_superclass_of(current))
+		if (current == klass) lt_runtime_error(vm, "Class inheritance cycle!");
+	klass->class_def.superclass = superclass;
 }
 
 static lt_Value _lt_make_instance(lt_VM* vm, lt_Object* klass)
@@ -2531,6 +2641,14 @@ static void _lt_run_field_initializers(lt_VM* vm, lt_Value instance, lt_Table* i
 	}
 }
 
+static void _lt_run_class_field_initializers(lt_VM* vm, lt_Value instance, lt_Object* klass)
+{
+	if (klass->class_def.superclass) _lt_run_class_field_initializers(vm, instance, klass->class_def.superclass);
+	_lt_run_field_initializers(vm, instance, &klass->class_def.public_fields, &LT_GET_OBJECT(instance)->instance.public_fields);
+	lt_Table* private_fields = _lt_instance_private_fields_for(vm, LT_GET_OBJECT(instance), klass, 1);
+	_lt_run_field_initializers(vm, instance, &klass->class_def.private_fields, private_fields);
+}
+
 static lt_Value _lt_class_call(lt_VM* vm, lt_Value class_value, uint8_t argc)
 {
 	lt_Object* klass = LT_GET_OBJECT(class_value);
@@ -2538,8 +2656,7 @@ static lt_Value _lt_class_call(lt_VM* vm, lt_Value class_value, uint8_t argc)
 	lt_nocollect(vm, LT_GET_OBJECT(instance));
 	uint16_t base = vm->top - argc;
 
-	_lt_run_field_initializers(vm, instance, &klass->class_def.public_fields, &LT_GET_OBJECT(instance)->instance.public_fields);
-	_lt_run_field_initializers(vm, instance, &klass->class_def.private_fields, &LT_GET_OBJECT(instance)->instance.private_fields);
+	_lt_run_class_field_initializers(vm, instance, klass);
 
 	if (!LT_IS_NULL(klass->class_def.constructor))
 	{
@@ -2550,6 +2667,16 @@ static lt_Value _lt_class_call(lt_VM* vm, lt_Value class_value, uint8_t argc)
 		if (vm->top > LT_STACK_SIZE) lt_runtime_error(vm, "VM stack overflow!");
 
 		uint16_t nret = lt_exec_internal(vm, klass->class_def.constructor, argc + 1);
+		while (nret-- > 0) lt_pop(vm);
+	}
+	else if (klass->class_def.superclass && !LT_IS_NULL(klass->class_def.superclass->class_def.constructor))
+	{
+		for (uint8_t i = 0; i < argc; ++i)
+			vm->stack[vm->top - i] = vm->stack[vm->top - i - 1];
+		vm->stack[base] = instance;
+		vm->top++;
+		if (vm->top > LT_STACK_SIZE) lt_runtime_error(vm, "VM stack overflow!");
+		uint16_t nret = lt_exec_internal(vm, klass->class_def.superclass->class_def.constructor, argc + 1);
 		while (nret-- > 0) lt_pop(vm);
 	}
 
@@ -2564,9 +2691,10 @@ static lt_Value _lt_instance_get(lt_VM* vm, lt_Value instance_value, lt_Value ke
 	lt_Object* klass = instance->instance.klass;
 	lt_Value result = LT_VALUE_NULL;
 
-	if (_lt_has_class_access(vm, klass))
+	if (vm->current && vm->current->class_context)
 	{
-		lt_TablePair* private_getter = _lt_table_index_raw(vm, &klass->class_def.private_getters, key, 0);
+		lt_Object* access = vm->current->class_context;
+		lt_TablePair* private_getter = _lt_table_index_raw(vm, &access->class_def.private_getters, key, 0);
 		if (private_getter)
 		{
 			lt_push(vm, instance_value);
@@ -2580,36 +2708,44 @@ static lt_Value _lt_instance_get(lt_VM* vm, lt_Value instance_value, lt_Value ke
 		}
 	}
 
-	lt_TablePair* public_getter = _lt_table_index_raw(vm, &klass->class_def.public_getters, key, 0);
-	if (public_getter)
+	for (lt_Object* current = klass; current; current = _lt_superclass_of(current))
 	{
-		lt_push(vm, instance_value);
-		uint16_t nret = lt_exec_internal(vm, public_getter->value, 1);
-		if (nret > 0)
+		lt_TablePair* public_getter = _lt_table_index_raw(vm, &current->class_def.public_getters, key, 0);
+		if (public_getter)
 		{
-			result = vm->stack[vm->top - nret];
-			while (nret-- > 0) lt_pop(vm);
+			lt_push(vm, instance_value);
+			uint16_t nret = lt_exec_internal(vm, public_getter->value, 1);
+			if (nret > 0)
+			{
+				result = vm->stack[vm->top - nret];
+				while (nret-- > 0) lt_pop(vm);
+			}
+			return result;
 		}
-		return result;
 	}
 
-	if (_lt_has_class_access(vm, klass))
+	if (vm->current && vm->current->class_context)
 	{
-		lt_TablePair* private_field = _lt_table_index_raw(vm, &instance->instance.private_fields, key, 0);
+		lt_Table* private_fields = _lt_instance_private_fields_for(vm, instance, vm->current->class_context, 0);
+		lt_TablePair* private_field = private_fields ? _lt_table_index_raw(vm, private_fields, key, 0) : 0;
 		if (private_field) return private_field->value;
 	}
 
 	lt_TablePair* public_field = _lt_table_index_raw(vm, &instance->instance.public_fields, key, 0);
 	if (public_field) return public_field->value;
 
-	if (_lt_has_class_access(vm, klass))
+	if (vm->current && vm->current->class_context)
 	{
-		lt_TablePair* private_method = _lt_table_index_raw(vm, &klass->class_def.private_methods, key, 0);
+		lt_Object* access = vm->current->class_context;
+		lt_TablePair* private_method = _lt_table_index_raw(vm, &access->class_def.private_methods, key, 0);
 		if (private_method) return private_method->value;
 	}
 
-	lt_TablePair* public_method = _lt_table_index_raw(vm, &klass->class_def.public_methods, key, 0);
-	if (public_method) return public_method->value;
+	for (lt_Object* current = klass; current; current = _lt_superclass_of(current))
+	{
+		lt_TablePair* public_method = _lt_table_index_raw(vm, &current->class_def.public_methods, key, 0);
+		if (public_method) return public_method->value;
+	}
 
 	return LT_VALUE_NULL;
 }
@@ -2618,9 +2754,10 @@ static void _lt_instance_set(lt_VM* vm, lt_Value instance_value, lt_Value key, l
 {
 	lt_Object* instance = LT_GET_OBJECT(instance_value);
 	lt_Object* klass = instance->instance.klass;
-	if (_lt_has_class_access(vm, klass))
+	if (vm->current && vm->current->class_context)
 	{
-		lt_TablePair* private_setter = _lt_table_index_raw(vm, &klass->class_def.private_setters, key, 0);
+		lt_Object* access = vm->current->class_context;
+		lt_TablePair* private_setter = _lt_table_index_raw(vm, &access->class_def.private_setters, key, 0);
 		if (private_setter)
 		{
 			lt_push(vm, instance_value);
@@ -2631,20 +2768,27 @@ static void _lt_instance_set(lt_VM* vm, lt_Value instance_value, lt_Value key, l
 		}
 	}
 
-	lt_TablePair* public_setter = _lt_table_index_raw(vm, &klass->class_def.public_setters, key, 0);
-	if (public_setter)
+	for (lt_Object* current = klass; current; current = _lt_superclass_of(current))
 	{
-		lt_push(vm, instance_value);
-		lt_push(vm, value);
-		uint16_t nret = lt_exec_internal(vm, public_setter->value, 2);
-		while (nret-- > 0) lt_pop(vm);
-		return;
+		lt_TablePair* public_setter = _lt_table_index_raw(vm, &current->class_def.public_setters, key, 0);
+		if (public_setter)
+		{
+			lt_push(vm, instance_value);
+			lt_push(vm, value);
+			uint16_t nret = lt_exec_internal(vm, public_setter->value, 2);
+			while (nret-- > 0) lt_pop(vm);
+			return;
+		}
 	}
 
-	if (_lt_has_class_access(vm, klass) && _lt_table_index_raw(vm, &instance->instance.private_fields, key, 0))
+	if (vm->current && vm->current->class_context)
 	{
-		_lt_table_set_raw(vm, &instance->instance.private_fields, key, value);
-		return;
+		lt_Table* private_fields = _lt_instance_private_fields_for(vm, instance, vm->current->class_context, 0);
+		if (private_fields && _lt_table_index_raw(vm, private_fields, key, 0))
+		{
+			_lt_table_set_raw(vm, private_fields, key, value);
+			return;
+		}
 	}
 
 	_lt_table_set_raw(vm, &instance->instance.public_fields, key, value);
@@ -2809,6 +2953,12 @@ inst_loop:
 
 	case LT_OP_MAKEC: {
 		PUSH(_lt_make_class(vm, POP()));
+	} NEXT;
+
+	case LT_OP_SETSUPER: {
+		lt_Value superclass = POP();
+		lt_Value klass = POP();
+		_lt_class_set_superclass(vm, klass, superclass);
 	} NEXT;
 
 	case LT_OP_SETT: {
@@ -3035,6 +3185,43 @@ inst_loop:
 		else vm->last_call_returns = (uint8_t)lt_exec_internal(vm, callee, argc);
 	} NEXT;
 
+	case LT_OP_SUPERC: {
+		if (!frame->class_context || !frame->class_context->class_def.superclass) lt_runtime_error(vm, "No superclass constructor to call!");
+		lt_Object* superclass = frame->class_context->class_def.superclass;
+		if (LT_IS_NULL(superclass->class_def.constructor)) lt_runtime_error(vm, "Superclass has no constructor!");
+		uint8_t argc = (uint8_t)current.arg;
+		uint16_t base = vm->top - argc;
+		for (uint8_t i = 0; i < argc; ++i)
+			vm->stack[vm->top - i] = vm->stack[vm->top - i - 1];
+		vm->stack[base] = vm->stack[frame->start];
+		vm->top++;
+		if (vm->top > LT_STACK_SIZE) lt_runtime_error(vm, "VM stack overflow!");
+		uint16_t nret = lt_exec_internal(vm, superclass->class_def.constructor, argc + 1);
+		while (nret-- > 0) lt_pop(vm);
+		PUSH(LT_VALUE_NULL);
+		vm->last_call_returns = 1;
+	} NEXT;
+
+	case LT_OP_SUPERM: {
+		lt_Value key = POP();
+		if (!frame->class_context || !frame->class_context->class_def.superclass) lt_runtime_error(vm, "No superclass method to call!");
+		lt_TablePair* method = 0;
+		for (lt_Object* current_class = frame->class_context->class_def.superclass; current_class; current_class = current_class->class_def.superclass)
+		{
+			method = _lt_table_index_raw(vm, &current_class->class_def.public_methods, key, 0);
+			if (method) break;
+		}
+		if (!method) lt_runtime_error(vm, "Superclass method not found!");
+		uint8_t argc = (uint8_t)current.arg;
+		uint16_t base = vm->top - argc;
+		for (uint8_t i = 0; i < argc; ++i)
+			vm->stack[vm->top - i] = vm->stack[vm->top - i - 1];
+		vm->stack[base] = vm->stack[frame->start];
+		vm->top++;
+		if (vm->top > LT_STACK_SIZE) lt_runtime_error(vm, "VM stack overflow!");
+		vm->last_call_returns = (uint8_t)lt_exec_internal(vm, method->value, argc + 1);
+	} NEXT;
+
 	case LT_OP_FIXRET: {
 		uint8_t nret = vm->last_call_returns;
 		uint16_t start = vm->top - nret;
@@ -3188,7 +3375,7 @@ static void _lt_compile_function_capture(lt_VM* vm, lt_Parser* p, const char* na
 
 static int16_t _lt_encode_class_member(lt_ClassMember* member)
 {
-	return (int16_t)(member->type | (member->visibility == LT_VIS_PRIVATE ? 0x10 : 0));
+	return (int16_t)(member->type | (member->visibility == LT_VIS_PRIVATE ? 0x10 : 0) | (member->is_override ? 0x20 : 0));
 }
 
 static void _lt_compile_index(lt_VM* vm, lt_Parser* p, const char* name, lt_Buffer* debug, lt_AstNode* node, lt_Scope* scope, lt_Buffer* code_body, lt_Buffer* constants)
@@ -3303,6 +3490,10 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		OP(GETT);
 	} break;
 
+	case LT_AST_NODE_SUPER: {
+		OP(PUSHN);
+	} break;
+
 	case LT_AST_NODE_BINARYOP: {
 		_lt_compile_node(vm, p, name, debug, node->binary_op.left, scope, code_body, constants);
 		_lt_compile_node(vm, p, name, debug, node->binary_op.right, scope, code_body, constants);
@@ -3381,6 +3572,18 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		if (_lt_is_captured_local(scope, idx)) OPARG(STORECELL, idx & 0xFFFF)
 		else OPARG(STORE, idx & 0xFFFF);
 
+		if (node->class_decl.superclass)
+		{
+			if (_lt_is_captured_local(scope, idx)) OPARG(LOADCELL, idx & 0xFFFF)
+			else OPARG(LOAD, idx & 0xFFFF);
+			uint32_t super_idx = _lt_find_local(vm, scope, node->class_decl.superclass);
+			if (super_idx == NOT_FOUND) _lt_parse_error(vm, name, node->class_decl.superclass, "Can't find superclass!");
+			else if ((super_idx & UPVAL_BIT) == UPVAL_BIT) OPARG(LOADUP, super_idx & 0xFFFF)
+			else if (_lt_is_captured_local(scope, super_idx)) OPARG(LOADCELL, super_idx & 0xFFFF)
+			else OPARG(LOAD, super_idx & 0xFFFF);
+			OP(SETSUPER);
+		}
+
 		for (uint32_t i = 0; i < node->class_decl.members.length; ++i)
 		{
 			lt_ClassMember* member = lt_buffer_at(&node->class_decl.members, i);
@@ -3449,9 +3652,21 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 			narg++;
 		}
 
-		_lt_compile_node(vm, p, name, debug, node->call.callee, scope, code_body, constants);
-		if (total > 0 && node->call.args[total - 1]->type == LT_AST_NODE_CALL) OPARG(CALLM, narg - 1)
-		else OPARG(CALL, narg);
+		if (node->call.callee->type == LT_AST_NODE_SUPER)
+		{
+			if (node->call.callee->super_expr.method)
+			{
+				_lt_compile_push_token_value(vm, p, node->call.callee->super_expr.method, debug, code_body, constants, &node->loc);
+				OPARG(SUPERM, narg);
+			}
+			else OPARG(SUPERC, narg);
+		}
+		else
+		{
+			_lt_compile_node(vm, p, name, debug, node->call.callee, scope, code_body, constants);
+			if (total > 0 && node->call.args[total - 1]->type == LT_AST_NODE_CALL) OPARG(CALLM, narg - 1)
+			else OPARG(CALL, narg);
+		}
 		if (!allow_multi) OPARG(FIXRET, 1);
 	} break;
 

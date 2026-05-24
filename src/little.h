@@ -109,6 +109,9 @@ typedef enum {
 	LT_TOKEN_ASYNC,
 	LT_TOKEN_AWAIT,
 	LT_TOKEN_CLASS,
+	LT_TOKEN_EXTENDS,
+	LT_TOKEN_OVERRIDE,
+	LT_TOKEN_SUPER,
 	LT_TOKEN_PUBLIC,
 	LT_TOKEN_PRIVATE,
 	LT_TOKEN_CONSTRUCTOR,
@@ -195,6 +198,7 @@ typedef enum {
 	LT_AST_NODE_UNARYOP,
 	LT_AST_NODE_DECLARE,
 	LT_AST_NODE_CLASS,
+	LT_AST_NODE_SUPER,
 	LT_AST_NODE_ASSIGN,
 	LT_AST_NODE_FN,
 	LT_AST_NODE_CALL,
@@ -241,6 +245,7 @@ typedef struct {
 	lt_Visibility visibility;
 	lt_Token* name;
 	struct lt_AstNode* value;
+	uint8_t is_override;
 } lt_ClassMember;
 
 typedef enum {
@@ -308,8 +313,13 @@ typedef struct lt_AstNode {
 
 		struct {
 			lt_Token* identifier;
+			lt_Token* superclass;
 			lt_Buffer members;
 		} class_decl;
+
+		struct {
+			lt_Token* method;
+		} super_expr;
 
 		struct {
 			struct lt_AstNode* left;
@@ -375,6 +385,7 @@ typedef struct {
 
 	uint8_t is_valid;
 	uint8_t in_async;
+	uint8_t in_constructor;
 	uint8_t allow_table_call;
 	uint8_t had_error;
 	uint32_t next_with_id;
@@ -481,6 +492,7 @@ typedef struct lt_Object {
 			lt_Table public_setters;
 			lt_Table private_setters;
 			lt_Value constructor;
+			struct lt_Object* superclass;
 		} class_def;
 		struct
 		{

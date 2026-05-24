@@ -302,6 +302,24 @@ class Person {
 }
 ```
 
+## Class Inheritance
+
+Classes may extend one named superclass:
+
+```js
+class Dog extends Animal {
+    constructor(name) {
+        super(name)
+    }
+
+    override speak() {
+        return string.concat(super.speak(), ":dog")
+    }
+}
+```
+
+`super(...)` is only valid inside constructors. `super.method(...)` is valid inside methods and constructors. Subclass members that share inherited public names must use `override`, and private members remain private to the class that declared them.
+
 ## Strings
 
 String literals use double quotes.

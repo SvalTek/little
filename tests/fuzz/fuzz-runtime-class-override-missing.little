@@ -1,0 +1,8 @@
+class Base {
+}
+
+class Derived extends Base {
+    override run() {
+        return 2
+    }
+}

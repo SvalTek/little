@@ -1,6 +1,6 @@
 # little classes
 
-Classes are declaration-style object templates. They are intentionally small in v1: no inheritance, no `new`, no static members, and no class expressions.
+Classes are declaration-style object templates. They are intentionally small: single inheritance is supported, but there is no `new`, no static members, no class expressions, no mixins, and no multiple inheritance.
 
 ```js
 class Counter {
@@ -38,11 +38,42 @@ var counter = Counter(2)
 Construction order is:
 
 1. Allocate a new instance.
-2. Run field initializers in class-body order.
-3. Run `constructor(...)`, if present.
+2. Run superclass field initializers, then this class's field initializers, each in class-body order.
+3. Run this class's `constructor(...)`, if present. If a subclass has no constructor, the superclass constructor is called with the original arguments.
 4. Return the instance.
 
 Constructors are named `constructor(...)`. There is no `new` keyword. A constructor cannot be marked `public` or `private`.
+
+## Inheritance
+
+Use `extends` with a superclass identifier for single inheritance:
+
+```js
+class Animal {
+    constructor(@name) {
+    }
+
+    speak() {
+        return string.concat("animal:", @name)
+    }
+}
+
+class Dog extends Animal {
+    constructor(name) {
+        super(name)
+    }
+
+    override speak() {
+        return string.concat(super.speak(), ":dog")
+    }
+}
+```
+
+The superclass must be named directly. Dynamic superclass expressions are not supported.
+
+Inherited public methods, getters, setters, and fields participate in lookup. A subclass member that shares a public inherited name is an error unless it is an explicit `override`, and `override` must match an inherited member of the same kind. Fields cannot be marked `override`.
+
+Inside a constructor, `super(...)` calls the superclass constructor for the current instance. Inside methods and constructors, `super.method(...)` calls an inherited public method with the current instance as `this`.
 
 ## Public And Private Members
 
@@ -72,6 +103,8 @@ io.print(box:read()) -- hidden
 ```
 
 This is runtime-enforced privacy for Little code. It is not intended as a security boundary against native C API code.
+
+Private members are class-private, not inherited-private. A subclass may declare a private member with the same name as a superclass private member; superclass methods see the superclass private member, and subclass methods see the subclass private member.
 
 ## Methods And This
 
@@ -211,19 +244,19 @@ class Person {
 
 Reading `obj.name` checks, in order:
 
-1. Private getter, only from same-class methods.
-2. Public getter.
-3. Private field, only from same-class methods.
+1. Private getter for the currently executing class, only from methods of that class.
+2. Public getter, walking from the instance class up through superclasses.
+3. Private field for the currently executing class, only from methods of that class.
 4. Public field.
-5. Private method, only from same-class methods.
-6. Public method.
+5. Private method for the currently executing class, only from methods of that class.
+6. Public method, walking from the instance class up through superclasses.
 7. `null`.
 
 Writing `obj.name = value` checks, in order:
 
-1. Private setter, only from same-class methods.
-2. Public setter.
-3. Existing private field, only from same-class methods.
+1. Private setter for the currently executing class, only from methods of that class.
+2. Public setter, walking from the instance class up through superclasses.
+3. Existing private field for the currently executing class, only from methods of that class.
 4. Public field assignment.
 
 This means assigning an unknown public property creates or updates a public field on that instance.
@@ -232,9 +265,9 @@ This means assigning an unknown public property creates or updates a public fiel
 
 Not implemented in v1:
 
-* inheritance
 * static fields or methods
 * class expressions
 * `new`
 * external class reopening such as `fn MyClass:method(...) { ... }`
 * `protected`
+* dynamic superclass expressions

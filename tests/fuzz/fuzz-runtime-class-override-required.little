@@ -1,0 +1,11 @@
+class Base {
+    run() {
+        return 1
+    }
+}
+
+class Derived extends Base {
+    run() {
+        return 2
+    }
+}

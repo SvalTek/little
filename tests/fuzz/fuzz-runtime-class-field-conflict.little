@@ -1,0 +1,7 @@
+class Base {
+    value = 1
+}
+
+class Derived extends Base {
+    value = 2
+}

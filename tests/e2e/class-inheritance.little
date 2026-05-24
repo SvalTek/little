@@ -1,0 +1,51 @@
+class Animal {
+    private secret = "base-secret"
+    public kind = "animal"
+    public name = ""
+
+    constructor(name) {
+        @name = name
+    }
+
+    speak() {
+        return string.concat("animal:", @name)
+    }
+
+    reveal() {
+        return @secret
+    }
+}
+
+class Dog extends Animal {
+    private secret = "dog-secret"
+
+    constructor(name) {
+        super(name)
+        @kind = "dog"
+    }
+
+    override speak() {
+        return string.concat(super.speak(), ":dog")
+    }
+
+    ownSecret() {
+        return @secret
+    }
+}
+
+var dog = Dog("Ada")
+io.print(dog.kind)
+io.print(dog:speak())
+io.print(dog:reveal())
+io.print(dog:ownSecret())
+
+class Named {
+    constructor(@name) {
+    }
+}
+
+class Alias extends Named {
+}
+
+var alias = Alias("Ada")
+io.print(alias.name)
