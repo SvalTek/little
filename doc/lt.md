@@ -186,6 +186,8 @@ class Derived {
 ```
 Class methods and field initializers can close over surrounding local variables.
 
+Inside class methods and field initializers, `@name` is shorthand for `this.name`. Constructor parameters may use `@name` to assign matching fields before the constructor body runs. `with expression { ... }` blocks can also use `@name` against the active receiver. See `doc/syntax.md` for the syntax rules.
+
 Classes can declare public or private getters and setters:
 ```js
 class Person {

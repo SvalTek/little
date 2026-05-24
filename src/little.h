@@ -94,6 +94,7 @@ typedef enum {
 	LT_TOKEN_PERIOD,
 	LT_TOKEN_COMMA,
 	LT_TOKEN_COLON,
+	LT_TOKEN_AT,
 
 	LT_TOKEN_OPENPAREN,
 	LT_TOKEN_CLOSEPAREN,
@@ -121,6 +122,7 @@ typedef enum {
 	LT_TOKEN_FOR,
 	LT_TOKEN_IN,
 	LT_TOKEN_WHILE,
+	LT_TOKEN_WITH,
 	LT_TOKEN_RETURN,
 
 	LT_TOKEN_PLUS,
@@ -200,6 +202,7 @@ typedef enum {
 	LT_AST_NODE_ELSEIF,
 	LT_AST_NODE_FOR,
 	LT_AST_NODE_WHILE,
+	LT_AST_NODE_WITH,
 	LT_AST_NODE_BREAK,
 } lt_AstNodeType;
 
@@ -340,6 +343,12 @@ typedef struct lt_AstNode {
 			struct lt_AstNode* iterator;
 			lt_Buffer body;
 		} loop;
+
+		struct {
+			lt_Token* receiver;
+			struct lt_AstNode* expr;
+			lt_Buffer body;
+		} with_stmt;
 	};
 } lt_AstNode;
 
@@ -364,6 +373,8 @@ typedef struct {
 	uint8_t in_async;
 	uint8_t allow_table_call;
 	uint8_t had_error;
+	uint32_t next_with_id;
+	lt_Token* self_token;
 } lt_Parser;
 
 typedef struct {
