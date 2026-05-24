@@ -165,7 +165,10 @@ static uint8_t _lt_array_insert(lt_VM* vm, uint8_t argc)
     if (!LT_IS_NUMBER(idxval)) lt_runtime_error(vm, "Expected second argument to array.insert to be number!");
 
     uint32_t len = lt_array_length(arr);
-    uint32_t idx = (uint32_t)LT_GET_NUMBER(idxval);
+    double idxnum = LT_GET_NUMBER(idxval);
+    if (!(idxnum >= 0) || idxnum > (double)UINT32_MAX || idxnum != (double)(uint32_t)idxnum)
+        lt_runtime_error(vm, "Expected non-negative integer index for array.insert!");
+    uint32_t idx = (uint32_t)idxnum;
     if (idx > len) idx = len;
 
     lt_array_push(vm, arr, val);

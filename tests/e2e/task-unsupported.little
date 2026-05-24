@@ -1,5 +1,10 @@
 task.run(fn(state) {
     return state
 }, { bad: fn() { return 1 } }).catch(fn(reason) {
-    io.print("unsupported")
+    if string.contains(reason, "Unsupported value crossing worker boundary") {
+        io.print("unsupported")
+    }
+    else {
+        io.print("unexpected", reason)
+    }
 })

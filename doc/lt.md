@@ -14,7 +14,7 @@ Little supports a set of basic types:
 * `ptr` - userdata pointer set by C api
 
 These are grouped into `Value` and `Object` types, which are passed by value and reference respectively
-`null`, `number`, `boolean`, and `string` are the `Value` types. String is special in that they are immutable and stored in a global deduplication table, and the actual value passed around is an index into that.
+`null`, `number`, `boolean`, and `string` are the `Value` types. String is special in that it is immutable and stored in a global deduplication table, and the actual value passed around is an index into that.
 
 ---
 

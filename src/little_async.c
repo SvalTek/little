@@ -293,6 +293,15 @@ void ltshared_retain(lt_SharedObject* shared)
 #endif
 }
 
+static uint32_t _lt_shared_external_refs_load(lt_SharedObject* shared)
+{
+#if defined(_WIN32)
+	return (uint32_t)InterlockedCompareExchange((volatile LONG*)&shared->external_refs, 0, 0);
+#else
+	return __sync_add_and_fetch(&shared->external_refs, 0);
+#endif
+}
+
 static void _lt_shared_value_clear(lt_SharedValue* value)
 {
 	if (value->type == LT_SHARED_VALUE_STRING && value->string) free(value->string);
@@ -425,7 +434,8 @@ static void _lt_shared_collect(void)
 	uint32_t mark_count = 0;
 	for (lt_SharedObject* current = lt_shared_registry; current; current = current->next)
 	{
-		if (current->external_refs > 0 && !_lt_shared_mark(current, &mark_count))
+		uint32_t external_refs = _lt_shared_external_refs_load(current);
+		if (external_refs > 0 && !_lt_shared_mark(current, &mark_count))
 		{
 			for (lt_SharedObject* clear = lt_shared_registry; clear; clear = clear->next)
 				clear->gc_mark = 0;
@@ -480,9 +490,12 @@ static char* _lt_shared_strdup(const char* string)
 
 static uint8_t _lt_shared_reserve(void** data, uint32_t* capacity, uint32_t length, uint32_t element_size)
 {
-	if (length + 1 <= *capacity) return 1;
+	if (length < *capacity) return 1;
+	if (*capacity > UINT32_MAX - 16) return 0;
 	uint32_t next_capacity = *capacity + 16;
-	void* next = realloc(*data, next_capacity * element_size);
+	if (element_size != 0 && next_capacity > UINT32_MAX / element_size) return 0;
+	size_t required_bytes = (size_t)next_capacity * (size_t)element_size;
+	void* next = realloc(*data, required_bytes);
 	if (!next) return 0;
 	*data = next;
 	*capacity = next_capacity;
@@ -732,9 +745,12 @@ lt_Value ltshared_table_set(lt_VM* vm, lt_SharedObject* shared, lt_Value key, lt
 	lt_SharedMarshalCtx ctx;
 	memset(&ctx, 0, sizeof(ctx));
 	lt_SharedValue shared_key, shared_value;
+	memset(&shared_key, 0, sizeof(shared_key));
+	memset(&shared_value, 0, sizeof(shared_value));
 	if (!_lt_shared_from_vm(&ctx, vm, key, &shared_key) || !_lt_shared_from_vm(&ctx, vm, val, &shared_value))
 	{
 		_lt_shared_value_clear(&shared_key);
+		_lt_shared_value_clear(&shared_value);
 		_lt_shared_ctx_destroy(&ctx);
 		return LT_VALUE_NULL;
 	}

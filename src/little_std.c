@@ -275,20 +275,20 @@ char* ltstd_tostring(lt_VM* vm, lt_Value val)
         lt_Object* obj = LT_GET_OBJECT(val);
         switch (obj->type)
         {
-        case LT_OBJECT_CHUNK: len = snprintf(scratch, sizeof(scratch), "chunk 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_CLOSURE: len = snprintf(scratch, sizeof(scratch), "closure 0x%llx | %d upvals", (uintptr_t)LT_GET_OBJECT(obj->closure.function), obj->closure.captures.length); break;
-        case LT_OBJECT_FN: len = snprintf(scratch, sizeof(scratch), "function 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_TABLE: len = snprintf(scratch, sizeof(scratch), "table 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_ARRAY: len = snprintf(scratch, sizeof(scratch), "array | %d", lt_array_length(val)); break;
-        case LT_OBJECT_NATIVEFN: len = snprintf(scratch, sizeof(scratch), "native 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_BOUND_NATIVE: len = snprintf(scratch, sizeof(scratch), "bound_native 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_PROMISE: len = snprintf(scratch, sizeof(scratch), "promise 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_CLASS: len = snprintf(scratch, sizeof(scratch), "class 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_INSTANCE: len = snprintf(scratch, sizeof(scratch), "instance 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_CELL: len = snprintf(scratch, sizeof(scratch), "cell 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_PTR: len = snprintf(scratch, sizeof(scratch), "ptr 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_SHARED_TABLE: len = snprintf(scratch, sizeof(scratch), "shared_table 0x%llx", (uintptr_t)obj->shared); break;
-        case LT_OBJECT_SHARED_ARRAY: len = snprintf(scratch, sizeof(scratch), "shared_array 0x%llx | %d", (uintptr_t)obj->shared, lt_array_length(val)); break;
+        case LT_OBJECT_CHUNK: len = snprintf(scratch, sizeof(scratch), "chunk %p", (void*)obj); break;
+        case LT_OBJECT_CLOSURE: len = snprintf(scratch, sizeof(scratch), "closure %p | %u upvals", (void*)LT_GET_OBJECT(obj->closure.function), obj->closure.captures.length); break;
+        case LT_OBJECT_FN: len = snprintf(scratch, sizeof(scratch), "function %p", (void*)obj); break;
+        case LT_OBJECT_TABLE: len = snprintf(scratch, sizeof(scratch), "table %p", (void*)obj); break;
+        case LT_OBJECT_ARRAY: len = snprintf(scratch, sizeof(scratch), "array | %u", lt_array_length(val)); break;
+        case LT_OBJECT_NATIVEFN: len = snprintf(scratch, sizeof(scratch), "native %p", (void*)obj); break;
+        case LT_OBJECT_BOUND_NATIVE: len = snprintf(scratch, sizeof(scratch), "bound_native %p", (void*)obj); break;
+        case LT_OBJECT_PROMISE: len = snprintf(scratch, sizeof(scratch), "promise %p", (void*)obj); break;
+        case LT_OBJECT_CLASS: len = snprintf(scratch, sizeof(scratch), "class %p", (void*)obj); break;
+        case LT_OBJECT_INSTANCE: len = snprintf(scratch, sizeof(scratch), "instance %p", (void*)obj); break;
+        case LT_OBJECT_CELL: len = snprintf(scratch, sizeof(scratch), "cell %p", (void*)obj); break;
+        case LT_OBJECT_PTR: len = snprintf(scratch, sizeof(scratch), "ptr %p", (void*)obj); break;
+        case LT_OBJECT_SHARED_TABLE: len = snprintf(scratch, sizeof(scratch), "shared_table %p", (void*)obj->shared); break;
+        case LT_OBJECT_SHARED_ARRAY: len = snprintf(scratch, sizeof(scratch), "shared_array %p | %u", (void*)obj->shared, lt_array_length(val)); break;
     }
     }
 
