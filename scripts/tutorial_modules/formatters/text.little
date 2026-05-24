@@ -1,0 +1,7 @@
+fn trimTitle(value) {
+    return string.upper(string.trim(value))
+}
+
+return {
+    trimTitle
+}

@@ -19,7 +19,7 @@ setTimeout(fn() {
     io.print("timer fired")
 }, 1)
 
-var delay = fn(value, ms) {
+fn delay(value, ms) {
     return Promise(fn(resolve, reject) {
         setTimeout(fn() {
             resolve(value)
@@ -28,13 +28,23 @@ var delay = fn(value, ms) {
 }
 
 ; Async functions can `await` promises and return a promise themselves.
-var work = async fn() {
+async fn work() {
     var value = await delay(7, 1)
     return value + 1
 }
 
+; Async functions can also be global when the host or another module should see
+; them through the VM global table.
+global async fn globalDelay(value) {
+    return await delay(value, 1)
+}
+
 work().next(fn(value) {
     io.print("async result", value)
+})
+
+globalDelay("global async").next(fn(value) {
+    io.print(value)
 })
 
 ; task.run runs the function on a worker VM. Pass a state table so the work has

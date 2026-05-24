@@ -1,0 +1,18 @@
+; Module top-level declarations are local to the module unless marked global.
+global tutorialGreeterLoaded = true
+
+var loads = 1
+
+fn greet(name) {
+    return string.expand("hello {{name}}", { name })
+}
+
+fn shout(name) {
+    return string.upper(greet(name))
+}
+
+return {
+    loads
+    greet
+    shout
+}
