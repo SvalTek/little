@@ -1,3 +1,5 @@
-task.run("return state", { bad: fn() { return 1 } }).catch(fn(reason) {
+task.run(fn(state) {
+    return state
+}, { bad: fn() { return 1 } }).catch(fn(reason) {
     io.print("unsupported")
 })

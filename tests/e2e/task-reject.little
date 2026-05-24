@@ -1,3 +1,5 @@
-task.run("return 1 + state.bad", { bad: "bad" }).catch(fn(reason) {
+task.run(fn(state) {
+    return 1 + state.bad
+}, { bad: "bad" }).catch(fn(reason) {
     io.print("rejected")
 })

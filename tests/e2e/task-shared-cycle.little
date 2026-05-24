@@ -1,0 +1,8 @@
+var state = { value: 1 }
+state.self = state
+
+task.run(fn(state) {
+    state.self.value = state.self.value + 1
+}, state).next(fn(value) {
+    io.print(state.value)
+})

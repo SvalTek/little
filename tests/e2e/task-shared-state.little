@@ -1,0 +1,14 @@
+var box = { value: 1 }
+var state = { x: box items: [ box ] }
+
+task.run(fn(state) {
+    state.x.value = state.x.value + 1
+    state.items[0].value = state.items[0].value + 1
+    array.push(state.items, { value: 9 })
+    return state.x
+}, state).next(fn(result) {
+    io.print(box.value)
+    io.print(state.x.value)
+    io.print(array.len(state.items))
+    io.print(result.value)
+})

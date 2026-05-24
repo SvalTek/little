@@ -1,0 +1,9 @@
+var foo = 1
+var state = { x: foo }
+
+task.run(fn(state) {
+    state.x = 2
+}, state).next(fn(value) {
+    io.print(foo)
+    io.print(state.x)
+})

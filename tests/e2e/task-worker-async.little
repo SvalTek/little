@@ -1,0 +1,10 @@
+task.run(async fn(state) {
+    var value = await Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            resolve(state.value + 1)
+        }, 1)
+    })
+    return value
+}, { value: 4 }).next(fn(value) {
+    io.print(value)
+})

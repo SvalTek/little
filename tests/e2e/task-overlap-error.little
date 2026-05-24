@@ -1,7 +1,11 @@
-task.run("return missing + 1", {}).catch(fn(err) {
+task.run(fn(state) {
+    return missing + 1
+}, {}).catch(fn(err) {
     io.print("failed", string.contains(err, "Expected arithmetic operands"))
 })
 
-task.run("return state.name", { name: "worker-ok" }).next(fn(value) {
+task.run(fn(state) {
+    return state.name
+}, { name: "worker-ok" }).next(fn(value) {
     io.print("resolved", value)
 })

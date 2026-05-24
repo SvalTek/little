@@ -1,0 +1,6 @@
+task.run(async fn(state) {
+    gc.collect()
+    return state.value + 1
+}, { value: 122 }).next(fn(value) {
+    io.print("async-gc", value)
+})

@@ -1,0 +1,6 @@
+consume alpha 2.000000
+obj method
+step1 a
+step2 b
+step3 c
+if-ok

@@ -1,0 +1,7 @@
+var captured = 1
+
+task.run(fn(state) {
+    return captured
+}, {}).catch(fn(reason) {
+    io.print(string.contains(reason, "cannot capture values"))
+})

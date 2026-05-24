@@ -68,6 +68,7 @@ gcc main.c src/little_buffer.c src/little.c src/little_std.c src/little_std_io.c
 ---
 ## Links
 * **[Language overview](doc/lt.md)**
+* **[Syntax rules](doc/syntax.md)**
 * **[Runtime and compiler limits](doc/limits.md)**
 * **[Standard library](doc/ltstd.md)**
 * **[Task API](doc/std/task.md)**

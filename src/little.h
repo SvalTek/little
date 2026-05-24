@@ -68,8 +68,8 @@ typedef uint64_t lt_Value;
 #define LT_IS_TRUTHY(x) (!(x == LT_VALUE_FALSE || x == LT_VALUE_NULL))
 #define LT_IS_STRING(x)  (!LT_IS_NUMBER(x) && (x & LT_TYPE_MASK) == LT_TYPE_STRING)
 #define LT_IS_OBJECT(x)  (!LT_IS_NUMBER(x) && (x & LT_TYPE_MASK) == LT_TYPE_OBJECT)
-#define LT_IS_TABLE(x)    (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_TABLE)
-#define LT_IS_ARRAY(x)    (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_ARRAY)
+#define LT_IS_TABLE(x)    (LT_IS_OBJECT(x) && (LT_GET_OBJECT(x)->type == LT_OBJECT_TABLE || LT_GET_OBJECT(x)->type == LT_OBJECT_SHARED_TABLE))
+#define LT_IS_ARRAY(x)    (LT_IS_OBJECT(x) && (LT_GET_OBJECT(x)->type == LT_OBJECT_ARRAY || LT_GET_OBJECT(x)->type == LT_OBJECT_SHARED_ARRAY))
 #define LT_IS_FUNCTION(x) (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_FN)
 #define LT_IS_CLOSURE(x)  (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_CLOSURE)
 #define LT_IS_NATIVE(x)   (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_NATIVEFN)
@@ -362,6 +362,7 @@ typedef struct {
 
 	uint8_t is_valid;
 	uint8_t in_async;
+	uint8_t allow_table_call;
 	uint8_t had_error;
 } lt_Parser;
 
@@ -392,9 +393,12 @@ typedef enum {
 	LT_OBJECT_INSTANCE,
 	LT_OBJECT_CELL,
 	LT_OBJECT_PTR,
+	LT_OBJECT_SHARED_TABLE,
+	LT_OBJECT_SHARED_ARRAY,
 } lt_ObjectType;
 
 typedef struct lt_VM lt_VM;
+typedef struct lt_SharedObject lt_SharedObject;
 
 typedef uint8_t(*lt_NativeFn)(lt_VM* vm, uint8_t argc);
 
@@ -471,6 +475,7 @@ typedef struct lt_Object {
 		} instance;
 		lt_Value cell;
 		void* ptr;
+		lt_SharedObject* shared;
 	};
 
 	uint8_t markbit : 1;
@@ -509,6 +514,7 @@ struct lt_VM {
 	lt_Buffer timers;
 	lt_Buffer workers;
 	uint32_t next_timer_id;
+	uint8_t runloop_stop;
 	uint8_t last_call_returns;
 
 	lt_AllocFn alloc;
@@ -574,6 +580,8 @@ uint8_t  lt_table_pop(lt_VM* vm, lt_Value table, lt_Value key);
 
 lt_Value  lt_make_array(lt_VM* vm);
 lt_Value  lt_array_push(lt_VM* vm, lt_Value array, lt_Value val);
+lt_Value  lt_array_get(lt_VM* vm, lt_Value array, uint32_t idx);
+lt_Value  lt_array_set(lt_VM* vm, lt_Value array, uint32_t idx, lt_Value val);
 lt_Value* lt_array_at(lt_Value array, uint32_t idx);
 lt_Value  lt_array_remove(lt_VM* vm, lt_Value array, uint32_t idx);
 uint32_t  lt_array_length(lt_Value array);

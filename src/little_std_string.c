@@ -335,7 +335,7 @@ static lt_Value _lt_expand_lookup(lt_VM* vm, lt_Value values, const char* key, u
         char* end = 0;
         long index = strtol(name, &end, 10);
         if (*name && *end == 0 && index > 0 && (uint32_t)index <= lt_array_length(values))
-            value = *lt_array_at(values, (uint32_t)index - 1);
+            value = lt_array_get(vm, values, (uint32_t)index - 1);
     }
 
     vm->free(name);

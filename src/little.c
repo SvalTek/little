@@ -276,6 +276,9 @@ uint8_t lt_equals(lt_Value a, lt_Value b)
 		case LT_OBJECT_CELL:
 		case LT_OBJECT_PTR:
 			return obja == objb;
+		case LT_OBJECT_SHARED_TABLE:
+		case LT_OBJECT_SHARED_ARRAY:
+			return obja->shared == objb->shared;
 		}
 	} break;
 	}
@@ -878,6 +881,21 @@ static lt_Token* _lt_skip_destructure_pattern(lt_Token* current, lt_TokenType cl
 	return current;
 }
 
+static uint8_t _lt_is_postfix_source(lt_Token* last)
+{
+	if (!last) return 0;
+	switch (last->type)
+	{
+	case LT_TOKEN_CLOSEBRACE:
+	case LT_TOKEN_CLOSEBRACKET:
+	case LT_TOKEN_CLOSEPAREN:
+	case LT_TOKEN_IDENTIFIER:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
 static lt_Token* _lt_parse_destructure_pattern(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* declare)
 {
 	declare->declare.entries = lt_buffer_new(sizeof(lt_DestructureEntry));
@@ -978,6 +996,9 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 #define PEEK() (current + 1)
 #define NEXT() (last = current, current++)
+#define REQUIRE_STATEMENT_BOUNDARY() \
+	if (current->type != LT_TOKEN_END && current->type != LT_TOKEN_CLOSEBRACE && current > start && (current - 1)->line == current->line) \
+		_lt_parse_error(vm, p->tkn->module, current, "Expected newline between statements!")
 
 	while (current->type != LT_TOKEN_END)
 	{
@@ -992,7 +1013,10 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			lt_AstNode* if_statement = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_IF);
 			current++;
 			lt_AstNode* expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			uint8_t was_allow_table_call = p->allow_table_call;
+			p->allow_table_call = 0;
 			current = _lt_parse_expression(vm, p, current, expr);
+			p->allow_table_call = was_allow_table_call;
 
 			if (current->type != LT_TOKEN_OPENBRACE) _lt_parse_error(vm, p->tkn->module, current, "Expeceted open brace to follow if expression!");
 			current++;
@@ -1019,7 +1043,10 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 					node->type = LT_AST_NODE_ELSEIF;
 
 					lt_AstNode* expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+					uint8_t was_allow_table_call = p->allow_table_call;
+					p->allow_table_call = 0;
 					current = _lt_parse_expression(vm, p, current, expr);
+					p->allow_table_call = was_allow_table_call;
 
 					node->branch.expr = expr;
 				}
@@ -1042,6 +1069,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			}
 
 			lt_buffer_push(vm, dst, &if_statement);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 
 		case LT_TOKEN_FOR: {
@@ -1055,7 +1083,10 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			current++;
 
 			lt_AstNode* iter_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			uint8_t was_allow_table_call = p->allow_table_call;
+			p->allow_table_call = 0;
 			current = _lt_parse_expression(vm, p, current, iter_expr);
+			p->allow_table_call = was_allow_table_call;
 
 			for_expr->loop.identifier = iteridx;
 			
@@ -1088,6 +1119,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			for_expr->loop.body = body;
 
 			lt_buffer_push(vm, dst, &for_expr);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 
 		case LT_TOKEN_WHILE: {
@@ -1095,7 +1127,10 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			current++; // eat while
 
 			lt_AstNode* iter_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			uint8_t was_allow_table_call = p->allow_table_call;
+			p->allow_table_call = 0;
 			current = _lt_parse_expression(vm, p, current, iter_expr);
+			p->allow_table_call = was_allow_table_call;
 
 			while_expr->loop.iterator = iter_expr;
 
@@ -1108,6 +1143,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			while_expr->loop.body = body;
 
 			lt_buffer_push(vm, dst, &while_expr);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 
 		case LT_TOKEN_RETURN: {
@@ -1124,12 +1160,14 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			}
 
 			lt_buffer_push(vm, dst, &ret);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		case LT_TOKEN_BREAK: {
 			lt_AstNode* brk = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_BREAK);
 			current++; // eat 'break'
 
 			lt_buffer_push(vm, dst, &brk);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		case LT_TOKEN_CLASS: {
 			lt_AstNode* klass = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_CLASS);
@@ -1216,6 +1254,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 			current++; // eat closing brace
 			lt_buffer_push(vm, dst, &klass);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		case LT_TOKEN_VAR: {
 			lt_AstNode* declare = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_DECLARE);
@@ -1243,6 +1282,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 			declare->declare.expr = rhs;
 			lt_buffer_push(vm, dst, &declare);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		default: {
 			lt_AstNode* result = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
@@ -1262,6 +1302,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			}
 
 			lt_buffer_push(vm, dst, &result);
+			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		}
 	}
@@ -1326,6 +1367,45 @@ case LT_TOKEN_NUMBER_LITERAL:  \
 case LT_TOKEN_STRING_LITERAL:  \
 case LT_TOKEN_FN:              \
 case LT_TOKEN_ASYNC
+
+static lt_Token* _lt_parse_table_literal(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode** out)
+{
+	lt_AstNode* table = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_TABLE);
+	table->table.keys = lt_buffer_new(sizeof(lt_AstNode*));
+	table->table.values = lt_buffer_new(sizeof(lt_AstNode*));
+
+	current++; // eat brace
+
+	while (current->type != LT_TOKEN_CLOSEBRACE)
+	{
+		if (current->type == LT_TOKEN_END) _lt_parse_error(vm, p->tkn->module, current, "Unexpected end of file in table literal!");
+
+		lt_AstNode* key = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
+		lt_Token* key_token = current++;
+		key->literal.token = key_token;
+
+		lt_AstNode* value = 0;
+		if (current->type == LT_TOKEN_COLON)
+		{
+			current++; // eat colon
+			value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			current = _lt_parse_expression(vm, p, current, value);
+		}
+		else if (key_token->type == LT_TOKEN_IDENTIFIER)
+		{
+			value = _lt_get_node_of_type(vm, key_token, p, LT_AST_NODE_IDENTIFIER);
+			value->identifier.token = key_token;
+		}
+		else lt_error(vm, "Expected colon to follow table index!");
+
+		lt_buffer_push(vm, &table->table.keys, &key);
+		lt_buffer_push(vm, &table->table.values, &value);
+		if (current->type == LT_TOKEN_COMMA) current++;
+	}
+
+	*out = table;
+	return current + 1; // eat closing brace
+}
 
 lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstNode* dst)
 {
@@ -1463,9 +1543,6 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
 			idx_expr->literal.token = NEXT();
 
-			if (current->type != LT_TOKEN_OPENPAREN) _lt_parse_error(vm, p->tkn->module, current, "Expected call arguments to follow ':' method access!");
-			NEXT(); // eat open paren
-
 			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
 			lt_AstNode* index = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_INDEX);
 			index->index.source = source;
@@ -1474,21 +1551,34 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			lt_AstNode* call = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_CALL);
 			uint8_t nargs = 0;
 			call->call.args[nargs++] = source;
-
-			while (current->type != LT_TOKEN_CLOSEPAREN)
-			{
-				if (current->type == LT_TOKEN_END) _lt_parse_error(vm, p->tkn->module, current, "Unexpected end of file in expression. (Unclosed method call?)");
-				if (current->type == LT_TOKEN_COMMA) NEXT();
-
-				lt_AstNode* arg = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
-				current = _lt_parse_expression(vm, p, current, arg);
-				if (nargs >= LT_MAX_CALL_ARGS) _lt_parse_error(vm, p->tkn->module, current, "Too many call arguments!");
-				call->call.args[nargs++] = arg;
-			}
-
 			call->call.callee = index;
+
+			if (current->type == LT_TOKEN_OPENPAREN)
+			{
+				NEXT(); // eat open paren
+				while (current->type != LT_TOKEN_CLOSEPAREN)
+				{
+					if (current->type == LT_TOKEN_END) _lt_parse_error(vm, p->tkn->module, current, "Unexpected end of file in expression. (Unclosed method call?)");
+					if (current->type == LT_TOKEN_COMMA) NEXT();
+
+					lt_AstNode* arg = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+					current = _lt_parse_expression(vm, p, current, arg);
+					if (nargs >= LT_MAX_CALL_ARGS) _lt_parse_error(vm, p->tkn->module, current, "Too many call arguments!");
+					call->call.args[nargs++] = arg;
+				}
+
+				NEXT(); // eat close paren
+			}
+			else if (p->allow_table_call && current->type == LT_TOKEN_OPENBRACE)
+			{
+				lt_AstNode* table = 0;
+				current = _lt_parse_table_literal(vm, p, current, &table);
+				last = current - 1;
+				call->call.args[nargs++] = table;
+			}
+			else _lt_parse_error(vm, p->tkn->module, current, "Expected call arguments to follow ':' method access!");
+
 			lt_buffer_push(vm, &result, &call);
-			NEXT(); // eat close paren
 		} break;
 
 		case LT_TOKEN_NUMBER_LITERAL: case LT_TOKEN_NULL_LITERAL: case LT_TOKEN_TRUE_LITERAL: case LT_TOKEN_FALSE_LITERAL: case LT_TOKEN_STRING_LITERAL: {
@@ -1592,42 +1682,23 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 		} break;
 
 		case LT_TOKEN_OPENBRACE: {
-			BREAK_ON_EXPR_BOUNDRY
+			uint8_t is_table_call = p->allow_table_call && _lt_is_postfix_source(last);
+			if (!is_table_call) BREAK_ON_EXPR_BOUNDRY
 
-			// any time we see this, assume it's a table lieral. all other braces should be handled at block level 
-			lt_AstNode* table = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_TABLE);
-			table->table.keys = lt_buffer_new(sizeof(lt_AstNode*));
-			table->table.values = lt_buffer_new(sizeof(lt_AstNode*));
-
-			NEXT(); // eat brace
-
-			while (current->type != LT_TOKEN_CLOSEBRACE)
+			lt_AstNode* table = 0;
+			current = _lt_parse_table_literal(vm, p, current, &table);
+			last = current - 1;
+			if (is_table_call)
 			{
-				lt_AstNode* key = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
-				lt_Token* key_token = NEXT();
-				key->literal.token = key_token;
+				lt_AstNode* callee = *(lt_AstNode**)lt_buffer_last(&result);
+				lt_buffer_pop(&result);
 
-				lt_AstNode* value = 0;
-				if (current->type == LT_TOKEN_COLON)
-				{
-					NEXT(); // eat colon
-					value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
-					current = _lt_parse_expression(vm, p, current, value);
-				}
-				else if (key_token->type == LT_TOKEN_IDENTIFIER)
-				{
-					value = _lt_get_node_of_type(vm, key_token, p, LT_AST_NODE_IDENTIFIER);
-					value->identifier.token = key_token;
-				}
-				else lt_error(vm, "Expected colon to follow table index!");
-
-				lt_buffer_push(vm, &table->table.keys, &key);
-				lt_buffer_push(vm, &table->table.values, &value);
-				if (current->type == LT_TOKEN_COMMA) current++;
+				lt_AstNode* call = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_CALL);
+				call->call.callee = callee;
+				call->call.args[0] = table;
+				lt_buffer_push(vm, &result, &call);
 			}
-
-			NEXT();
-			lt_buffer_push(vm, &result, &table);
+			else lt_buffer_push(vm, &result, &table);
 		} break;
 
 		case LT_TOKEN_AWAIT: {
@@ -1771,6 +1842,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 	{
 		p.current = 0;
 		p.in_async = 0;
+		p.allow_table_call = 1;
 		p.had_error = 0;
 		p.root = _lt_get_node_of_type(vm, (lt_Token*)tkn->token_buffer.data, &p, LT_AST_NODE_CHUNK);
 		p.root->chunk.body = lt_buffer_new(sizeof(lt_AstNode*));
@@ -1872,6 +1944,10 @@ void lt_free(lt_VM* vm, uint32_t heapidx)
 	} break;
 	case LT_OBJECT_PTR: {
 		vm->free(obj->ptr);
+	} break;
+	case LT_OBJECT_SHARED_TABLE:
+	case LT_OBJECT_SHARED_ARRAY: {
+		ltshared_release(obj->shared);
 	} break;
 	}
 
@@ -1976,6 +2052,9 @@ void lt_sweep(lt_VM* vm, lt_Object* obj)
 		lt_sweep(vm, obj->instance.klass);
 		_lt_table_mark(vm, &obj->instance.public_fields);
 		_lt_table_mark(vm, &obj->instance.private_fields);
+	} break;
+	case LT_OBJECT_SHARED_TABLE:
+	case LT_OBJECT_SHARED_ARRAY: {
 	} break;
 	}
 }
@@ -2495,7 +2574,7 @@ inst_loop:
 		}
 		else if (LT_IS_ARRAY(t))
 		{
-			*lt_array_at(t, (uint32_t)lt_get_number(key)) = value;
+			lt_array_set(vm, t, (uint32_t)lt_get_number(key), value);
 		}
 		else if (LT_IS_INSTANCE(t))
 		{
@@ -2529,7 +2608,7 @@ inst_loop:
 		}
 		else if (LT_IS_ARRAY(t))
 		{
-			PUSH(*lt_array_at(t, (uint32_t)lt_get_number(key)));
+			PUSH(lt_array_get(vm, t, (uint32_t)lt_get_number(key)));
 		}
 		else PUSH(LT_VALUE_NULL);
 	} NEXT;
@@ -2549,7 +2628,7 @@ inst_loop:
 		else if (LT_IS_ARRAY(t) && LT_IS_NUMBER(key))
 		{
 			uint32_t idx = (uint32_t)lt_get_number(key);
-			PUSH(idx < lt_array_length(t) ? *lt_array_at(t, idx) : LT_VALUE_NULL);
+			PUSH(idx < lt_array_length(t) ? lt_array_get(vm, t, idx) : LT_VALUE_NULL);
 		}
 		else PUSH(LT_VALUE_NULL);
 	} NEXT;
@@ -3386,6 +3465,7 @@ uint32_t lt_dostring(lt_VM* vm, const char* source, const char* mod_name)
 
 lt_TablePair* _lt_table_index(lt_VM* vm, lt_Value table, lt_Value key, uint8_t alloc)
 {
+	if (!LT_IS_OBJECT(table) || LT_GET_OBJECT(table)->type != LT_OBJECT_TABLE) return 0;
 	uint8_t bucket = HASH(key);
 	lt_Buffer* buf = LT_GET_OBJECT(table)->table.buckets + bucket;
 	if (alloc && buf->element_size == 0) *buf = lt_buffer_new(sizeof(lt_TablePair));
@@ -3410,6 +3490,8 @@ lt_Value lt_make_table(lt_VM* vm)
 lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val)
 {
 	if (!LT_IS_TABLE(table)) return LT_VALUE_NULL;
+	if (LT_GET_OBJECT(table)->type == LT_OBJECT_SHARED_TABLE)
+		return ltshared_table_set(vm, LT_GET_OBJECT(table)->shared, key, val);
 	lt_TablePair* p = _lt_table_index(vm, table, key, 1);
 	if (p)
 	{
@@ -3426,6 +3508,9 @@ lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val)
 
 lt_Value lt_table_get(lt_VM* vm, lt_Value table, lt_Value key)
 {
+	if (!LT_IS_TABLE(table)) return LT_VALUE_NULL;
+	if (LT_GET_OBJECT(table)->type == LT_OBJECT_SHARED_TABLE)
+		return ltshared_table_get(vm, LT_GET_OBJECT(table)->shared, key);
 	lt_TablePair* p = _lt_table_index(vm, table, key, 0);
 	if (p) return p->value;
 	return LT_VALUE_NULL;
@@ -3445,14 +3530,33 @@ lt_Value lt_array_push(lt_VM* vm, lt_Value array, lt_Value val)
 {
 	if (!LT_IS_ARRAY(array)) return LT_VALUE_NULL;
 	lt_Object* arr = LT_GET_OBJECT(array);
+	if (arr->type == LT_OBJECT_SHARED_ARRAY) return ltshared_array_push(vm, arr->shared, val);
 	if (arr->array.element_size == 0) arr->array = lt_buffer_new(sizeof(lt_Value));
 	lt_buffer_push(vm, &arr->array, &val);
 	return val;
 }
 
+lt_Value lt_array_get(lt_VM* vm, lt_Value array, uint32_t idx)
+{
+	if (!LT_IS_ARRAY(array)) return LT_VALUE_NULL;
+	lt_Object* arr = LT_GET_OBJECT(array);
+	if (arr->type == LT_OBJECT_SHARED_ARRAY) return ltshared_array_get(vm, arr->shared, idx);
+	return idx < arr->array.length ? *(lt_Value*)lt_buffer_at(&arr->array, idx) : LT_VALUE_NULL;
+}
+
+lt_Value lt_array_set(lt_VM* vm, lt_Value array, uint32_t idx, lt_Value val)
+{
+	if (!LT_IS_ARRAY(array)) return LT_VALUE_NULL;
+	lt_Object* arr = LT_GET_OBJECT(array);
+	if (arr->type == LT_OBJECT_SHARED_ARRAY) return ltshared_array_set(vm, arr->shared, idx, val);
+	if (idx >= arr->array.length) return LT_VALUE_NULL;
+	*(lt_Value*)lt_buffer_at(&arr->array, idx) = val;
+	return val;
+}
+
 lt_Value* lt_array_at(lt_Value array, uint32_t idx)
 {
-	if (!LT_IS_ARRAY(array)) return &LT_NULL;
+	if (!LT_IS_ARRAY(array) || LT_GET_OBJECT(array)->type == LT_OBJECT_SHARED_ARRAY) return &LT_NULL;
 	lt_Object* arr = LT_GET_OBJECT(array);
 	return lt_buffer_at(&arr->array, idx);
 }
@@ -3461,6 +3565,7 @@ lt_Value lt_array_remove(lt_VM* vm, lt_Value array, uint32_t idx)
 {
 	if (!LT_IS_ARRAY(array)) return LT_VALUE_NULL;
 	lt_Object* arr = LT_GET_OBJECT(array);
+	if (arr->type == LT_OBJECT_SHARED_ARRAY) return ltshared_array_remove(vm, arr->shared, idx);
 	lt_Value old = *(lt_Value*)lt_buffer_at(&arr->array, idx);
 	lt_buffer_cycle(&arr->array, idx);
 	return old;
@@ -3470,6 +3575,7 @@ uint32_t lt_array_length(lt_Value array)
 {
 	if (!LT_IS_ARRAY(array)) return 0;
 	lt_Object* arr = LT_GET_OBJECT(array);
+	if (arr->type == LT_OBJECT_SHARED_ARRAY) return ltshared_array_length(arr->shared);
 	return arr->array.length;
 }
 

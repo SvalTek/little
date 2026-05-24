@@ -1,0 +1,11 @@
+var state = { meta: { a: "one" b: "two" } }
+
+task.run(fn(state) {
+    table.put(state.meta, "c", "three")
+}, state).next(fn(value) {
+    var keys = table.keys(state.meta)
+    var values = table.values(state.meta)
+    io.print(array.len(keys))
+    io.print(array.contains(keys, "a"), array.contains(keys, "b"), array.contains(keys, "c"))
+    io.print(array.contains(values, "one"), array.contains(values, "two"), array.contains(values, "three"))
+})

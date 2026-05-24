@@ -1,0 +1,7 @@
+task.run(fn(state) {
+    return fn() {
+        return 1
+    }
+}, {}).catch(fn(reason) {
+    io.print(string.contains(reason, "Unsupported value crossing worker boundary"))
+})

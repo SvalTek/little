@@ -1,0 +1,13 @@
+var root = { items: [] }
+var i = 0
+
+while i < 4100 {
+    array.push(root.items, { value: i })
+    i = i + 1
+}
+
+task.run(fn(state) {
+    return array.len(state.items)
+}, root).catch(fn(reason) {
+    io.print(string.contains(reason, "maximum object count"))
+})

@@ -13,7 +13,7 @@ static uint8_t _lt_array_next(lt_VM* vm, uint8_t argc)
     lt_Value arr = lt_getupval(vm, 0);
 
     uint32_t idx = lt_get_number(current);
-    lt_Value to_return = idx >= lt_array_length(arr) ? LT_VALUE_NULL : *lt_array_at(arr, idx);
+    lt_Value to_return = idx >= lt_array_length(arr) ? LT_VALUE_NULL : lt_array_get(vm, arr, idx);
 
     lt_setupval(vm, 1, LT_VALUE_NUMBER(idx + 1));
     lt_push(vm, to_return);
@@ -123,7 +123,7 @@ static uint8_t _lt_array_last(lt_VM* vm, uint8_t argc)
     if (!LT_IS_ARRAY(arr)) lt_runtime_error(vm, "Expected argument to array.last to be array!");
     if (lt_array_length(arr) == 0) lt_runtime_error(vm, "Expected argument to array.last to be non-empty!");
 
-    lt_push(vm, *lt_array_at(arr, lt_array_length(arr) - 1));
+    lt_push(vm, lt_array_get(vm, arr, lt_array_length(arr) - 1));
     return 1;
 }
 
@@ -133,7 +133,7 @@ static uint8_t _lt_array_first(lt_VM* vm, uint8_t argc)
     lt_Value arr = _lt_array_pop_arg(vm, "Expected argument to array.first to be array!");
     if (lt_array_length(arr) == 0) lt_runtime_error(vm, "Expected argument to array.first to be non-empty!");
 
-    lt_push(vm, *lt_array_at(arr, 0));
+    lt_push(vm, lt_array_get(vm, arr, 0));
     return 1;
 }
 
@@ -152,7 +152,7 @@ static uint8_t _lt_array_clear(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt_runtime_error(vm, "Expected one argument to array.clear!");
     lt_Value arr = _lt_array_pop_arg(vm, "Expected argument to array.clear to be array!");
-    LT_GET_OBJECT(arr)->array.length = 0;
+    while (lt_array_length(arr) > 0) lt_array_remove(vm, arr, lt_array_length(arr) - 1);
     return 0;
 }
 
@@ -171,9 +171,9 @@ static uint8_t _lt_array_insert(lt_VM* vm, uint8_t argc)
     lt_array_push(vm, arr, val);
     for (uint32_t i = len; i > idx; --i)
     {
-        *lt_array_at(arr, i) = *lt_array_at(arr, i - 1);
+        lt_array_set(vm, arr, i, lt_array_get(vm, arr, i - 1));
     }
-    *lt_array_at(arr, idx) = val;
+    lt_array_set(vm, arr, idx, val);
     return 0;
 }
 
@@ -201,7 +201,7 @@ static uint8_t _lt_array_contains(lt_VM* vm, uint8_t argc)
     lt_Value arr = _lt_array_pop_arg(vm, "Expected first argument to array.contains to be array!");
     for (uint32_t i = 0; i < lt_array_length(arr); ++i)
     {
-        if (lt_equals(*lt_array_at(arr, i), val))
+        if (lt_equals(lt_array_get(vm, arr, i), val))
         {
             lt_push(vm, LT_VALUE_TRUE);
             return 1;
@@ -218,7 +218,7 @@ static uint8_t _lt_array_indexof(lt_VM* vm, uint8_t argc)
     lt_Value arr = _lt_array_pop_arg(vm, "Expected first argument to array.indexOf to be array!");
     for (uint32_t i = 0; i < lt_array_length(arr); ++i)
     {
-        if (lt_equals(*lt_array_at(arr, i), val))
+        if (lt_equals(lt_array_get(vm, arr, i), val))
         {
             lt_push(vm, LT_VALUE_NUMBER(i));
             return 1;
@@ -244,7 +244,7 @@ static uint8_t _lt_array_join(lt_VM* vm, uint8_t argc)
     uint32_t len = 0;
     for (uint32_t i = 0; i < lt_array_length(arr); ++i)
     {
-        char* part = ltstd_tostring(vm, *lt_array_at(arr, i));
+        char* part = ltstd_tostring(vm, lt_array_get(vm, arr, i));
         uint32_t part_len = 0;
         while (part[part_len]) ++part_len;
         uint32_t sep_len = 0;
@@ -277,7 +277,7 @@ static uint8_t _lt_array_reverse(lt_VM* vm, uint8_t argc)
     uint32_t len = lt_array_length(arr);
     for (uint32_t i = 0; i < len; ++i)
     {
-        lt_array_push(vm, reversed, *lt_array_at(arr, len - 1 - i));
+        lt_array_push(vm, reversed, lt_array_get(vm, arr, len - 1 - i));
     }
     lt_push(vm, reversed);
     return 1;
@@ -305,7 +305,7 @@ static uint8_t _lt_array_slice(lt_VM* vm, uint8_t argc)
     lt_Value sliced = lt_make_array(vm);
     for (uint32_t i = 0; i < count; ++i)
     {
-        lt_array_push(vm, sliced, *lt_array_at(arr, start + i));
+        lt_array_push(vm, sliced, lt_array_get(vm, arr, start + i));
     }
     lt_push(vm, sliced);
     return 1;

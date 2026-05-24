@@ -1,3 +1,4 @@
+#include "little_internal.h"
 #include "little_std.h"
 
 static lt_Value _lt_table_pop_arg(lt_VM* vm, const char* message)
@@ -56,6 +57,11 @@ static uint8_t _lt_table_keys(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt_runtime_error(vm, "Expected one argument to table.keys!");
     lt_Value table = _lt_table_pop_arg(vm, "Expected argument to table.keys to be table!");
+    if (LT_GET_OBJECT(table)->type == LT_OBJECT_SHARED_TABLE)
+    {
+        lt_push(vm, ltshared_table_keys(vm, LT_GET_OBJECT(table)->shared));
+        return 1;
+    }
     lt_Value keys = lt_make_array(vm);
     lt_Table* raw = &LT_GET_OBJECT(table)->table;
     for (uint8_t b = 0; b < 16; ++b)
@@ -75,6 +81,11 @@ static uint8_t _lt_table_values(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt_runtime_error(vm, "Expected one argument to table.values!");
     lt_Value table = _lt_table_pop_arg(vm, "Expected argument to table.values to be table!");
+    if (LT_GET_OBJECT(table)->type == LT_OBJECT_SHARED_TABLE)
+    {
+        lt_push(vm, ltshared_table_values(vm, LT_GET_OBJECT(table)->shared));
+        return 1;
+    }
     lt_Value values = lt_make_array(vm);
     lt_Table* raw = &LT_GET_OBJECT(table)->table;
     for (uint8_t b = 0; b < 16; ++b)

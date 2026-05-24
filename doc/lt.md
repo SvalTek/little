@@ -19,6 +19,8 @@ These are grouped into `Value` and `Object` types, which are passed by value and
 ---
 
 ## Language statements
+For layout, comments, separators, and expression boundary rules, see [syntax.md](syntax.md).
+
 ### var
 ```js
 var a
@@ -221,7 +223,9 @@ Promise(fn(resolve, reject) {
 })
 ```
 
-`task.run(source, state)` runs Little source text in an isolated VM and returns a promise. The task receives a copied `state` global and resolves with the script's returned value. Only `null`, numbers, booleans, strings, arrays, and tables cross task boundaries. See `doc/std/task.md` for the full task model and limitations.
+`task.run(callable, state)` runs a Little function in a worker VM on a host thread and returns a promise. Only explicit `state` crosses the task boundary. Tables and arrays in `state` are shared through proxies, while scalars are copied. See `doc/std/task.md` for the full task model and limitations.
+
+Scripts can manage async work explicitly with `mainloop.run()`, `mainloop.poll()`, and `mainloop.stop()`.
 
 `async fn` creates an asynchronous function. Calling it returns a promise immediately; the function body is run by the VM event loop. `await` is only valid inside async functions and waits for a promise before continuing:
 ```js
