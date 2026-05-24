@@ -1,4 +1,4 @@
-
+; A tiny standalone script kept around as a quick "does the CLI run?" demo.
 var speak = fn(animal) {
     if animal is "cat" { return "meow" }
     elseif animal is "dog" { return "woof" }

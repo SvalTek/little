@@ -1,10 +1,13 @@
 io.print("stdlib collections")
 
+; String helpers are often used to normalize input before it becomes data.
 var words = string.split(" red, green, blue ", ",")
-words[0] = string.trim(words[0])
-words[1] = string.trim(words[1])
-words[2] = string.trim(words[2])
+for i in array.range(0, array.len(words)) {
+    words[i] = string.trim(words[i])
+}
 
+; Arrays are mutable. Insert in the middle, push at the end, and query helpers
+; for common operations.
 array.insert(words, 1, "gold")
 array.push(words, "violet")
 
@@ -12,11 +15,18 @@ io.print(array.join(words, " | "))
 io.print("first", array.first(words), "last", array.last(words))
 io.print("contains-green", array.contains(words, "green"))
 
+; Helpers such as reverse return a new array, leaving the original alone.
 var reversed = array.reverse(words)
-io.print(array.join(reversed, ","))
+io.print("reversed", array.join(reversed, ","))
+io.print("original", array.join(words, ","))
 
+; Tables work well as records or dictionaries. Use table.put/fetch when the key
+; is dynamic, and dot syntax when the key is known in source.
 var swatch = { primary: "red" accent: "gold" }
 table.put(swatch, "count", array.len(words))
+table.put(swatch, "labels", words)
+
 io.print(string.expand("palette {{primary}}/{{accent}} has {{count}} colors", swatch))
 io.print("has-accent", table.has(swatch, "accent"))
 io.print("fallback", table.fetch(swatch, "missing", "none"))
+io.print("keys", array.join(table.keys(swatch), ","))

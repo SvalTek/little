@@ -1,6 +1,8 @@
 # Little Scripts
 
 These are runnable Little scripts that show the main language and stdlib features working together.
+They are written as a commented tour, so reading the files should teach the
+feature as well as prove that it runs.
 
 Build the CLI first:
 

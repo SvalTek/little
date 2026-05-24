@@ -1,5 +1,7 @@
 io.print("language basics")
 
+; `fn` creates a function value. Branches use braces, and `elseif` keeps a
+; longer decision chain flat.
 var describe = fn(value) {
     if value > 10 {
         return "large"
@@ -12,6 +14,7 @@ var describe = fn(value) {
     }
 }
 
+; Arrays are zero-indexed. `array.each` is the usual iterator for `for`.
 var numbers = [ 1, 2, 3, 4 ]
 var total = 0
 
@@ -19,12 +22,24 @@ for n in array.each(numbers) {
     total = total + n
 }
 
-var profile = { name: "Ada" score: total }
-profile.status = describe(profile.score)
+; Tables can use literal fields and later property assignment.
+; Shorthand `{ total, status }` means `{ total: total status: status }`.
+var status = describe(total)
+var profile = { name: "Ada" total status }
+profile.note = "first pass"
 
 io.print("sum", total, profile.status)
-io.print(string.expand("{{name}} scored {{score}} which is {{status}}", profile))
+io.print(string.expand("{{name}} scored {{total}} which is {{status}}", profile))
 
+; `with` evaluates its receiver once and makes @name refer to fields on it.
+with profile {
+    @note = string.concat(@note, " / checked")
+    @scoreText = string.expand("{{total}} points", profile)
+}
+
+io.print(profile.note, profile.scoreText)
+
+; `while` is useful when the loop state is not just an array element.
 var countdown = 3
 while countdown > 0 {
     io.print("countdown", countdown)

@@ -1,25 +1,35 @@
 io.print("async promises tasks")
 
+; Promise callbacks receive resolve and reject. `.next` observes a successful
+; result, and `.catch` handles rejection.
 Promise(fn(resolve, reject) {
     resolve("promise resolved")
 }).next(fn(value) {
     io.print(value)
 })
 
+Promise(fn(resolve, reject) {
+    reject("promise rejected")
+}).catch(fn(reason) {
+    io.print("caught", reason)
+})
+
+; Timers schedule callbacks on the main loop.
 setTimeout(fn() {
     io.print("timer fired")
 }, 1)
 
-var delay = fn(value) {
+var delay = fn(value, ms) {
     return Promise(fn(resolve, reject) {
         setTimeout(fn() {
             resolve(value)
-        }, 1)
+        }, ms)
     })
 }
 
+; Async functions can `await` promises and return a promise themselves.
 var work = async fn() {
-    var value = await delay(7)
+    var value = await delay(7, 1)
     return value + 1
 }
 
@@ -27,10 +37,22 @@ work().next(fn(value) {
     io.print("async result", value)
 })
 
+; task.run runs the function on a worker VM. Pass a state table so the work has
+; explicit input instead of closing over local variables.
 task.run(fn(state) {
     return state.a + state.b
 }, { a: 2 b: 4 }).next(fn(value) {
     io.print("task result", value)
+})
+
+; Shared tables and arrays can be mutated by tasks and observed afterward.
+var shared = { events: [] results: {} }
+task.run(fn(state) {
+    array.push(state.shared.events, "worker")
+    table.put(state.shared.results, "status", "done")
+    return table.fetch(state.shared.results, "status")
+}, { shared }).next(fn(value) {
+    io.print("shared result", value, array.join(shared.events, ","))
 })
 
 io.print("top level done")

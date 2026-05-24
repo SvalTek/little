@@ -8,11 +8,14 @@ var request = {
     tags: [ "api", "orders", "write" ]
 }
 
+; Table destructuring pulls fields into locals. `id: requestId` renames the
+; field, and a missing field becomes null.
 var { id: requestId, user, path, status, missing } = request
 var summary = { requestId, user, path, status }
 io.print(string.expand("request {{requestId}} {{user}} -> {{path}} status {{status}}", summary))
 io.print("missing optional field", missing)
 
+; Array destructuring pulls by position.
 var [firstTag, secondTag, thirdTag] = request.tags
 io.print("tags", firstTag, secondTag, thirdTag)
 
@@ -21,6 +24,7 @@ var rgb = fn(r, g, b) {
     return string.expand("rgb({{r}}, {{g}}, {{b}})", parts)
 }
 
+; unpack expands an array into function arguments.
 var badgeColor = [ 34, 139, 230 ]
 io.print("badge color", rgb(unpack(badgeColor)))
 
@@ -33,6 +37,7 @@ var account = makeAccount(unpack(csvRow))
 var { name, role, state } = account
 io.print(string.expand("account {{name}} has {{role}} role and is {{state}}", { name, role, state }))
 
+; unpack can take a start and end index when only a slice is needed.
 var roleOnly = unpack(csvRow, 1, 1)
 io.print("single unpacked field", roleOnly)
 
@@ -40,4 +45,6 @@ var labelPair = fn(primary, suffix) {
     io.print("non-final unpack uses first value", primary, suffix)
 }
 
+; Only a final argument position expands to many values. Earlier positions use
+; the first unpacked value.
 labelPair(unpack([ "first", "ignored" ]), "kept")

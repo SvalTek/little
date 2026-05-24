@@ -1,5 +1,7 @@
 io.print("math and strings")
 
+; Math helpers are small but useful for application logic: angles, bounds,
+; interpolation, and deterministic random demos.
 var angle = math.rad(90)
 io.print("sin90", math.round(math.sin(angle)))
 io.print("clamp", math.clamp(42, 0, 10))
@@ -9,8 +11,20 @@ math.seed(7)
 var roll = math.randomInt(1, 6)
 io.print("roll-ok", roll >= 1 and roll <= 6)
 
+; String helpers compose cleanly with table shorthand and string.expand.
 var title = "  little language  "
-io.print(string.upper(string.trim(title)))
-io.print(string.replace("one fish one fish", "one", "two"))
+var cleanTitle = string.upper(string.trim(title))
+io.print(cleanTitle)
+
+var sentence = string.replace("one fish one fish", "one", "two")
+io.print(sentence)
 io.print(string.startsWith("little", "lit"), string.endsWith("little", "tle"))
 io.print(string.repeat("ha", 3))
+
+; `string.format` is good for positional formatting. `string.expand` is good
+; when values already live in a table.
+var percent = math.round(math.lerp(0, 100, 0.375))
+io.print(string.expand("progress={{percent}}%", { percent }))
+
+var user = { name: "Ada" language: "Little" }
+io.print(string.expand("{{name}} is learning {{language}}", user))

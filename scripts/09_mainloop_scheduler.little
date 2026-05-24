@@ -1,5 +1,7 @@
 io.print("mainloop scheduler")
 
+; mainloop.run keeps processing timers, promises, and task completions until
+; mainloop.stop is called or there is no more scheduled work.
 var shared = {
     ticks: 0
     results: {}
@@ -15,9 +17,13 @@ var maybeStop = fn() {
     }
 }
 
+; Keep the timer id in a table so the callback can see the later assignment.
 timer.id = setInterval(fn() {
-    shared.ticks = shared.ticks + 1
-    array.push(shared.labels, "tick")
+    with shared {
+        @ticks = @ticks + 1
+        array.push(@labels, "tick")
+    }
+
     if shared.ticks >= 5 {
         clearInterval(timer.id)
         table.put(shared.results, "timer", "done")
@@ -25,53 +31,33 @@ timer.id = setInterval(fn() {
     }
 }, 1)
 
-task.run(async fn(state)
-{
-    return await Promise(fn(resolve, reject) {
-        setTimeout(fn() {
-            resolve(state.value)
-        }, state.delay)
+var delayedTask = fn(label, value, delay) {
+    return task.run(async fn(state) {
+        return await Promise(fn(resolve, reject) {
+            setTimeout(fn() {
+                resolve(state.value)
+            }, state.delay)
+        })
+    }, {
+        value
+        delay
+    }).next(fn(result) {
+        table.put(shared.results, label, result)
+        array.push(shared.labels, label)
+        maybeStop()
     })
-},{
-    value: "A"
-    delay: 1
-})
-.next(fn(value) {
-    table.put(shared.results, "alpha", value)
-    array.push(shared.labels, "alpha")
-    maybeStop()
-})
+}
 
+delayedTask("alpha", "A", 1)
+delayedTask("beta", "B", 2)
+delayedTask("gamma", "C", 3)
 
-task.run(async fn(state) {
-    return await Promise(fn(resolve, reject) {
-        setTimeout(fn() {
-            resolve(state.value)
-        }, state.delay)
-    })
-}, { value: "B" delay: 2 }).next(fn(value) {
-    table.put(shared.results, "beta", value)
-    array.push(shared.labels, "beta")
-    maybeStop()
-})
-
-task.run(async fn(state) {
-    return await Promise(fn(resolve, reject) {
-        setTimeout(fn() {
-            resolve(state.value)
-        }, state.delay)
-    })
-}, { value: "C" delay: 3 }).next(fn(value) {
-    table.put(shared.results, "gamma", value)
-    array.push(shared.labels, "gamma")
-    maybeStop()
-})
-
+; A synchronous worker can mutate shared tables and arrays too.
 task.run(fn(state) {
     table.put(state.shared.results, "worker", "shared")
     array.push(state.shared.labels, "worker")
     return table.fetch(state.shared.results, "worker")
-}, { shared: shared }).next(fn(value) {
+}, { shared }).next(fn(value) {
     table.put(shared.results, "workerResult", value)
     maybeStop()
 })

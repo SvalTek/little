@@ -1,30 +1,117 @@
 io.print("classes")
 
+; Classes are called like functions. There is no `new`.
+; Public fields are normal instance state; private fields are only visible to
+; methods declared on the same class.
 class Counter {
     private value = 0
     public label = "counter"
 
-    constructor(start) {
-        this.value = start
+    ; A constructor parameter prefixed with @ assigns the matching field before
+    ; the constructor body runs. This is the short form for `@label = label`.
+    constructor(start, @label) {
+        @value = start
     }
 
-    public add(amount) {
-        this.value = this.value + amount
-        return this.value
+    add(amount) {
+        @value = @value + amount
+        return @value
     }
 
-    public get current() {
-        return this.value
+    get current() {
+        return @value
     }
 
-    public set current(value) {
-        this.value = value
+    set current(value) {
+        @value = math.clamp(value, 0, 100)
+    }
+
+    summary() {
+        return string.expand("{{label}}={{value}}", {
+            label: @label
+            value: @value
+        })
     }
 }
 
-var a = Counter(2)
-var b = Counter(10)
+var a = Counter(2, "alpha")
+var b = Counter(10, "beta")
 
 io.print(a.label, a:add(3), a.current)
-b.current = 20
-io.print("independent", a.current, b.current)
+b.current = 120
+io.print("independent", a:summary(), b:summary())
+
+; Inheritance is single and explicit. A subclass can call the superclass
+; constructor with `super(...)`, and can call inherited methods with
+; `super.method(...)`.
+class MeteredCounter extends Counter {
+    private changes = 0
+    public kind = "metered"
+
+    constructor(start, label) {
+        super(start, label)
+    }
+
+    ; Overriding an inherited public method must be marked with `override`.
+    override add(amount) {
+        @changes = @changes + 1
+        return super.add(amount)
+    }
+
+    get changeCount() {
+        return @changes
+    }
+
+    override summary() {
+        return string.expand("{{base}} changes={{changes}}", {
+            base: super.summary()
+            changes: @changes
+        })
+    }
+}
+
+var metered = MeteredCounter(5, "jobs")
+metered:add(4)
+metered:add(6)
+io.print(metered.kind, metered.current, metered.changeCount)
+io.print(metered:summary())
+
+; If a subclass has no constructor, Little forwards the original arguments to
+; the superclass constructor.
+class NamedThing {
+    constructor(@name) {
+    }
+}
+
+class NamedJob extends NamedThing {
+    public status = "pending"
+
+    finish() {
+        @status = "done"
+    }
+}
+
+var job = NamedJob("compile")
+job:finish()
+io.print(job.name, job.status)
+
+; Private fields are class-private, not inherited-private. The subclass can
+; reuse the same private name without changing what superclass methods see.
+class SecretBox {
+    private secret = "base"
+
+    revealBase() {
+        return @secret
+    }
+}
+
+class ChildBox extends SecretBox {
+    private secret = "child"
+
+    revealChild() {
+        return @secret
+    }
+}
+
+var box = ChildBox()
+io.print(box:revealBase(), box:revealChild())

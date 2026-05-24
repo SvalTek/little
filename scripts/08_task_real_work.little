@@ -1,5 +1,7 @@
 io.print("task real work")
 
+; Scalars are copied into a task state. Shared tables and arrays keep shared
+; identity so worker-side changes can be observed by the main VM.
 var copied = 10
 var state = {
     copied: copied
@@ -14,6 +16,8 @@ var state = {
 }
 
 task.run(async fn(state) {
+    ; Worker functions may be async too. This tiny delay stands in for work such
+    ; as an external request or a timer-based wait.
     var delay = fn(value) {
         return Promise(fn(resolve, reject) {
             setTimeout(fn() {
@@ -32,6 +36,7 @@ task.run(async fn(state) {
         array.push(state.events, string.upper(job.name))
     }
 
+    ; This mutates the shared state table field, not the outer `copied` local.
     state.copied = 99
     table.put(state.report, "title", "batch-complete")
     table.put(state.report, "summary", string.expand("processed {{processed}} total {{total}}", state.metrics))
