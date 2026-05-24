@@ -110,32 +110,142 @@ static uint8_t _ltstd_unpack(lt_VM* vm, uint8_t argc)
     return count;
 }
 
+static char* _ltstd_copy_string(lt_VM* vm, const char* string)
+{
+    size_t len = strlen(string);
+    char* copy = vm->alloc(len + 1);
+    memcpy(copy, string, len + 1);
+    return copy;
+}
+
+static char* _ltstd_make_suffixed_path(lt_VM* vm, const char* path, const char* suffix)
+{
+    size_t path_len = strlen(path);
+    size_t suffix_len = strlen(suffix);
+    char* result = vm->alloc(path_len + suffix_len + 1);
+    memcpy(result, path, path_len);
+    memcpy(result + path_len, suffix, suffix_len + 1);
+    return result;
+}
+
+static char* _ltstd_join_path(lt_VM* vm, const char* root, const char* path)
+{
+    size_t root_len = strlen(root);
+    size_t path_len = strlen(path);
+    uint8_t needs_sep = root_len > 0 && root[root_len - 1] != '/' && root[root_len - 1] != '\\';
+    char* result = vm->alloc(root_len + needs_sep + path_len + 1);
+    memcpy(result, root, root_len);
+    if (needs_sep) result[root_len++] = '/';
+    memcpy(result + root_len, path, path_len + 1);
+    return result;
+}
+
+static char* _ltstd_expand_module_pattern(lt_VM* vm, const char* pattern, const char* requested)
+{
+    const char* marker = strchr(pattern, '?');
+    if (!marker) return _ltstd_join_path(vm, pattern, requested);
+
+    const char* first_sep = strchr(requested, '/');
+    const char* first_backslash = strchr(requested, '\\');
+    if (!first_sep || (first_backslash && first_backslash < first_sep)) first_sep = first_backslash;
+
+    size_t package_len = first_sep ? (size_t)(first_sep - requested) : strlen(requested);
+    const char* subpath = first_sep ? first_sep + 1 : "";
+    size_t subpath_len = strlen(subpath);
+    uint8_t has_subpath = subpath_len > 0;
+
+    size_t total = has_subpath ? subpath_len + 2 : 1;
+    for (const char* cursor = pattern; *cursor; ++cursor)
+        total += *cursor == '?' ? package_len : 1;
+
+    char* result = vm->alloc(total);
+    char* out = result;
+    for (const char* cursor = pattern; *cursor; ++cursor)
+    {
+        if (*cursor == '?')
+        {
+            memcpy(out, requested, package_len);
+            out += package_len;
+        }
+        else *out++ = *cursor;
+    }
+    if (has_subpath)
+    {
+        if (out > result && out[-1] != '/' && out[-1] != '\\') *out++ = '/';
+        memcpy(out, subpath, subpath_len);
+        out += subpath_len;
+    }
+    *out = 0;
+    return result;
+}
+
+static FILE* _ltstd_open_module_base(lt_VM* vm, const char* base, char** resolved)
+{
+    char* candidate = 0;
+    size_t base_len = strlen(base);
+    if (base_len >= 7 && strcmp(base + base_len - 7, ".little") == 0)
+        candidate = _ltstd_copy_string(vm, base);
+    else
+        candidate = _ltstd_make_suffixed_path(vm, base, ".little");
+
+    FILE* file = fopen(candidate, "rb");
+    if (file)
+    {
+        *resolved = candidate;
+        return file;
+    }
+    vm->free(candidate);
+
+    candidate = _ltstd_join_path(vm, base, "init.little");
+    file = fopen(candidate, "rb");
+    if (file)
+    {
+        *resolved = candidate;
+        return file;
+    }
+    vm->free(candidate);
+
+    return 0;
+}
+
+static lt_Value _ltstd_module_paths(lt_VM* vm, uint8_t create)
+{
+    lt_Value key = lt_make_string(vm, "__module_paths");
+    lt_Value paths = lt_table_get(vm, vm->global, key);
+    if (!LT_IS_ARRAY(paths) && create)
+    {
+        paths = lt_make_array(vm);
+        lt_table_set(vm, vm->global, key, paths);
+    }
+    return paths;
+}
+
 static char* _ltstd_read_module_file(lt_VM* vm, const char* requested, char** resolved)
 {
-    FILE* file = fopen(requested, "rb");
-    const char* path = requested;
-    char* fallback = 0;
+    FILE* file = _ltstd_open_module_base(vm, requested, resolved);
+    lt_Value paths = _ltstd_module_paths(vm, 0);
 
-    if (!file)
+    if (!file && LT_IS_ARRAY(paths))
     {
-        size_t len = strlen(requested);
-        fallback = vm->alloc(len + 8);
-        memcpy(fallback, requested, len);
-        memcpy(fallback + len, ".little", 8);
-        file = fopen(fallback, "rb");
-        path = fallback;
+        for (uint32_t i = 0; i < lt_array_length(paths); ++i)
+        {
+            lt_Value entry = lt_array_get(vm, paths, i);
+            if (!LT_IS_STRING(entry)) continue;
+            char* base = _ltstd_expand_module_pattern(vm, lt_get_string(vm, entry), requested);
+            file = _ltstd_open_module_base(vm, base, resolved);
+            vm->free(base);
+            if (file) break;
+        }
     }
 
     if (!file)
-    {
-        if (fallback) vm->free(fallback);
         return 0;
-    }
 
     if (fseek(file, 0, SEEK_END) != 0)
     {
         fclose(file);
-        if (fallback) vm->free(fallback);
+        vm->free(*resolved);
+        *resolved = 0;
         return 0;
     }
 
@@ -143,7 +253,8 @@ static char* _ltstd_read_module_file(lt_VM* vm, const char* requested, char** re
     if (size < 0)
     {
         fclose(file);
-        if (fallback) vm->free(fallback);
+        vm->free(*resolved);
+        *resolved = 0;
         return 0;
     }
     rewind(file);
@@ -153,11 +264,30 @@ static char* _ltstd_read_module_file(lt_VM* vm, const char* requested, char** re
     fclose(file);
     source[read] = 0;
 
-    size_t path_len = strlen(path);
-    *resolved = vm->alloc(path_len + 1);
-    memcpy(*resolved, path, path_len + 1);
-    if (fallback) vm->free(fallback);
     return source;
+}
+
+static uint8_t _ltstd_module_add_path(lt_VM* vm, uint8_t argc)
+{
+    if (argc < 1) lt_runtime_error(vm, "Expected at least one path for module.addPath!");
+    uint16_t base = vm->top - argc;
+    lt_Value paths = _ltstd_module_paths(vm, 1);
+    for (uint16_t i = base; i < vm->top; ++i)
+    {
+        lt_Value path = vm->stack[i];
+        if (!LT_IS_STRING(path)) lt_runtime_error(vm, "Expected module search path to be string!");
+        lt_array_push(vm, paths, path);
+    }
+    vm->top = base;
+    return 0;
+}
+
+static uint8_t _ltstd_module_clear_paths(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt_runtime_error(vm, "Expected no arguments to module.clearPaths!");
+    lt_Value paths = _ltstd_module_paths(vm, 1);
+    while (lt_array_length(paths) > 0) lt_array_remove(vm, paths, lt_array_length(paths) - 1);
+    return 0;
 }
 
 static uint8_t _ltstd_import(lt_VM* vm, uint8_t argc)
@@ -209,6 +339,15 @@ static uint8_t _ltstd_import(lt_VM* vm, uint8_t argc)
     }
 
     cache_key = lt_make_string(vm, resolved);
+    cached = lt_table_get(vm, modules, cache_key);
+    if (LT_IS_TABLE(cached))
+    {
+        lt_Value value = lt_table_get(vm, cached, lt_make_string(vm, "value"));
+        vm->free(source);
+        vm->free(resolved);
+        lt_push(vm, value);
+        return 1;
+    }
 
     lt_Value callable = lt_loadstring(vm, source, resolved);
     if (callable == LT_VALUE_NULL)
@@ -295,6 +434,10 @@ void ltstd_open_all(lt_VM* vm)
     lt_table_set(vm, vm->global, lt_make_string(vm, "pcall"), lt_make_native(vm, _ltstd_pcall));
     lt_table_set(vm, vm->global, lt_make_string(vm, "unpack"), lt_make_native(vm, _ltstd_unpack));
     lt_table_set(vm, vm->global, lt_make_string(vm, "import"), lt_make_native(vm, _ltstd_import));
+    lt_Value module = lt_make_table(vm);
+    lt_table_set(vm, module, lt_make_string(vm, "addPath"), lt_make_native(vm, _ltstd_module_add_path));
+    lt_table_set(vm, module, lt_make_string(vm, "clearPaths"), lt_make_native(vm, _ltstd_module_clear_paths));
+    lt_table_set(vm, vm->global, lt_make_string(vm, "module"), module);
     ltstd_open_io(vm);
     ltstd_open_math(vm);
     ltstd_open_array(vm);

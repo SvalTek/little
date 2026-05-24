@@ -926,8 +926,10 @@ lt_Value ltshared_array_remove(lt_VM* vm, lt_SharedObject* shared, uint32_t idx)
 	if (idx + 1 < shared->array.length)
 		memmove(shared->array.values + idx, shared->array.values + idx + 1, (shared->array.length - idx - 1) * sizeof(lt_SharedValue));
 	shared->array.length--;
+	_lt_shared_value_retain_external(&old_value);
 	_lt_shared_unlock(shared);
 	lt_Value old = _lt_shared_to_vm(vm, &old_value);
+	_lt_shared_value_release_external(&old_value);
 	_lt_shared_value_clear(&old_value);
 	return old;
 }
@@ -1022,6 +1024,9 @@ static uint8_t _lt_is_callable(lt_Value value)
 		(LT_IS_OBJECT(value) && LT_GET_OBJECT(value)->type == LT_OBJECT_BOUND_NATIVE);
 }
 
+static void _lt_keep_value(lt_VM* vm, lt_Value value);
+static void _lt_release_value(lt_VM* vm, lt_Value value);
+
 static void _lt_schedule_reaction(lt_VM* vm, lt_Value promise, lt_PromiseReaction reaction)
 {
 	lt_Microtask task;
@@ -1049,10 +1054,16 @@ static void _lt_settle_promise(lt_VM* vm, lt_Value promise_value, lt_PromiseStat
 static void _lt_add_promise_reaction(lt_VM* vm, lt_Value promise_value, lt_PromiseReaction reaction)
 {
 	lt_Object* promise = LT_GET_OBJECT(promise_value);
+	_lt_keep_value(vm, promise_value);
+	_lt_keep_value(vm, reaction.callback);
+	_lt_keep_value(vm, reaction.next_promise);
 	if (promise->promise.state == LT_PROMISE_PENDING)
 		lt_buffer_push(vm, &promise->promise.reactions, &reaction);
 	else
 		_lt_schedule_reaction(vm, promise_value, reaction);
+	_lt_release_value(vm, reaction.next_promise);
+	_lt_release_value(vm, reaction.callback);
+	_lt_release_value(vm, promise_value);
 }
 
 static void _lt_keep_value(lt_VM* vm, lt_Value value)
@@ -1537,9 +1548,13 @@ lt_Value ltasync_call(lt_VM* vm, lt_Value callee, uint8_t argc)
 
 	for (uint8_t i = 0; i < argc; ++i)
 		task.args[i] = vm->stack[vm->top - argc + i];
-	vm->top -= argc;
 
+	lt_push(vm, promise);
+	lt_push(vm, callee);
 	lt_buffer_push(vm, &vm->async_calls, &task);
+	lt_pop(vm);
+	lt_pop(vm);
+	vm->top -= argc;
 	return promise;
 }
 
@@ -1721,6 +1736,8 @@ static void* _lt_worker_main(void* arg)
 	lt_VM* vm = worker->vm;
 	_lt_keep_value(vm, worker->callable);
 	lt_push(vm, worker->state_arg);
+	_lt_release_value(vm, worker->state_arg);
+	_lt_release_value(vm, worker->callable);
 	uint32_t nret = lt_exec(vm, worker->callable, 1);
 	_lt_release_value(vm, worker->callable);
 
@@ -1793,12 +1810,16 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 
 	lt_Value promise = _lt_make_promise(vm);
 	lt_nocollect(vm, LT_GET_OBJECT(promise));
+	_lt_keep_value(vm, state);
+	_lt_keep_value(vm, callable);
 
 	lt_Worker* worker = vm->alloc(sizeof(lt_Worker));
 	if (!worker)
 	{
 		_lt_settle_promise(vm, promise, LT_PROMISE_REJECTED, lt_make_string(vm, "Failed to allocate worker!"));
 		lt_push(vm, promise);
+		_lt_release_value(vm, callable);
+		_lt_release_value(vm, state);
 		lt_resumecollect(vm, LT_GET_OBJECT(promise));
 		return 1;
 	}
@@ -1816,6 +1837,8 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 		_lt_worker_destroy_lock(worker);
 		vm->free(worker);
 		lt_push(vm, promise);
+		_lt_release_value(vm, callable);
+		_lt_release_value(vm, state);
 		lt_resumecollect(vm, LT_GET_OBJECT(promise));
 		return 1;
 	}
@@ -1836,9 +1859,12 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 		lt_destroy(worker->vm);
 		vm->free(worker);
 		lt_push(vm, promise);
+		_lt_release_value(vm, callable);
+		_lt_release_value(vm, state);
 		lt_resumecollect(vm, LT_GET_OBJECT(promise));
 		return 1;
 	}
+	_lt_keep_value(worker->vm, worker->callable);
 	_lt_import_ctx_destroy(&import_ctx);
 
 	lt_SharedMarshalCtx marshal_ctx;
@@ -1848,14 +1874,18 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 	{
 		_lt_settle_promise(vm, promise, LT_PROMISE_REJECTED, lt_make_string(vm, marshal_ctx.error[0] ? marshal_ctx.error : "Unsupported value crossing worker boundary!"));
 		_lt_shared_ctx_destroy(&marshal_ctx);
+		_lt_release_value(worker->vm, worker->callable);
 		_lt_worker_destroy_lock(worker);
 		lt_destroy(worker->vm);
 		vm->free(worker);
 		lt_push(vm, promise);
+		_lt_release_value(vm, callable);
+		_lt_release_value(vm, state);
 		lt_resumecollect(vm, LT_GET_OBJECT(promise));
 		return 1;
 	}
 	worker->state_arg = _lt_shared_to_vm(worker->vm, &shared_state);
+	_lt_keep_value(worker->vm, worker->state_arg);
 	_lt_shared_value_clear(&shared_state);
 	_lt_shared_ctx_destroy(&marshal_ctx);
 
@@ -1864,6 +1894,8 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 	if (!worker->handle)
 	{
 		_lt_settle_promise(vm, promise, LT_PROMISE_REJECTED, lt_make_string(vm, "Failed to create worker thread!"));
+		_lt_release_value(worker->vm, worker->state_arg);
+		_lt_release_value(worker->vm, worker->callable);
 		_lt_worker_destroy_lock(worker);
 		lt_destroy(worker->vm);
 		vm->free(worker);
@@ -1873,6 +1905,8 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 	if (pthread_create(&worker->thread, 0, _lt_worker_main, worker) != 0)
 	{
 		_lt_settle_promise(vm, promise, LT_PROMISE_REJECTED, lt_make_string(vm, "Failed to create worker thread!"));
+		_lt_release_value(worker->vm, worker->state_arg);
+		_lt_release_value(worker->vm, worker->callable);
 		_lt_worker_destroy_lock(worker);
 		lt_destroy(worker->vm);
 		vm->free(worker);
@@ -1881,6 +1915,8 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 #endif
 
 	lt_push(vm, promise);
+	_lt_release_value(vm, callable);
+	_lt_release_value(vm, state);
 	lt_resumecollect(vm, LT_GET_OBJECT(promise));
 	return 1;
 }

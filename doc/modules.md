@@ -53,19 +53,42 @@ The named form is preferred when a script only needs specific exported values.
 
 ## Paths
 
-`import "path"` first opens the path exactly as written. If that fails, Little tries the same path with `.little` appended.
+`import "path"` only loads Little source files. It tries `path.little`, then `path/init.little`.
 
 ```js
 import { greet } from "tests/fixtures/greeter"
 ```
 
-At this stage, paths are resolved by the host process in the same way as normal file opens. They are not package names, and there is no package search path.
+If those direct candidates fail, Little tries each registered module search path. Register search paths with `module.addPath(...)`:
+
+```js
+module.addPath("lib", "vendor")
+import { common } from "utils/common"
+```
+
+Plain search paths are treated as roots, so `module.addPath("lib")` makes `import "utils/common"` try:
+
+```text
+lib/utils/common.little
+lib/utils/common/init.little
+```
+
+Search paths may contain `?` as a package-name placeholder. For `import "toolkit/math"`, `?` receives `toolkit` and the remaining `math` path is appended after the template:
+
+```js
+module.addPath("packages/?/src")
+var math = import "toolkit/math"
+```
+
+That tries `packages/toolkit/src/math.little` and `packages/toolkit/src/math/init.little`. For `import "toolkit"`, the same search path tries `packages/toolkit/src.little` and `packages/toolkit/src/init.little`.
+
+Use `module.clearPaths()` to remove registered search paths. Relative paths are still resolved by the host process in the same way as normal file opens, so they are relative to the current working directory.
 
 ## Cache Behavior
 
 Imports are cached per VM by resolved path. Importing the same file again returns the cached value without rerunning the module body.
 
-Caching starts before the module body runs, so simple import cycles can observe a partially initialized module value. The cached placeholder is replaced with the module's returned value after execution completes.
+Caching starts before the module body runs, so simple import cycles can observe a partially initialized module value. The cached placeholder is replaced with the module's returned value after execution completes. If module execution fails, the placeholder is removed.
 
 ## Syntax Summary
 

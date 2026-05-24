@@ -567,7 +567,6 @@ void lt_setupval(lt_VM* vm, uint8_t idx, lt_Value val);
 uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc);
 uint8_t lt_poll(lt_VM* vm);
 void lt_runloop(lt_VM* vm);
-void ltasync_open_mainloop(lt_VM* vm);
 void lt_error(lt_VM* vm, const char* msg);
 void lt_runtime_error(lt_VM* vm, const char* message);
 

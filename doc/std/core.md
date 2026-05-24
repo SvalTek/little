@@ -56,4 +56,15 @@ Named import syntax destructures that returned module value into locals:
 import { greet, shout } from "tests/fixtures/greeter"
 ```
 
+Module search paths can be registered with `module.addPath(...)`:
+
+```js
+module.addPath("lib")
+var common = import "utils/common"
+```
+
+For each direct path or search-path candidate, Little tries `path.little`, then `path/init.little`. Extensionless files are not loaded. Use `module.clearPaths()` to remove registered search paths.
+
+When a search path contains `?`, it receives the first import path segment and any remaining subpath is appended after the template.
+
 See [../modules.md](../modules.md) for module loading, exporting, path, and cache behavior.

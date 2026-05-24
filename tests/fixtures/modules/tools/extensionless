@@ -1,0 +1,3 @@
+return {
+    name: "should-not-load"
+}
