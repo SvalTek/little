@@ -40,3 +40,20 @@ with box {
 }
 
 io.print(box:read(), box.label)
+
+var player = {
+    health: 100
+    weapon: {
+        durability: 5
+    }
+}
+
+with player {
+    with @weapon {
+        @durability = @durability - 1
+    }
+
+    @health = @health - 10
+}
+
+io.print(player.health, player.weapon.durability)
