@@ -1,0 +1,10 @@
+var first = pcall(fn() {
+    return import "tests/fixtures/import-runtime-error"
+})
+
+var second = pcall(fn() {
+    return import "tests/fixtures/import-runtime-error"
+})
+
+io.print(not first.ok, string.contains(first.error, "Expected first argument to unpack to be array!"))
+io.print(not second.ok, string.contains(second.error, "Expected first argument to unpack to be array!"))

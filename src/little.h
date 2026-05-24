@@ -94,6 +94,7 @@ typedef enum {
 	LT_TOKEN_PERIOD,
 	LT_TOKEN_COMMA,
 	LT_TOKEN_COLON,
+	LT_TOKEN_AT,
 
 	LT_TOKEN_OPENPAREN,
 	LT_TOKEN_CLOSEPAREN,
@@ -115,12 +116,16 @@ typedef enum {
 	LT_TOKEN_SET,
 	LT_TOKEN_BREAK,
 	LT_TOKEN_VAR,
+	LT_TOKEN_GLOBAL,
 	LT_TOKEN_IF,
 	LT_TOKEN_ELSE,
 	LT_TOKEN_ELSEIF,
 	LT_TOKEN_FOR,
 	LT_TOKEN_IN,
 	LT_TOKEN_WHILE,
+	LT_TOKEN_WITH,
+	LT_TOKEN_IMPORT,
+	LT_TOKEN_FROM,
 	LT_TOKEN_RETURN,
 
 	LT_TOKEN_PLUS,
@@ -200,6 +205,7 @@ typedef enum {
 	LT_AST_NODE_ELSEIF,
 	LT_AST_NODE_FOR,
 	LT_AST_NODE_WHILE,
+	LT_AST_NODE_WITH,
 	LT_AST_NODE_BREAK,
 } lt_AstNodeType;
 
@@ -297,6 +303,7 @@ typedef struct lt_AstNode {
 			struct lt_AstNode* expr;
 			lt_DestructureType destructure;
 			lt_Buffer entries;
+			uint8_t is_global;
 		} declare;
 
 		struct {
@@ -340,6 +347,12 @@ typedef struct lt_AstNode {
 			struct lt_AstNode* iterator;
 			lt_Buffer body;
 		} loop;
+
+		struct {
+			lt_Token* receiver;
+			struct lt_AstNode* expr;
+			lt_Buffer body;
+		} with_stmt;
 	};
 } lt_AstNode;
 
@@ -364,6 +377,8 @@ typedef struct {
 	uint8_t in_async;
 	uint8_t allow_table_call;
 	uint8_t had_error;
+	uint32_t next_with_id;
+	lt_Token* self_token;
 } lt_Parser;
 
 typedef struct {
@@ -552,6 +567,7 @@ void lt_setupval(lt_VM* vm, uint8_t idx, lt_Value val);
 uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc);
 uint8_t lt_poll(lt_VM* vm);
 void lt_runloop(lt_VM* vm);
+void ltasync_open_mainloop(lt_VM* vm);
 void lt_error(lt_VM* vm, const char* msg);
 void lt_runtime_error(lt_VM* vm, const char* message);
 

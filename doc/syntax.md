@@ -97,7 +97,7 @@ while running
 }
 ```
 
-`if`, `elseif`, `else`, `for`, `while`, functions, methods, constructors, getters, setters, class bodies, table literals, and destructuring patterns all use braces according to their grammar.
+`if`, `elseif`, `else`, `for`, `while`, `with`, functions, methods, constructors, getters, setters, class bodies, table literals, and destructuring patterns all use braces according to their grammar.
 
 ## Chained Expressions
 
@@ -165,6 +165,142 @@ step1({ name: "a" })({ name: "b" })({ name: "c" })
 ```
 
 Control-flow headers do not use table-call sugar. In `if ready { ... }`, the brace starts the `if` body.
+
+## Function Declarations
+
+Named functions can be declared without a separate `var` assignment:
+
+```js
+fn greet(name) {
+    return string.format("hello %s", name)
+}
+```
+
+This is equivalent to assigning a function literal to a local:
+
+```js
+var greet = fn(name) {
+    return string.format("hello %s", name)
+}
+```
+
+Async named functions use the same shape:
+
+```js
+async fn fetchName() {
+    return await loadName()
+}
+```
+
+## Globals
+
+Top-level and local declarations are local by default. Use `global` when a script intentionally writes to the VM global table.
+
+```js
+global appName = "little"
+
+global fn greet(name) {
+    return string.format("hello %s from %s", name, appName)
+}
+
+global async fn later(value) {
+    return await Promise(fn(resolve, reject) {
+        resolve(value)
+    })
+}
+```
+
+`global name = expression` assigns the evaluated expression to the global named `name`. If the initializer is omitted, the global is set to `null`.
+
+There is no implicit global assignment. Plain assignment still requires an existing local or upvalue:
+
+```js
+missing = 1 ; error
+```
+
+`global var name = value` is not valid syntax. Use `global name = value`.
+
+## Imports
+
+`import "path"` imports the full module value as an expression:
+
+```js
+var greeter = import "greeter"
+```
+
+`import { ... } from "path"` imports a module and destructures its returned table into locals:
+
+```js
+import { greet, shout } from "greeter"
+```
+
+See [modules.md](modules.md) for module loading, exporting, path, and cache behavior.
+
+## Receiver Shorthand
+
+Inside class methods, class field initializers, functions whose first parameter is named `this`, and `with` blocks, `@name` is shorthand for `this.name` or the active `with` receiver's `name` field.
+
+```js
+class Counter {
+    public value = 0
+
+    public add(amount) {
+        @value = @value + amount
+        return @value
+    }
+}
+```
+
+Receiver-style table functions can use the same shorthand when the first parameter is named `this`:
+
+```js
+var counter = {
+    value: 0
+    add: fn(this, amount) {
+        @value = @value + amount
+    }
+}
+counter:add(2)
+```
+
+`@` is only shorthand for fields. It does not change bare identifier lookup.
+
+## With Blocks
+
+`with expression { ... }` evaluates the expression once and makes it the active receiver for `@name` inside the block.
+
+```js
+with counter {
+    @value = @value + 1
+    @label = "ready"
+}
+```
+
+This is equivalent to evaluating `counter` into a hidden local and using that local as the receiver for each `@name` access. Nested `with` blocks temporarily replace the active receiver.
+
+## Constructor Field Parameters
+
+Class constructor parameters may start with `@`. These parameters are automatically assigned to fields with the same name before the constructor body runs.
+
+```js
+class Person {
+    constructor(@name, @score) {
+        @score = @score + 1
+    }
+}
+```
+
+This behaves like:
+
+```js
+class Person {
+    constructor(name, score) {
+        this.name = name
+        this.score = score
+        this.score = this.score + 1
+    }
+}
+```
 
 ## Strings
 

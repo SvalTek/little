@@ -1,0 +1,59 @@
+class Person {
+    public base = 4
+    public doubled = @base * 2
+
+    constructor(@name, @score) {
+        @score = @score + 1
+    }
+
+    public rename(value) {
+        @name = value
+        return @name
+    }
+
+    public describe() {
+        return string.format("%s:%d:%d", @name, @score, @doubled)
+    }
+}
+
+var person = Person("Ada", 9)
+io.print(person:describe())
+io.print(person:rename("Grace"))
+
+with person {
+    @score = @score + 10
+    @name = string.upper(@name)
+}
+
+io.print(person:describe())
+
+var box = {
+    count: 1
+    read: fn(this) {
+        return @count
+    }
+}
+
+with box {
+    @count = @count + 2
+    @label = "ready"
+}
+
+io.print(box:read(), box.label)
+
+var player = {
+    health: 100
+    weapon: {
+        durability: 5
+    }
+}
+
+with player {
+    with @weapon {
+        @durability = @durability - 1
+    }
+
+    @health = @health - 10
+}
+
+io.print(player.health, player.weapon.durability)

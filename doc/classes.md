@@ -96,6 +96,31 @@ counter:add(3)
 
 For class instances, `obj:method(a)` behaves like a receiver call and makes `this` available inside the method. Direct `obj.method(...)` is not the intended calling style for class methods because it does not pass the instance as `this`.
 
+Inside class methods, `@field` is shorthand for `this.field`:
+
+```js
+class Counter {
+    public value = 0
+
+    public add(amount) {
+        @value = @value + amount
+        return @value
+    }
+}
+```
+
+Constructors may prefix parameters with `@` to assign matching fields before the constructor body runs:
+
+```js
+class Person {
+    constructor(@name, @score) {
+        @score = @score + 1
+    }
+}
+```
+
+This behaves like assigning `this.name = name` and `this.score = score` at the start of the constructor.
+
 ## Field Initializers
 
 Field initializers are evaluated once per instance before the constructor runs:

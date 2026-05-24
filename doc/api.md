@@ -100,7 +100,7 @@ Polls or drains asynchronous work owned by the VM, including promise callbacks, 
 void ltstd_open_all(lt_VM* vm);
 void ltasync_open_all(lt_VM* vm);
 ```
-The VM starts without standard libraries. Use `ltstd_open_all` for the traditional stdlib modules (`io`, `math`, `array`, `table`, `string`, and `gc`) and `ltasync_open_all` for optional Promise, timer, and task globals. The CLI opens both because it is designed to run full Little scripts.
+The VM starts without standard libraries. Use `ltstd_open_all` for the traditional stdlib modules (`io`, `math`, `array`, `table`, `string`, `gc`, and core globals such as `pcall`, `unpack`, and `import`) and `ltasync_open_all` for optional Promise, timer, and task globals. The CLI opens both because it is designed to run full Little scripts.
 
 ---
 ```c
