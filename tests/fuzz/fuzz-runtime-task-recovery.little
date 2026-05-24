@@ -1,9 +1,13 @@
-task.run("return missing + 1", null)
+task.run(fn(state) {
+    return missing + 1
+}, null)
     .catch(fn(err) {
         io.print("bad", string.contains(err, "Expected arithmetic operands"))
     })
     .finally(fn() {
-        task.run("return state.value + 1", { value: 4 })
+        task.run(fn(state) {
+            return state.value + 1
+        }, { value: 4 })
             .next(fn(value) {
                 io.print("good", value)
             })

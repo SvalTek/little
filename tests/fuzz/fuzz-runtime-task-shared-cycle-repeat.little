@@ -1,0 +1,19 @@
+var i = 0
+var done = 0
+
+while i < 64 {
+    var state = { value: i }
+    state.self = state
+
+    task.run(fn(state) {
+        state.self.value = state.self.value + 1
+    }, state).next(fn(value) {
+        gc.collect()
+        done = done + 1
+        if done >= 64 {
+            io.print("cycles-ok")
+        }
+    })
+
+    i = i + 1
+}

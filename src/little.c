@@ -276,6 +276,9 @@ uint8_t lt_equals(lt_Value a, lt_Value b)
 		case LT_OBJECT_CELL:
 		case LT_OBJECT_PTR:
 			return obja == objb;
+		case LT_OBJECT_SHARED_TABLE:
+		case LT_OBJECT_SHARED_ARRAY:
+			return obja->shared == objb->shared;
 		}
 	} break;
 	}
@@ -1594,7 +1597,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 		case LT_TOKEN_OPENBRACE: {
 			BREAK_ON_EXPR_BOUNDRY
 
-			// any time we see this, assume it's a table lieral. all other braces should be handled at block level 
+			// any time we see this, assume it's a table lieral. all other braces should be handled at block level
 			lt_AstNode* table = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_TABLE);
 			table->table.keys = lt_buffer_new(sizeof(lt_AstNode*));
 			table->table.values = lt_buffer_new(sizeof(lt_AstNode*));
@@ -1873,6 +1876,10 @@ void lt_free(lt_VM* vm, uint32_t heapidx)
 	case LT_OBJECT_PTR: {
 		vm->free(obj->ptr);
 	} break;
+	case LT_OBJECT_SHARED_TABLE:
+	case LT_OBJECT_SHARED_ARRAY: {
+		ltshared_release(obj->shared);
+	} break;
 	}
 
 	lt_buffer_cycle(&vm->heap, heapidx);
@@ -1976,6 +1983,9 @@ void lt_sweep(lt_VM* vm, lt_Object* obj)
 		lt_sweep(vm, obj->instance.klass);
 		_lt_table_mark(vm, &obj->instance.public_fields);
 		_lt_table_mark(vm, &obj->instance.private_fields);
+	} break;
+	case LT_OBJECT_SHARED_TABLE:
+	case LT_OBJECT_SHARED_ARRAY: {
 	} break;
 	}
 }
@@ -2495,7 +2505,7 @@ inst_loop:
 		}
 		else if (LT_IS_ARRAY(t))
 		{
-			*lt_array_at(t, (uint32_t)lt_get_number(key)) = value;
+			lt_array_set(vm, t, (uint32_t)lt_get_number(key), value);
 		}
 		else if (LT_IS_INSTANCE(t))
 		{
@@ -2529,7 +2539,7 @@ inst_loop:
 		}
 		else if (LT_IS_ARRAY(t))
 		{
-			PUSH(*lt_array_at(t, (uint32_t)lt_get_number(key)));
+			PUSH(lt_array_get(vm, t, (uint32_t)lt_get_number(key)));
 		}
 		else PUSH(LT_VALUE_NULL);
 	} NEXT;
@@ -2549,7 +2559,7 @@ inst_loop:
 		else if (LT_IS_ARRAY(t) && LT_IS_NUMBER(key))
 		{
 			uint32_t idx = (uint32_t)lt_get_number(key);
-			PUSH(idx < lt_array_length(t) ? *lt_array_at(t, idx) : LT_VALUE_NULL);
+			PUSH(idx < lt_array_length(t) ? lt_array_get(vm, t, idx) : LT_VALUE_NULL);
 		}
 		else PUSH(LT_VALUE_NULL);
 	} NEXT;
@@ -3386,6 +3396,7 @@ uint32_t lt_dostring(lt_VM* vm, const char* source, const char* mod_name)
 
 lt_TablePair* _lt_table_index(lt_VM* vm, lt_Value table, lt_Value key, uint8_t alloc)
 {
+	if (!LT_IS_OBJECT(table) || LT_GET_OBJECT(table)->type != LT_OBJECT_TABLE) return 0;
 	uint8_t bucket = HASH(key);
 	lt_Buffer* buf = LT_GET_OBJECT(table)->table.buckets + bucket;
 	if (alloc && buf->element_size == 0) *buf = lt_buffer_new(sizeof(lt_TablePair));
@@ -3410,6 +3421,8 @@ lt_Value lt_make_table(lt_VM* vm)
 lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val)
 {
 	if (!LT_IS_TABLE(table)) return LT_VALUE_NULL;
+	if (LT_GET_OBJECT(table)->type == LT_OBJECT_SHARED_TABLE)
+		return ltshared_table_set(vm, LT_GET_OBJECT(table)->shared, key, val);
 	lt_TablePair* p = _lt_table_index(vm, table, key, 1);
 	if (p)
 	{
@@ -3426,6 +3439,9 @@ lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val)
 
 lt_Value lt_table_get(lt_VM* vm, lt_Value table, lt_Value key)
 {
+	if (!LT_IS_TABLE(table)) return LT_VALUE_NULL;
+	if (LT_GET_OBJECT(table)->type == LT_OBJECT_SHARED_TABLE)
+		return ltshared_table_get(vm, LT_GET_OBJECT(table)->shared, key);
 	lt_TablePair* p = _lt_table_index(vm, table, key, 0);
 	if (p) return p->value;
 	return LT_VALUE_NULL;
@@ -3445,14 +3461,33 @@ lt_Value lt_array_push(lt_VM* vm, lt_Value array, lt_Value val)
 {
 	if (!LT_IS_ARRAY(array)) return LT_VALUE_NULL;
 	lt_Object* arr = LT_GET_OBJECT(array);
+	if (arr->type == LT_OBJECT_SHARED_ARRAY) return ltshared_array_push(vm, arr->shared, val);
 	if (arr->array.element_size == 0) arr->array = lt_buffer_new(sizeof(lt_Value));
 	lt_buffer_push(vm, &arr->array, &val);
 	return val;
 }
 
+lt_Value lt_array_get(lt_VM* vm, lt_Value array, uint32_t idx)
+{
+	if (!LT_IS_ARRAY(array)) return LT_VALUE_NULL;
+	lt_Object* arr = LT_GET_OBJECT(array);
+	if (arr->type == LT_OBJECT_SHARED_ARRAY) return ltshared_array_get(vm, arr->shared, idx);
+	return idx < arr->array.length ? *(lt_Value*)lt_buffer_at(&arr->array, idx) : LT_VALUE_NULL;
+}
+
+lt_Value lt_array_set(lt_VM* vm, lt_Value array, uint32_t idx, lt_Value val)
+{
+	if (!LT_IS_ARRAY(array)) return LT_VALUE_NULL;
+	lt_Object* arr = LT_GET_OBJECT(array);
+	if (arr->type == LT_OBJECT_SHARED_ARRAY) return ltshared_array_set(vm, arr->shared, idx, val);
+	if (idx >= arr->array.length) return LT_VALUE_NULL;
+	*(lt_Value*)lt_buffer_at(&arr->array, idx) = val;
+	return val;
+}
+
 lt_Value* lt_array_at(lt_Value array, uint32_t idx)
 {
-	if (!LT_IS_ARRAY(array)) return &LT_NULL;
+	if (!LT_IS_ARRAY(array) || LT_GET_OBJECT(array)->type == LT_OBJECT_SHARED_ARRAY) return &LT_NULL;
 	lt_Object* arr = LT_GET_OBJECT(array);
 	return lt_buffer_at(&arr->array, idx);
 }
@@ -3461,6 +3496,7 @@ lt_Value lt_array_remove(lt_VM* vm, lt_Value array, uint32_t idx)
 {
 	if (!LT_IS_ARRAY(array)) return LT_VALUE_NULL;
 	lt_Object* arr = LT_GET_OBJECT(array);
+	if (arr->type == LT_OBJECT_SHARED_ARRAY) return ltshared_array_remove(vm, arr->shared, idx);
 	lt_Value old = *(lt_Value*)lt_buffer_at(&arr->array, idx);
 	lt_buffer_cycle(&arr->array, idx);
 	return old;
@@ -3470,6 +3506,7 @@ uint32_t lt_array_length(lt_Value array)
 {
 	if (!LT_IS_ARRAY(array)) return 0;
 	lt_Object* arr = LT_GET_OBJECT(array);
+	if (arr->type == LT_OBJECT_SHARED_ARRAY) return ltshared_array_length(arr->shared);
 	return arr->array.length;
 }
 

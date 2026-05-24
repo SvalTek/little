@@ -1,0 +1,7 @@
+task.run(fn(state) {
+    return task.run(fn(inner) {
+        return inner
+    }, state)
+}, {}).catch(fn(reason) {
+    io.print(string.contains(reason, "task.run is unavailable inside workers"))
+})

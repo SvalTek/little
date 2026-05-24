@@ -1,9 +1,11 @@
 # task
 
-`task.run(source, state)` runs Little source text in a fresh VM on a host thread and returns a promise in the parent VM.
+`task.run(callable, state)` runs a Little function in a fresh VM on a host thread and returns a promise in the parent VM.
 
 ```js
-task.run("return state.a + state.b", { a: 2 b: 4 })
+task.run(fn(state) {
+    return state.a + state.b
+}, { a: 2 b: 4 })
     .next(fn(value) {
         io.print(value)
     })
@@ -14,51 +16,63 @@ task.run("return state.a + state.b", { a: 2 b: 4 })
 
 ## Semantics
 
-`source` must be a string containing Little source text.
+`callable` must be a Little function. Source strings are not accepted.
 
-`state` is copied into the worker VM as a global named `state`:
+`state` is the explicit task boundary. The worker receives it as argument `state`:
 
 ```js
-task.run("return state.name", { name: "Ada" })
+task.run(fn(state) {
+    return state.name
+}, { name: "Ada" })
 ```
 
-The parent VM and worker VM do not share objects or globals. Mutating `state` inside the worker does not mutate the parent value.
+Closure captures are not imported in v1. Pass values through `state` instead.
 
-The returned promise resolves with the worker script's first returned value, or `null` if it returns no values. Extra return values are discarded.
+The returned promise resolves with the callable's first returned value, or `null` if it returns no values. Extra return values are discarded.
 
 The returned promise rejects with an error string when:
 
-* `source` is not a string.
 * `state` cannot cross the VM boundary.
-* the worker source fails to parse, compile, or run.
+* the callable captures upvalues.
+* the callable or worker async work fails at runtime.
 * the worker result cannot cross the VM boundary.
 * the host thread cannot be created.
 
-## Value Copying
+## Shared State
 
-Only serializable Little values can cross the task boundary:
-
-* `null`
-* numbers
-* booleans
-* strings
-* arrays, recursively
-* tables, recursively
-
-Functions, closures, native functions, promises, classes, instances, pointers, and other VM-owned runtime objects cannot cross the boundary:
+Tables and arrays in `state` are promoted to shared task objects. The parent VM and worker VM each hold proxy objects to the same backing storage, so mutations through table fields and array elements are visible across the boundary:
 
 ```js
-task.run("return state", { callback: fn() { return 1 } })
-    .catch(fn(reason) {
-        io.print(reason)
-    })
+var box = { value: 1 }
+var state = { x: box }
+
+task.run(fn(state) {
+    state.x.value = state.x.value + 1
+}, state)
 ```
+
+Changing `state.x.value` in the worker updates the shared `box` table, so `box.value` becomes 2 in the parent VM as well.
+
+Scalar values are copied. Little does not infer variable origins:
+
+```js
+var foo = 1
+var state = { x: foo }
+```
+
+Changing `state.x` in the worker updates the shared `state` table, but it does not rebind `foo`.
+
+Unsupported state values include functions, closures, native functions, promises, classes, instances, pointers, and other VM-owned runtime objects.
+
+Shared task objects are collected by a small shared-graph collector. VM proxies and in-flight worker results are roots; cycles inside shared task state do not rely on reference counts to break themselves.
+
+To keep malformed or hostile graphs bounded, task state import rejects graphs deeper than `LT_TASK_SHARED_MAX_DEPTH` and graphs with more than `LT_TASK_SHARED_MAX_NODES` shared table/array objects. The defaults are 256 levels and 4096 objects.
 
 ## Worker Environment
 
-Workers run in isolated Little VMs. The standard library is opened in the worker, so modules such as `io`, `math`, `array`, `table`, `string`, and `gc` are available.
+Workers run in isolated Little VMs with the standard library, Promise, timers, `async fn`, and `await` available.
 
-The async library is not opened inside workers in v1. Worker source should not rely on `Promise`, timers, `async fn`/`await`, or nested `task.run`.
+Nested `task.run` is intentionally unavailable inside workers.
 
 ## Scheduling
 
@@ -80,11 +94,9 @@ lt_runloop(vm);
 
 ## Limitations
 
-Tasks are for isolated work, not shared-memory threading.
-
-* No parent VM memory is shared with workers.
-* Values are copied by serialization, not by reference.
-* Worker globals are not merged back into the parent.
-* `task.run(fn, state)` is not supported; pass source text.
+* Shared task state currently supports tables and arrays as reference-like values.
+* Scalar variable rebinding does not cross the task boundary.
+* Closure captures are rejected; use explicit `state`.
+* Classes, instances, promises, pointers, and functions cannot be placed in shared state.
 * Cancellation and timeouts are not implemented in v1.
 * Worker stdout/stderr behavior is whatever the opened `io` library provides for that VM and host process.

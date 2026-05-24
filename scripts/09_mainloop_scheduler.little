@@ -1,0 +1,85 @@
+io.print("mainloop scheduler")
+
+var shared = {
+    ticks: 0
+    results: {}
+    labels: []
+}
+
+var timer = { id: 0 }
+
+var maybeStop = fn() {
+    var keys = table.keys(shared.results)
+    if shared.ticks >= 5 and array.len(keys) >= 5 {
+        mainloop.stop()
+    }
+}
+
+timer.id = setInterval(fn() {
+    shared.ticks = shared.ticks + 1
+    array.push(shared.labels, "tick")
+    if shared.ticks >= 5 {
+        clearInterval(timer.id)
+        table.put(shared.results, "timer", "done")
+        maybeStop()
+    }
+}, 1)
+
+task.run(async fn(state)
+{
+    return await Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            resolve(state.value)
+        }, state.delay)
+    })
+},{
+    value: "A"
+    delay: 1
+})
+.next(fn(value) {
+    table.put(shared.results, "alpha", value)
+    array.push(shared.labels, "alpha")
+    maybeStop()
+})
+
+
+task.run(async fn(state) {
+    return await Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            resolve(state.value)
+        }, state.delay)
+    })
+}, { value: "B" delay: 2 }).next(fn(value) {
+    table.put(shared.results, "beta", value)
+    array.push(shared.labels, "beta")
+    maybeStop()
+})
+
+task.run(async fn(state) {
+    return await Promise(fn(resolve, reject) {
+        setTimeout(fn() {
+            resolve(state.value)
+        }, state.delay)
+    })
+}, { value: "C" delay: 3 }).next(fn(value) {
+    table.put(shared.results, "gamma", value)
+    array.push(shared.labels, "gamma")
+    maybeStop()
+})
+
+task.run(fn(state) {
+    table.put(state.shared.results, "worker", "shared")
+    array.push(state.shared.labels, "worker")
+    return table.fetch(state.shared.results, "worker")
+}, { shared: shared }).next(fn(value) {
+    table.put(shared.results, "workerResult", value)
+    maybeStop()
+})
+
+var steps = mainloop.run()
+var keys = table.keys(shared.results)
+
+io.print("ran", steps > 0)
+io.print("ticks", shared.ticks)
+io.print("results", array.len(keys), table.fetch(shared.results, "alpha"), table.fetch(shared.results, "beta"), table.fetch(shared.results, "gamma"), table.fetch(shared.results, "timer"), table.fetch(shared.results, "workerResult"))
+io.print("labels", array.len(shared.labels) >= 9)

@@ -8,4 +8,10 @@
 
 `clearTimeout(id)` and `clearInterval(id)` cancel timers.
 
-`task.run(source, state)` runs Little `source` in an isolated VM with copied global `state`, returning a promise that resolves to the task return value or rejects with an error string. See [task](task.md) for boundary rules and limitations.
+`mainloop.run()` drains pending async work from inside a Little script until the VM becomes idle or `mainloop.stop()` is called. It returns the number of poll steps performed.
+
+`mainloop.poll()` advances one async step and returns whether work was performed or remains pending.
+
+`mainloop.stop()` requests that the current script-managed mainloop stop. This is useful for interval-driven scripts that intentionally keep work scheduled until a callback decides they are done.
+
+`task.run(callable, state)` runs a Little function on a host thread with explicit shared task state, returning a promise that resolves to the task return value or rejects with an error string. See [task](task.md) for boundary rules and limitations.

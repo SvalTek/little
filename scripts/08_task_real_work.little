@@ -1,0 +1,50 @@
+io.print("task real work")
+
+var copied = 10
+var state = {
+    copied: copied
+    jobs: [
+        { name: "alpha" units: 2 status: "new" score: 0 },
+        { name: "beta" units: 3 status: "new" score: 0 },
+        { name: "gamma" units: 1 status: "new" score: 0 }
+    ]
+    metrics: { processed: 0 total: 0 }
+    events: []
+    report: { title: "pending" summary: "" }
+}
+
+task.run(async fn(state) {
+    var delay = fn(value) {
+        return Promise(fn(resolve, reject) {
+            setTimeout(fn() {
+                resolve(value)
+            }, 1)
+        })
+    }
+
+    var scale = await delay(state.copied)
+
+    for job in array.each(state.jobs) {
+        job.score = math.clamp(job.units * scale, 0, 100)
+        job.status = "done"
+        state.metrics.processed = state.metrics.processed + 1
+        state.metrics.total = state.metrics.total + job.score
+        array.push(state.events, string.upper(job.name))
+    }
+
+    state.copied = 99
+    table.put(state.report, "title", "batch-complete")
+    table.put(state.report, "summary", string.expand("processed {{processed}} total {{total}}", state.metrics))
+    table.put(state.report, "eventCount", array.len(state.events))
+    table.put(state.report, "hasTotal", table.has(state.metrics, "total"))
+
+    return state.report
+}, state).next(fn(report) {
+    io.print("report", report.title)
+    io.print(report.summary)
+    io.print("events", array.join(state.events, ","))
+    io.print("jobs", state.jobs[0].status, state.jobs[1].score, state.jobs[2].score)
+    io.print("shared scalar field", state.copied)
+    io.print("outer scalar", copied)
+    io.print("report fields", table.fetch(report, "eventCount"), table.fetch(report, "hasTotal"))
+})

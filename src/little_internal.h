@@ -22,4 +22,17 @@ uint8_t ltasync_is_async_callable(lt_Value callable);
 lt_Value ltasync_call(lt_VM* vm, lt_Value callee, uint8_t argc);
 lt_Value ltasync_await(lt_VM* vm, lt_Value value);
 
+void ltshared_retain(lt_SharedObject* shared);
+void ltshared_release(lt_SharedObject* shared);
+lt_Value ltshared_make_proxy(lt_VM* vm, lt_SharedObject* shared);
+lt_Value ltshared_table_get(lt_VM* vm, lt_SharedObject* shared, lt_Value key);
+lt_Value ltshared_table_set(lt_VM* vm, lt_SharedObject* shared, lt_Value key, lt_Value val);
+lt_Value ltshared_table_keys(lt_VM* vm, lt_SharedObject* shared);
+lt_Value ltshared_table_values(lt_VM* vm, lt_SharedObject* shared);
+lt_Value ltshared_array_get(lt_VM* vm, lt_SharedObject* shared, uint32_t idx);
+lt_Value ltshared_array_set(lt_VM* vm, lt_SharedObject* shared, uint32_t idx, lt_Value val);
+lt_Value ltshared_array_push(lt_VM* vm, lt_SharedObject* shared, lt_Value val);
+lt_Value ltshared_array_remove(lt_VM* vm, lt_SharedObject* shared, uint32_t idx);
+uint32_t ltshared_array_length(lt_SharedObject* shared);
+
 #endif
