@@ -3,6 +3,7 @@
 
 #include <setjmp.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static uint8_t _ltstd_is_callable(lt_Value value)
@@ -226,7 +227,50 @@ static uint8_t _ltstd_import(lt_VM* vm, uint8_t argc)
     lt_pop(vm);
     callable = lt_pop(vm);
 
-    uint16_t nret = lt_exec_internal(vm, callable, 0);
+    uint16_t saved_top = vm->top;
+    uint16_t saved_depth = vm->depth;
+    lt_Frame* saved_current = vm->current;
+    void* saved_error_buf = vm->error_buf;
+    uint8_t saved_trap_errors = vm->trap_errors;
+    char* saved_error_trap = vm->error_trap;
+
+    jmp_buf error_buf;
+    vm->error_buf = &error_buf;
+    vm->trap_errors = 1;
+    vm->error_trap = 0;
+
+    uint16_t nret = 0;
+    if (!setjmp(error_buf))
+    {
+        nret = lt_exec_internal(vm, callable, 0);
+        vm->error_buf = saved_error_buf;
+        vm->trap_errors = saved_trap_errors;
+        if (vm->error_trap) vm->free(vm->error_trap);
+        vm->error_trap = saved_error_trap;
+    }
+    else
+    {
+        char* error = vm->error_trap;
+        vm->top = saved_top;
+        vm->depth = saved_depth;
+        vm->current = saved_current;
+        vm->error_buf = saved_error_buf;
+        vm->trap_errors = saved_trap_errors;
+        vm->error_trap = saved_error_trap;
+        lt_table_pop(vm, modules, cache_key);
+        lt_table_pop(vm, modules, lt_make_string(vm, requested));
+        vm->free(source);
+        vm->free(resolved);
+        if (saved_trap_errors)
+        {
+            if (vm->error_trap) vm->free(vm->error_trap);
+            vm->error_trap = error;
+            if (vm->error_buf) longjmp(*(jmp_buf*)vm->error_buf, 1);
+            abort();
+        }
+        lt_error(vm, error ? error : "Unknown import error");
+    }
+
     lt_Value value = LT_VALUE_TRUE;
     if (nret > 0)
     {
