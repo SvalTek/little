@@ -166,6 +166,76 @@ step1({ name: "a" })({ name: "b" })({ name: "c" })
 
 Control-flow headers do not use table-call sugar. In `if ready { ... }`, the brace starts the `if` body.
 
+## Function Declarations
+
+Named functions can be declared without a separate `var` assignment:
+
+```js
+fn greet(name) {
+    return string.format("hello %s", name)
+}
+```
+
+This is equivalent to assigning a function literal to a local:
+
+```js
+var greet = fn(name) {
+    return string.format("hello %s", name)
+}
+```
+
+Async named functions use the same shape:
+
+```js
+async fn fetchName() {
+    return await loadName()
+}
+```
+
+## Globals
+
+Top-level and local declarations are local by default. Use `global` when a script intentionally writes to the VM global table.
+
+```js
+global appName = "little"
+
+global fn greet(name) {
+    return string.format("hello %s from %s", name, appName)
+}
+
+global async fn later(value) {
+    return await Promise(fn(resolve, reject) {
+        resolve(value)
+    })
+}
+```
+
+`global name = expression` assigns the evaluated expression to the global named `name`. If the initializer is omitted, the global is set to `null`.
+
+There is no implicit global assignment. Plain assignment still requires an existing local or upvalue:
+
+```js
+missing = 1 ; error
+```
+
+`global var name = value` is not valid syntax. Use `global name = value`.
+
+## Imports
+
+`import "path"` imports the full module value as an expression:
+
+```js
+var greeter = import "greeter"
+```
+
+`import { ... } from "path"` imports a module and destructures its returned table into locals:
+
+```js
+import { greet, shout } from "greeter"
+```
+
+See [modules.md](modules.md) for module loading, exporting, path, and cache behavior.
+
 ## Receiver Shorthand
 
 Inside class methods, class field initializers, functions whose first parameter is named `this`, and `with` blocks, `@name` is shorthand for `this.name` or the active `with` receiver's `name` field.

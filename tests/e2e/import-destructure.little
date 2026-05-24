@@ -1,0 +1,7 @@
+import { greet, shout } from "tests/fixtures/greeter"
+
+io.print(greet("Ada"))
+io.print(shout("Ada"))
+
+var greeter = import "tests/fixtures/greeter"
+io.print(greeter.greet("Grace"))

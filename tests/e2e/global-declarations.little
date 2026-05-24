@@ -1,0 +1,27 @@
+global answer = 41
+
+global fn bump() {
+    return answer + 1
+}
+
+global makeGreeting = fn(name) {
+    return string.format("hello %s", name)
+}
+
+global async fn asyncBump(value) {
+    var delayed = await Promise(fn(resolve, reject) {
+        resolve(value)
+    })
+    return delayed + 1
+}
+
+io.print(bump())
+io.print(makeGreeting("Ada"))
+
+var localAnswer = 5
+io.print(localAnswer)
+io.print(bump())
+
+asyncBump(8).next(fn(value) {
+    io.print(value)
+})

@@ -56,7 +56,7 @@ typedef enum {
 
 	LT_OP_CLOSE, LT_OP_CALL, LT_OP_CALLM, LT_OP_FIXRET, LT_OP_PACKRET,
 
-	LT_OP_MAKET, LT_OP_MAKEA, LT_OP_MAKEC, LT_OP_SETT, LT_OP_SETC, LT_OP_GETT, LT_OP_GETD, LT_OP_GETG,
+	LT_OP_MAKET, LT_OP_MAKEA, LT_OP_MAKEC, LT_OP_SETT, LT_OP_SETC, LT_OP_GETT, LT_OP_GETD, LT_OP_GETG, LT_OP_SETG,
 
 	LT_OP_JMP, LT_OP_JMPC, LT_OP_JMPN,
 
@@ -557,6 +557,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 
 				PUSH_STR_TOKEN("fn", LT_TOKEN_FN)
 				else PUSH_STR_TOKEN("var", LT_TOKEN_VAR)
+				else PUSH_STR_TOKEN("global", LT_TOKEN_GLOBAL)
 				else PUSH_STR_TOKEN("if", LT_TOKEN_IF)
 				else PUSH_STR_TOKEN("else", LT_TOKEN_ELSE)
 				else PUSH_STR_TOKEN("elseif", LT_TOKEN_ELSEIF)
@@ -564,6 +565,8 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 				else PUSH_STR_TOKEN("in", LT_TOKEN_IN)
 				else PUSH_STR_TOKEN("while", LT_TOKEN_WHILE)
 				else PUSH_STR_TOKEN("with", LT_TOKEN_WITH)
+				else PUSH_STR_TOKEN("import", LT_TOKEN_IMPORT)
+				else PUSH_STR_TOKEN("from", LT_TOKEN_FROM)
 				else PUSH_STR_TOKEN("break", LT_TOKEN_BREAK)
 				else PUSH_STR_TOKEN("return", LT_TOKEN_RETURN)
 				else PUSH_STR_TOKEN("async", LT_TOKEN_ASYNC)
@@ -799,6 +802,14 @@ static lt_AstNode* _lt_make_identifier_node(lt_VM* vm, lt_Parser* p, lt_Token* l
 	return ident;
 }
 
+static lt_AstNode* _lt_make_import_call_node(lt_VM* vm, lt_Parser* p, lt_Token* loc, lt_AstNode* path_expr)
+{
+	lt_AstNode* call = _lt_get_node_of_type(vm, loc, p, LT_AST_NODE_CALL);
+	call->call.callee = _lt_make_identifier_node(vm, p, loc, _lt_make_identifier_token(vm, p, "import", loc));
+	call->call.args[0] = path_expr;
+	return call;
+}
+
 static lt_AstNode* _lt_make_self_index_node(lt_VM* vm, lt_Parser* p, lt_Token* loc, lt_Token* field)
 {
 	lt_Token* self = p->self_token;
@@ -921,6 +932,60 @@ static lt_AstNode* _lt_make_field_initializer_fn(lt_VM* vm, lt_Parser* p, lt_Tok
 }
 
 static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* fn, uint8_t add_this, uint8_t allow_auto_assign);
+static lt_Token* _lt_parse_destructure_pattern(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* declare);
+
+static lt_Token* _lt_parse_var_declaration(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* declare, uint8_t is_global)
+{
+	if (current->type == LT_TOKEN_IDENTIFIER)
+	{
+		declare->declare.identifier = current++;
+		if (!is_global) _lt_make_local(vm, p->current, declare->declare.identifier);
+	}
+	else if (!is_global && (current->type == LT_TOKEN_OPENBRACKET || current->type == LT_TOKEN_OPENBRACE))
+	{
+		current = _lt_parse_destructure_pattern(vm, p, current, declare);
+	}
+	else _lt_parse_error(vm, p->tkn->module, current, is_global ? "Expected identifier to follow 'global'!" : "Expected identifier or destructuring pattern to follow 'var'!");
+
+	lt_AstNode* rhs = 0;
+	if (current->type == LT_TOKEN_ASSIGN)
+	{
+		current++;
+		rhs = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+		current = _lt_parse_expression(vm, p, current, rhs);
+	}
+	else if (declare->declare.destructure != LT_DESTRUCT_NONE)
+		_lt_parse_soft_error(vm, p, current, "Expected assignment after destructuring declaration!");
+
+	declare->declare.expr = rhs;
+	declare->declare.is_global = is_global;
+	return current;
+}
+
+static lt_Token* _lt_parse_named_function_declaration(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* declare, uint8_t is_global, uint8_t is_async)
+{
+	lt_Token* loc = current;
+	if (is_async)
+	{
+		if (current->type != LT_TOKEN_ASYNC) _lt_parse_error(vm, p->tkn->module, current, "Expected 'async' in async function declaration!");
+		current++;
+		if (current->type != LT_TOKEN_FN) _lt_parse_error(vm, p->tkn->module, current, "Expected 'fn' to follow 'async'!");
+	}
+	else if (current->type != LT_TOKEN_FN)
+		_lt_parse_error(vm, p->tkn->module, current, "Expected 'fn' in function declaration!");
+
+	current++;
+	if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, is_global ? "Expected function name to follow 'global fn'!" : "Expected function name to follow 'fn'!");
+	declare->declare.identifier = current++;
+	if (!is_global) _lt_make_local(vm, p->current, declare->declare.identifier);
+
+	lt_AstNode* func = _lt_get_node_of_type(vm, loc, p, LT_AST_NODE_FN);
+	func->fn.is_async = is_async;
+	current = _lt_parse_class_function(vm, p, current, func, 0, 0);
+	declare->declare.expr = func;
+	declare->declare.is_global = is_global;
+	return current;
+}
 
 static lt_Token* _lt_skip_destructure_pattern(lt_Token* current, lt_TokenType close_type)
 {
@@ -1220,6 +1285,27 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 
+		case LT_TOKEN_IMPORT: {
+			lt_Token* import_token = current++;
+			if (current->type != LT_TOKEN_OPENBRACE)
+			{
+				current = import_token;
+				goto parse_expression_statement;
+			}
+
+			lt_AstNode* declare = _lt_get_node_of_type(vm, import_token, p, LT_AST_NODE_DECLARE);
+			current = _lt_parse_destructure_pattern(vm, p, current, declare);
+			if (current->type != LT_TOKEN_FROM) _lt_parse_error(vm, p->tkn->module, current, "Expected 'from' after import destructuring pattern!");
+			current++;
+
+			lt_AstNode* path_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			current = _lt_parse_expression(vm, p, current, path_expr);
+			declare->declare.expr = _lt_make_import_call_node(vm, p, import_token, path_expr);
+
+			lt_buffer_push(vm, dst, &declare);
+			REQUIRE_STATEMENT_BOUNDARY();
+		} break;
+
 		case LT_TOKEN_RETURN: {
 			lt_AstNode* ret = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_RETURN);
 			ret->ret.expr = 0;
@@ -1335,33 +1421,60 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 		} break;
 		case LT_TOKEN_VAR: {
 			lt_AstNode* declare = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_DECLARE);
-			current++;
+			current = _lt_parse_var_declaration(vm, p, current + 1, declare, 0);
+			lt_buffer_push(vm, dst, &declare);
+			REQUIRE_STATEMENT_BOUNDARY();
+		} break;
+		case LT_TOKEN_GLOBAL: {
+			lt_Token* global_token = current++;
+			lt_AstNode* declare = _lt_get_node_of_type(vm, global_token, p, LT_AST_NODE_DECLARE);
 			if (current->type == LT_TOKEN_IDENTIFIER)
 			{
-				declare->declare.identifier = current++;
-				_lt_make_local(vm, p->current, declare->declare.identifier);
+				current = _lt_parse_var_declaration(vm, p, current, declare, 1);
 			}
-			else if (current->type == LT_TOKEN_OPENBRACKET || current->type == LT_TOKEN_OPENBRACE)
+			else if (current->type == LT_TOKEN_FN)
 			{
-				current = _lt_parse_destructure_pattern(vm, p, current, declare);
+				current = _lt_parse_named_function_declaration(vm, p, current, declare, 1, 0);
 			}
-			else _lt_parse_error(vm, p->tkn->module, current, "Expected identifier or destructuring pattern to follow 'var'!");
-
-			lt_AstNode* rhs = 0;
-			if (current->type == LT_TOKEN_ASSIGN)
+			else if (current->type == LT_TOKEN_ASYNC)
 			{
-				current++;
-				rhs = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
-				current = _lt_parse_expression(vm, p, current, rhs);
+				current = _lt_parse_named_function_declaration(vm, p, current, declare, 1, 1);
 			}
-			else if (declare->declare.destructure != LT_DESTRUCT_NONE)
-				_lt_parse_soft_error(vm, p, current, "Expected assignment after destructuring declaration!");
+			else _lt_parse_error(vm, p->tkn->module, current, "Expected identifier, 'fn', or 'async fn' to follow 'global'!");
 
-			declare->declare.expr = rhs;
+			lt_buffer_push(vm, dst, &declare);
+			REQUIRE_STATEMENT_BOUNDARY();
+		} break;
+		case LT_TOKEN_FN: {
+			lt_Token* fn_token = current++;
+			if (current->type != LT_TOKEN_IDENTIFIER)
+			{
+				current = fn_token;
+				goto parse_expression_statement;
+			}
+
+			lt_AstNode* declare = _lt_get_node_of_type(vm, fn_token, p, LT_AST_NODE_DECLARE);
+			current = _lt_parse_named_function_declaration(vm, p, fn_token, declare, 0, 0);
+
+			lt_buffer_push(vm, dst, &declare);
+			REQUIRE_STATEMENT_BOUNDARY();
+		} break;
+		case LT_TOKEN_ASYNC: {
+			lt_Token* async_token = current++;
+			if (current->type != LT_TOKEN_FN || (current + 1)->type != LT_TOKEN_IDENTIFIER)
+			{
+				current = async_token;
+				goto parse_expression_statement;
+			}
+
+			lt_AstNode* declare = _lt_get_node_of_type(vm, async_token, p, LT_AST_NODE_DECLARE);
+			current = _lt_parse_named_function_declaration(vm, p, async_token, declare, 0, 1);
+
 			lt_buffer_push(vm, dst, &declare);
 			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		default: {
+parse_expression_statement:
 			lt_AstNode* result = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 			current = _lt_parse_expression(vm, p, current, result);
 
@@ -1424,9 +1537,12 @@ static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* cur
 	current++;
 
 	lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
+	uint8_t was_async = p->in_async;
 	lt_Token* previous_self = p->self_token;
+	p->in_async = fn->fn.is_async;
 	if (add_this) p->self_token = fn->fn.args[0];
 	lt_Scope* fn_scope = _lt_parse_block(vm, p, current, &body, 1, 1, fn->fn.args);
+	p->in_async = was_async;
 	p->self_token = previous_self;
 	current = fn_scope->end;
 
@@ -1834,6 +1950,17 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			await->await.expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 			current = _lt_parse_expression(vm, p, current, await->await.expr);
 			lt_buffer_push(vm, &result, &await);
+		} break;
+
+		case LT_TOKEN_IMPORT: {
+			BREAK_ON_EXPR_BOUNDRY
+			lt_Token* import_token = current;
+			NEXT();
+			lt_AstNode* path_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+			current = _lt_parse_expression(vm, p, current, path_expr);
+			lt_AstNode* call = _lt_make_import_call_node(vm, p, import_token, path_expr);
+			lt_buffer_push(vm, &result, &call);
+			goto expr_end;
 		} break;
 
 		case LT_TOKEN_ASYNC:
@@ -2758,6 +2885,12 @@ inst_loop:
 		PUSH(lt_table_get(vm, vm->global, key));
 	} NEXT;
 
+	case LT_OP_SETG: {
+		lt_Value key = POP();
+		lt_Value value = POP();
+		lt_table_set(vm, vm->global, key, value);
+	} NEXT;
+
 #define PASTE(x) x
 
 #define IMPL_ARITH(op){                                                       \
@@ -3198,7 +3331,14 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 	} break;
 
 	case LT_AST_NODE_DECLARE: {
-		if (node->declare.destructure == LT_DESTRUCT_NONE)
+		if (node->declare.is_global)
+		{
+			if (node->declare.expr) _lt_compile_node(vm, p, name, debug, node->declare.expr, scope, code_body, constants);
+			else OP(PUSHN);
+			_lt_compile_push_token_value(vm, p, node->declare.identifier, debug, code_body, constants, &node->loc);
+			OP(SETG);
+		}
+		else if (node->declare.destructure == LT_DESTRUCT_NONE)
 		{
 			uint16_t idx = _lt_make_local(vm, scope, node->declare.identifier);
 			if (node->declare.expr)

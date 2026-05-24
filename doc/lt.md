@@ -114,6 +114,8 @@ Expressions consist of all literals and operators.
     * They are first-class objects, and can only be stored through assignment
     * Can be trivially passed as parameters as well
     * Parameter list is mandatory, even if empty
+* Named functions can be declared with `fn name(a, b) { ... }`, which binds a local named `name`
+* Named async functions can be declared with `async fn name(a, b) { ... }`
 * `async fn` literals return a promise when called, and may use `await`
 * `class` declarations create callable class objects that construct instances
 ### Operators
@@ -142,6 +144,29 @@ Destructuring declarations consume multiple returns and pad missing values with 
 ```js
 var [a, b, c] = unpack([ 1, 2 ])
 ```
+
+### Imports
+`import { name } from "module"` loads a Little module and destructures the table it returns into local variables. `import "module"` imports the full returned module value as an expression.
+
+```js
+import { greet, shout } from "greeter"
+
+io.print(greet("Ada"))
+```
+
+Modules export values by returning them, commonly as a table. See [modules.md](modules.md) for module loading, exporting, path, and cache behavior.
+
+### Globals
+Declarations are local by default. `global name = expression` writes to the VM global table, and global functions can be declared with `global fn name(...) { ... }` or `global async fn name(...) { ... }`:
+```js
+global answer = 42
+
+global fn readAnswer() {
+    return answer
+}
+```
+
+There are no implicit global writes. Assigning to an undeclared identifier is still an error. Use [syntax.md](syntax.md) for the complete global syntax rules.
 
 ### Truthiness
 Any `null` or `false` values are considered `falsy`, anything else is logically `true`

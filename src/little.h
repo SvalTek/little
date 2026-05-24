@@ -116,6 +116,7 @@ typedef enum {
 	LT_TOKEN_SET,
 	LT_TOKEN_BREAK,
 	LT_TOKEN_VAR,
+	LT_TOKEN_GLOBAL,
 	LT_TOKEN_IF,
 	LT_TOKEN_ELSE,
 	LT_TOKEN_ELSEIF,
@@ -123,6 +124,8 @@ typedef enum {
 	LT_TOKEN_IN,
 	LT_TOKEN_WHILE,
 	LT_TOKEN_WITH,
+	LT_TOKEN_IMPORT,
+	LT_TOKEN_FROM,
 	LT_TOKEN_RETURN,
 
 	LT_TOKEN_PLUS,
@@ -300,6 +303,7 @@ typedef struct lt_AstNode {
 			struct lt_AstNode* expr;
 			lt_DestructureType destructure;
 			lt_Buffer entries;
+			uint8_t is_global;
 		} declare;
 
 		struct {

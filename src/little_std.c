@@ -109,10 +109,148 @@ static uint8_t _ltstd_unpack(lt_VM* vm, uint8_t argc)
     return count;
 }
 
+static char* _ltstd_read_module_file(lt_VM* vm, const char* requested, char** resolved)
+{
+    FILE* file = fopen(requested, "rb");
+    const char* path = requested;
+    char* fallback = 0;
+
+    if (!file)
+    {
+        size_t len = strlen(requested);
+        fallback = vm->alloc(len + 8);
+        memcpy(fallback, requested, len);
+        memcpy(fallback + len, ".little", 8);
+        file = fopen(fallback, "rb");
+        path = fallback;
+    }
+
+    if (!file)
+    {
+        if (fallback) vm->free(fallback);
+        return 0;
+    }
+
+    if (fseek(file, 0, SEEK_END) != 0)
+    {
+        fclose(file);
+        if (fallback) vm->free(fallback);
+        return 0;
+    }
+
+    long size = ftell(file);
+    if (size < 0)
+    {
+        fclose(file);
+        if (fallback) vm->free(fallback);
+        return 0;
+    }
+    rewind(file);
+
+    char* source = vm->alloc((size_t)size + 1);
+    size_t read = fread(source, 1, (size_t)size, file);
+    fclose(file);
+    source[read] = 0;
+
+    size_t path_len = strlen(path);
+    *resolved = vm->alloc(path_len + 1);
+    memcpy(*resolved, path, path_len + 1);
+    if (fallback) vm->free(fallback);
+    return source;
+}
+
+static uint8_t _ltstd_import(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt_runtime_error(vm, "Expected one argument to import!");
+    lt_Value path_value = lt_pop(vm);
+    if (!LT_IS_STRING(path_value)) lt_runtime_error(vm, "Expected import path to be string!");
+
+    const char* requested = LT_GET_STRING(vm, path_value);
+    lt_Value modules_key = lt_make_string(vm, "__modules");
+    lt_Value modules = lt_table_get(vm, vm->global, modules_key);
+    if (!LT_IS_TABLE(modules))
+    {
+        modules = lt_make_table(vm);
+        lt_table_set(vm, vm->global, modules_key, modules);
+    }
+
+    lt_Value cache_key = lt_make_string(vm, requested);
+    lt_Value cached = lt_table_get(vm, modules, cache_key);
+    if (LT_IS_TABLE(cached))
+    {
+        lt_Value value = lt_table_get(vm, cached, lt_make_string(vm, "value"));
+        lt_push(vm, value);
+        return 1;
+    }
+
+    size_t requested_len = strlen(requested);
+    char* fallback = vm->alloc(requested_len + 8);
+    memcpy(fallback, requested, requested_len);
+    memcpy(fallback + requested_len, ".little", 8);
+    lt_Value fallback_key = lt_make_string(vm, fallback);
+    cached = lt_table_get(vm, modules, fallback_key);
+    if (LT_IS_TABLE(cached))
+    {
+        lt_Value value = lt_table_get(vm, cached, lt_make_string(vm, "value"));
+        vm->free(fallback);
+        lt_push(vm, value);
+        return 1;
+    }
+    vm->free(fallback);
+
+    char* resolved = 0;
+    char* source = _ltstd_read_module_file(vm, requested, &resolved);
+    if (!source)
+    {
+        char message[256];
+        snprintf(message, sizeof(message), "Failed to import module '%s'!", requested);
+        lt_runtime_error(vm, message);
+    }
+
+    cache_key = lt_make_string(vm, resolved);
+
+    lt_Value callable = lt_loadstring(vm, source, resolved);
+    if (callable == LT_VALUE_NULL)
+    {
+        vm->free(source);
+        vm->free(resolved);
+        lt_runtime_error(vm, "Failed to compile imported module!");
+    }
+
+    lt_Value value_key = lt_make_string(vm, "value");
+    lt_push(vm, callable);
+    lt_Value wrapper = lt_make_table(vm);
+    lt_push(vm, wrapper);
+    lt_table_set(vm, wrapper, value_key, LT_VALUE_TRUE);
+    lt_table_set(vm, modules, cache_key, wrapper);
+    lt_pop(vm);
+    callable = lt_pop(vm);
+
+    uint16_t nret = lt_exec_internal(vm, callable, 0);
+    lt_Value value = LT_VALUE_TRUE;
+    if (nret > 0)
+    {
+        uint16_t base = vm->top - nret;
+        value = vm->stack[base];
+        vm->stack[base] = value;
+        vm->top = base + 1;
+    }
+    else lt_push(vm, value);
+
+    lt_table_set(vm, wrapper, lt_make_string(vm, "value"), value);
+    lt_pop(vm);
+    vm->free(source);
+    vm->free(resolved);
+
+    lt_push(vm, value);
+    return 1;
+}
+
 void ltstd_open_all(lt_VM* vm)
 {
     lt_table_set(vm, vm->global, lt_make_string(vm, "pcall"), lt_make_native(vm, _ltstd_pcall));
     lt_table_set(vm, vm->global, lt_make_string(vm, "unpack"), lt_make_native(vm, _ltstd_unpack));
+    lt_table_set(vm, vm->global, lt_make_string(vm, "import"), lt_make_native(vm, _ltstd_import));
     ltstd_open_io(vm);
     ltstd_open_math(vm);
     ltstd_open_array(vm);
