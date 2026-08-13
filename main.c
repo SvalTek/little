@@ -36,6 +36,7 @@ int main(int argc, char** argv)
         return 1;
     }
     ltstd_open_all(vm);
+    ltstd_open_loadlib(vm);
     ltasync_open_all(vm);
 
     uint32_t nreturn = lt_dostring(vm, text, "module");

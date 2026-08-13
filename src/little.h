@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 typedef uint64_t lt_Value;
 
@@ -425,6 +426,7 @@ typedef enum {
 
 typedef struct lt_VM lt_VM;
 typedef struct lt_SharedObject lt_SharedObject;
+typedef struct lt_Api lt_Api;
 
 typedef uint8_t(*lt_NativeFn)(lt_VM* vm, uint8_t argc);
 
@@ -521,6 +523,12 @@ typedef struct lt_Frame {
 typedef void* (*lt_AllocFn)(size_t);
 typedef void (*lt_FreeFn)(void*);
 typedef void (*lt_ErrorFn)(lt_VM* vm, const char*);
+typedef void (*lt_NativeLibraryCloseFn)(void*);
+
+typedef struct lt_NativeLibrary {
+	void* handle;
+	lt_NativeLibraryCloseFn close;
+} lt_NativeLibrary;
 
 struct lt_VM {
 	lt_Buffer heap;
@@ -540,6 +548,7 @@ struct lt_VM {
 	lt_Buffer async_calls;
 	lt_Buffer timers;
 	lt_Buffer workers;
+	lt_Buffer native_libraries;
 	uint32_t next_timer_id;
 	uint8_t runloop_stop;
 	uint8_t last_call_returns;
@@ -601,8 +610,9 @@ const char* lt_get_string(lt_VM* vm, lt_Value value);
 uint8_t lt_equals(lt_Value a, lt_Value b);
 
 lt_Value lt_make_table(lt_VM* vm);
-lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val); 
+lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val);
 lt_Value lt_table_get(lt_VM* vm, lt_Value table, lt_Value key);
+uint8_t  lt_table_next(lt_VM* vm, lt_Value table, uint32_t* cursor, lt_Value* key, lt_Value* val);
 uint8_t  lt_table_pop(lt_VM* vm, lt_Value table, lt_Value key);
 
 lt_Value  lt_make_array(lt_VM* vm);
@@ -616,3 +626,45 @@ uint32_t  lt_array_length(lt_Value array);
 lt_Value lt_make_native(lt_VM* vm, lt_NativeFn fn);
 lt_Value lt_make_ptr(lt_VM* vm, void* ptr);
 void* lt_get_ptr(lt_Value ptr);
+
+#define LT_API_VERSION 1
+
+struct lt_Api {
+	uint32_t version;
+	uint32_t size;
+
+	void* (*alloc)(lt_VM* vm, size_t size);
+	void (*free)(lt_VM* vm, void* ptr);
+
+	void (*runtime_error)(lt_VM* vm, const char* message);
+
+	void (*push)(lt_VM* vm, lt_Value val);
+	lt_Value (*pop)(lt_VM* vm);
+	uint16_t (*exec)(lt_VM* vm, lt_Value callable, uint8_t argc);
+
+	lt_Value (*make_number)(double n);
+	double (*get_number)(lt_Value v);
+	lt_Value (*make_string)(lt_VM* vm, const char* string);
+	const char* (*get_string)(lt_VM* vm, lt_Value value);
+	lt_Value (*make_table)(lt_VM* vm);
+	lt_Value (*make_array)(lt_VM* vm);
+	lt_Value (*make_native)(lt_VM* vm, lt_NativeFn fn);
+	lt_Value (*make_ptr)(lt_VM* vm, void* ptr);
+	void* (*get_ptr)(lt_Value ptr);
+
+	lt_Value (*table_set)(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val);
+	lt_Value (*table_get)(lt_VM* vm, lt_Value table, lt_Value key);
+	uint8_t (*table_next)(lt_VM* vm, lt_Value table, uint32_t* cursor, lt_Value* key, lt_Value* val);
+	uint8_t (*table_pop)(lt_VM* vm, lt_Value table, lt_Value key);
+
+	lt_Value (*array_push)(lt_VM* vm, lt_Value array, lt_Value val);
+	lt_Value (*array_get)(lt_VM* vm, lt_Value array, uint32_t idx);
+	lt_Value (*array_set)(lt_VM* vm, lt_Value array, uint32_t idx, lt_Value val);
+	lt_Value (*array_remove)(lt_VM* vm, lt_Value array, uint32_t idx);
+	uint32_t (*array_length)(lt_Value array);
+
+	uint8_t (*poll)(lt_VM* vm);
+	uint8_t (*is_promise)(lt_Value value);
+	lt_PromiseState (*promise_state)(lt_Value value);
+	lt_Value (*promise_result)(lt_Value value);
+};

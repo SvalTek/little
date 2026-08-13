@@ -13,15 +13,23 @@ $exe = if ($Exe) { $Exe } else { Join-Path $buildDir "little-e2e.exe" }
 if (!$SkipBuild) {
     New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
     $threadFlags = @()
+    $dynamicFlags = @()
     if ($env:OS -ne "Windows_NT") {
         $threadFlags += "-pthread"
+        $dynamicFlags += "-rdynamic"
+        $dynamicFlags += "-ldl"
+    }
+    else {
+        $dynamicFlags += "-Wl,--export-all-symbols"
     }
 
     & $Compiler -std=c11 `
         (Join-Path $repo "main.c") `
         (Join-Path $repo "src/little_buffer.c") `
         (Join-Path $repo "src/little.c") `
+        (Join-Path $repo "src/little_common.c") `
         (Join-Path $repo "src/little_std.c") `
+        (Join-Path $repo "src/little_loadlib.c") `
         (Join-Path $repo "src/little_std_io.c") `
         (Join-Path $repo "src/little_std_math.c") `
         (Join-Path $repo "src/little_std_array.c") `
@@ -30,10 +38,72 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_std_gc.c") `
         (Join-Path $repo "src/little_async.c") `
         $threadFlags `
+        $dynamicFlags `
         -lm -o $exe
 
     if ($LASTEXITCODE -ne 0) {
         throw "Build failed with exit code $LASTEXITCODE"
+    }
+
+    $optInHarness = Join-Path $buildDir "loadlib-opt-in.exe"
+    & $Compiler -std=c11 `
+        (Join-Path $repo "tests/native/loadlib-opt-in.c") `
+        (Join-Path $repo "src/little_buffer.c") `
+        (Join-Path $repo "src/little.c") `
+        (Join-Path $repo "src/little_common.c") `
+        (Join-Path $repo "src/little_std.c") `
+        (Join-Path $repo "src/little_loadlib.c") `
+        (Join-Path $repo "src/little_std_io.c") `
+        (Join-Path $repo "src/little_std_math.c") `
+        (Join-Path $repo "src/little_std_array.c") `
+        (Join-Path $repo "src/little_std_table.c") `
+        (Join-Path $repo "src/little_std_string.c") `
+        (Join-Path $repo "src/little_std_gc.c") `
+        (Join-Path $repo "src/little_async.c") `
+        $threadFlags `
+        $dynamicFlags `
+        -lm -o $optInHarness
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "loadLibrary opt-in harness build failed with exit code $LASTEXITCODE"
+    }
+
+    & $optInHarness
+    if ($LASTEXITCODE -ne 0) {
+        throw "loadLibrary opt-in harness failed with exit code $LASTEXITCODE"
+    }
+
+    $nativeExt = if ($env:OS -eq "Windows_NT") { ".dll" } else { ".so" }
+    $nativeLibs = @(
+        @{
+            Source = Join-Path $repo "nativelib/native_math/native_math.c"
+            Output = Join-Path $repo "nativelib/native_math/build/native_math$nativeExt"
+        },
+        @{
+            Source = Join-Path $repo "nativelib/native_math/native_math.c"
+            Output = Join-Path $repo "nativelib/native_init/build/native_init/init$nativeExt"
+        },
+        @{
+            Source = Join-Path $repo "nativelib/json/json.c"
+            Output = Join-Path $repo "nativelib/json/build/json$nativeExt"
+        }
+    )
+    $nativeFlags = @("-std=c11", "-shared", "-I", (Join-Path $repo "src"))
+    if ($env:OS -ne "Windows_NT") {
+        $nativeFlags += "-fPIC"
+    }
+
+    foreach ($nativeLib in $nativeLibs) {
+        $nativeOut = $nativeLib.Output
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $nativeOut) | Out-Null
+        & $Compiler `
+            $nativeFlags `
+            $nativeLib.Source `
+            -o $nativeOut
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Native library fixture build failed with exit code $LASTEXITCODE"
+        }
     }
 }
 

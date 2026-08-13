@@ -69,6 +69,18 @@ tasks:
       - build:small
       - build:small-aggressive
 
+  build:nativelibs:
+    desc: Build optional native libraries
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File ./nativelib/build.ps1
+    sources:
+      - nativelib/**/*.c
+      - src/*.h
+    generates:
+      - nativelib/json/build/json.dll
+      - nativelib/json/build/json.so
+      - nativelib/json/build/json.dylib
+
   sizes:
     desc: Build release-size variants and print artifact sizes
     deps: [build:variants]
@@ -90,4 +102,4 @@ tasks:
   clean:
     desc: Remove generated build output
     cmds:
-      - powershell -NoProfile -Command "if (Test-Path build) { Remove-Item -Recurse -Force build }"
+      - powershell -NoProfile -Command "if (Test-Path build) { Remove-Item -Recurse -Force build }; Get-ChildItem nativelib -Directory -ErrorAction SilentlyContinue | ForEach-Object { $nativeBuild = Join-Path $_.FullName 'build'; if (Test-Path $nativeBuild) { Remove-Item -Recurse -Force $nativeBuild } }"

@@ -73,7 +73,9 @@ static uint8_t _lt_string_concat(lt_VM* vm, uint8_t argc)
         accum[len] = 0;
     }
 
-    lt_push(vm, lt_make_string(vm, accum));
+    lt_Value result = lt_make_string(vm, accum);
+    vm->top -= argc;
+    lt_push(vm, result);
     vm->free(accum);
 
     return 1;

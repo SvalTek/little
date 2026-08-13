@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Little WebUI</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="/webui.js"></script>
+</head>
+<body>
+  <main>
+    <h1>Little WebUI</h1>
+    <p>This page is served from static files and calls back into Little.</p>
+    <button id="send" type="button">Send event</button>
+    <div id="status">Waiting for event...</div>
+  </main>
+  <script>
+    const status = document.getElementById('status');
+
+    function sendToLittle(name, payload) {
+      return webui.call(name, JSON.stringify(payload)).then((response) => JSON.parse(response));
+    }
+
+    function callReady(payload) {
+      return sendToLittle('ready', payload).then((response) => {
+        status.textContent = response.message;
+        return response;
+      });
+    }
+
+    document.getElementById('send').addEventListener('click', () => {
+      callReady({ name: 'Grace', count: 7, ok: false });
+    });
+
+    let started = false;
+    async function startDemo() {
+      if (started) return;
+      started = true;
+      status.textContent = 'Requesting deno_test.ts...';
+      const deno = await fetch('deno_test.ts?foo=123&bar=456')
+        .then((response) => response.json())
+        .catch((error) => ({ runtime: 'deno', error: error.message }));
+      status.textContent = 'Sending event to Little...';
+      callReady({ name: 'Ada', count: 42, ok: true, deno }).then(() => {
+        sendToLittle('done', { reason: 'response received' });
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      status.textContent = 'Waiting for WebUI connection...';
+      webui.setEventCallback((event) => {
+        if (event == webui.event.CONNECTED) {
+          startDemo();
+        }
+      });
+
+      if (webui.isConnected()) {
+        startDemo();
+      } else {
+        setTimeout(startDemo, 250);
+      }
+    });
+  </script>
+</body>
+</html>

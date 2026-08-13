@@ -1,0 +1,6 @@
+var result = pcall(fn() {
+    return loadLibrary("tests/fixtures/native/does-not-exist")
+})
+
+io.print(result.ok)
+io.print(string.contains(result.error, "Failed to load native library"))
