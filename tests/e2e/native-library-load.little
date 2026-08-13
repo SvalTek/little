@@ -1,0 +1,4 @@
+var add = loadLibrary("nativelib/native_math/build/native_math")
+
+io.print(add(2, 3))
+io.print(add("bad", 3) is null)

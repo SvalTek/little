@@ -1,0 +1,65 @@
+; WebUI native-library demo.
+;
+; This script lives under scripts/webui/ so scripts/run.ps1 does not open a GUI
+; during the normal tutorial gallery run.
+;
+; Build first:
+;   task build:nativelibs
+;
+; Then run:
+;   build/little.exe scripts/webui/webui_event_demo.little
+
+var webui = loadLibrary("nativelib/webui/build/webui")
+
+var window = webui.newWindow()
+webui.setSize(window, 520, 360)
+webui.setCenter(window)
+
+; Serve index.html, app.js, and style.css from this folder.
+var rootReady = webui.setRootFolder(window, "scripts/webui/demo")
+; Deno interprets .ts files requested from the static root.
+webui.setRuntime(window, webui.Deno)
+; webui.setRuntime(window, webui.Bun)
+; webui.setRuntime(window, webui.NodeJS)
+
+if not rootReady {
+    io.print("failed to set WebUI root folder")
+    webui.clean()
+} else {
+    ; "*" receives connection lifecycle events. Named callbacks receive payloads
+    ; from app.js through sendToLittle(name, object).
+    webui.bind(window, "*", fn(event) {
+        io.print("webui event:", event.eventType)
+    })
+
+    webui.bind(window, "ready", fn(event) {
+        var payload = event.payload
+
+        io.print("event:", event.element)
+        io.print("name:", payload.name)
+        io.print("count:", payload.count)
+        io.print("ok:", payload.ok)
+        io.print("deno runtime:", payload.deno.runtime)
+        io.print("deno total:", payload.deno.total)
+
+        return Promise(fn(resolve, reject) {
+            setTimeout(fn() {
+                resolve({
+                    message: string.concat("Little handled ", payload.name)
+                    count: payload.count + 1
+                })
+            }, 10)
+        })
+    })
+
+    webui.bind(window, "done", fn(event) {
+        io.print("done:", event.payload.reason)
+        webui.close(event.window)
+    })
+
+    if webui.show(window, "index.html") {
+        webui.wait()
+    }
+
+    webui.clean()
+}

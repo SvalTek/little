@@ -1,6 +1,7 @@
 #pragma once
 
 #include "little.h"
+#include "little_loadlib.h"
 
 void ltstd_open_all(lt_VM* vm);
 

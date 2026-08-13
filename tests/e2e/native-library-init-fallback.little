@@ -1,0 +1,5 @@
+module.addPath("nativelib/native_init/build")
+
+var add = loadLibrary("native_init")
+
+io.print(add(7, 8))
