@@ -68,3 +68,38 @@ For each direct path or search-path candidate, Little tries `path.little`, then 
 When a search path contains `?`, it receives the first import path segment and any remaining subpath is appended after the template.
 
 See [../modules.md](../modules.md) for module loading, exporting, path, and cache behavior.
+
+## loadLibrary
+
+`loadLibrary("path")` loads a native shared library and returns the value
+exported by that library's `ltopen(lt_VM* vm, const lt_Api* lt)` function.
+It is not installed by `ltstd_open_all(vm)`; embedders must explicitly call
+`ltstd_open_loadlib(vm)` to expose it.
+
+```js
+var nativeMath = loadLibrary("native/math")
+io.print(nativeMath.add(2, 3))
+```
+
+Native libraries are separate from source modules: use `import` for `.little`
+files and `loadLibrary` for compiled native code. The loader uses the same
+registered search paths as `import`, but tries the platform native-library
+extension instead of `.little`: `.dll` on Windows, `.so` on Linux, and `.dylib`
+on macOS. For each direct path or search-path candidate, Little tries `path`
+with the platform extension, then `path/init` with the platform extension.
+
+Loaded native library handles stay alive until the VM is destroyed.
+Native libraries use the passed `lt_Api` function table to create and inspect
+Little values, so they can be built from `little.h` without linking against the
+host executable. That table is the ABI boundary: native libraries should reject
+the load unless `ltopen` receives a non-null API pointer with the expected
+`LT_API_VERSION` and at least `sizeof(lt_Api)` bytes.
+
+The repository's `nativelib/json` directory is an example of a native library
+that returns a module table:
+
+```js
+var json = loadLibrary("nativelib/json/build/json")
+var data = json.parse("{\"name\":\"Ada\"}")
+io.print(json.stringify(data))
+```

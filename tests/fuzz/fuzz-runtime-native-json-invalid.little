@@ -1,0 +1,5 @@
+var json = loadLibrary("nativelib/json/build/json")
+
+io.print(json.parse("[1,]") is null)
+io.print(json.parse("{\"unterminated\": true") is null)
+io.print(json.stringify(fn() {}) is null)

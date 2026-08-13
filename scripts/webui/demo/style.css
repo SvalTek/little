@@ -1,0 +1,20 @@
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  color: #1f2937;
+  background: #f8fafc;
+}
+
+main {
+  padding: 2rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.6rem 1rem;
+}
+
+#status {
+  margin-top: 1rem;
+  color: #2563eb;
+}

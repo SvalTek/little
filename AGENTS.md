@@ -109,6 +109,7 @@ git diff --check
 ```
 
 Use `task test` when Task is available. Build output belongs in `build/`.
+Use Taskfile.yml tasks for build/test workflows. If you edit nativelib/, run `task build:nativelibs` before testing.
 
 ## Change Discipline
 

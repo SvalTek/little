@@ -2193,6 +2193,7 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 	
 	vm->heap = lt_buffer_new(sizeof(lt_Object*));
 	vm->keepalive = lt_buffer_new(sizeof(lt_Object*));
+	vm->native_libraries = lt_buffer_new(sizeof(lt_NativeLibrary));
 	ltasync_init_state(vm);
 
 	vm->generate_debug = 1;
@@ -2206,6 +2207,12 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 void lt_destroy(lt_VM* vm)
 {
 	ltasync_destroy_state(vm);
+	for (uint32_t i = 0; i < vm->native_libraries.length; ++i)
+	{
+		lt_NativeLibrary* library = lt_buffer_at(&vm->native_libraries, i);
+		if (library->handle && library->close) library->close(library->handle);
+	}
+	lt_buffer_destroy(vm, &vm->native_libraries);
 	lt_buffer_destroy(vm, &vm->keepalive);
 	lt_collect(vm);
 	if (vm->error_trap) vm->free(vm->error_trap);
@@ -4021,6 +4028,32 @@ lt_Value lt_table_get(lt_VM* vm, lt_Value table, lt_Value key)
 	lt_TablePair* p = _lt_table_index(vm, table, key, 0);
 	if (p) return p->value;
 	return LT_VALUE_NULL;
+}
+
+uint8_t lt_table_next(lt_VM* vm, lt_Value table, uint32_t* cursor, lt_Value* key, lt_Value* val)
+{
+	(void)vm;
+	if (!LT_IS_TABLE(table) || LT_GET_OBJECT(table)->type != LT_OBJECT_TABLE) return 0;
+
+	uint32_t bucket = (*cursor >> 24) & 0xFF;
+	uint32_t index = *cursor & 0xFFFFFF;
+	lt_Object* obj = LT_GET_OBJECT(table);
+
+	for (; bucket < 16; ++bucket)
+	{
+		lt_Buffer* buf = obj->table.buckets + bucket;
+		if (index < buf->length)
+		{
+			lt_TablePair* pair = lt_buffer_at(buf, index);
+			*key = pair->key;
+			*val = pair->value;
+			*cursor = ((bucket & 0xFF) << 24) | ((index + 1) & 0xFFFFFF);
+			return 1;
+		}
+		index = 0;
+	}
+
+	return 0;
 }
 
 uint8_t lt_table_pop(lt_VM* vm, lt_Value table, lt_Value key)

@@ -11,8 +11,14 @@ $repo = $PSScriptRoot
 $outPath = Join-Path $repo $Output
 $outDir = Split-Path -Parent $outPath
 $threadFlags = @()
+$dynamicFlags = @()
 if ($env:OS -ne "Windows_NT") {
     $threadFlags += "-pthread"
+    $dynamicFlags += "-rdynamic"
+    $dynamicFlags += "-ldl"
+}
+else {
+    $dynamicFlags += "-Wl,--export-all-symbols"
 }
 $extraCFlags = @()
 if ($CFlags.Trim().Length -gt 0) {
@@ -30,7 +36,9 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     (Join-Path $repo "main.c") `
     (Join-Path $repo "src/little_buffer.c") `
     (Join-Path $repo "src/little.c") `
+    (Join-Path $repo "src/little_common.c") `
     (Join-Path $repo "src/little_std.c") `
+    (Join-Path $repo "src/little_loadlib.c") `
     (Join-Path $repo "src/little_std_io.c") `
     (Join-Path $repo "src/little_std_math.c") `
     (Join-Path $repo "src/little_std_array.c") `
@@ -39,6 +47,7 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     (Join-Path $repo "src/little_std_gc.c") `
     (Join-Path $repo "src/little_async.c") `
     $threadFlags `
+    $dynamicFlags `
     -lm `
     $extraLdFlags `
     -o $outPath

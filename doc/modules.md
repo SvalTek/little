@@ -84,6 +84,10 @@ That tries `packages/toolkit/src/math.little` and `packages/toolkit/src/math/ini
 
 Use `module.clearPaths()` to remove registered search paths. Relative paths are still resolved by the host process in the same way as normal file opens, so they are relative to the current working directory.
 
+The same registered search paths are also used by `loadLibrary`, but native
+libraries are loaded explicitly with `loadLibrary(...)`, not with `import`.
+`import` remains source-only.
+
 ## Cache Behavior
 
 Imports are cached per VM by resolved path. Importing the same file again returns the cached value without rerunning the module body.
