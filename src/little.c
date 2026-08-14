@@ -2928,6 +2928,9 @@ uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc)
 		vm->current = vm->depth > 0 ? &vm->callstack[vm->depth - 1] : 0;
 		return n_return;
 	} break;
+	default:
+		lt_runtime_error(vm, "Value is not callable!");
+		return 0;
 	}
 
 	lt_Op current = *(lt_Op*)lt_buffer_at(frame->code, frame->pc++);
