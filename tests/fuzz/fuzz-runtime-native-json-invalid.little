@@ -3,3 +3,19 @@ var json = loadLibrary("nativelib/json/build/json")
 io.print(json.parse("[1,]") is null)
 io.print(json.parse("{\"unterminated\": true") is null)
 io.print(json.stringify(fn() {}) is null)
+
+; Truncated escapes: previously advanced the parser past the NUL terminator
+; (out-of-bounds read). Must fail cleanly, never crash.
+io.print(json.parse("\"abc\\") is null)
+io.print(json.parse("\"a\\u") is null)
+io.print(json.parse("\"a\\u1") is null)
+io.print(json.parse("\"a\\u12") is null)
+io.print(json.parse("\"a\\u123") is null)
+io.print(json.parse("\"a\\u1\\2\"") is null)
+
+; Valid escapes must still parse (regression guard).
+var ok = json.parse("\"a\\nb\\te\"")
+io.print(ok isnt null)
+io.print(ok is "a\nb\te")
+var ok2 = json.parse("\"\\\"\"")
+io.print(ok2 is "\"")
