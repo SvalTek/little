@@ -278,6 +278,24 @@ counter:add(2) ; same as counter.add(counter, 2)
 
 Inside a function whose first parameter is named `this`, `@name` is shorthand for `this.name`.
 
+#### Keyword-named receiver fields
+
+The `@name` receiver shorthand also accepts reserved words as field names.
+
+For example:
+
+```little
+if @else {
+    return @return
+}
+```
+
+This is valid Little (inside any context where `this` is available, such as a function whose first parameter is named `this`, a class method, or a `with` block).
+
+> Historical note:
+> This only exists because a coding model accidentally introduced the insanity,
+> and somehow... I kind of like the fact that it's possible.
+
 Table-call sugar lets a table literal immediately after a callable become one argument:
 
 ```js
