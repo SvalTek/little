@@ -314,6 +314,13 @@ import { greet, shout } from "greeter"
 io.print(greet("Ada"))
 ```
 
+`from` is a contextual identifier: it is only special as the separator between the destructuring pattern and the module path in named-import syntax. Anywhere else, `from` is an ordinary identifier and can be used as a variable name or table key:
+
+```js
+var from = "a normal identifier"
+import { greet } from "greeter"
+```
+
 Modules export values by returning them, commonly as a table. See [modules.md](modules.md) for module loading, exporting, path, and cache behavior.
 
 ### Globals
