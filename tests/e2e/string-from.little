@@ -1,0 +1,15 @@
+io.print("from42:", string.from(42))
+io.print("fromnull:", string.from(null))
+io.print("fromtrue:", string.from(true))
+io.print("fromsum:", string.from(1 + 2))
+var from = 9
+io.print("var from:", from)
+io.print("from(from):", string.from(from))
+var t = { from: 7 }
+io.print("t.from:", t.from)
+io.print("t[from]:", t["from"])
+var eq = t.from is 7
+io.print("eq:", eq)
+var t2 = { from }
+io.print("shorthand:", t2.from)
+io.print("done")

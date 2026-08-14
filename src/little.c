@@ -143,7 +143,7 @@ static lt_DebugInfo* _lt_get_debuginfo(lt_Object* obj)
 
 static lt_DebugLoc _lt_get_location(lt_DebugInfo* info, uint32_t pc)
 {
-	if (info)
+	if (info && pc < info->locations.length)
 	{
 		return *(lt_DebugLoc*)lt_buffer_at(&info->locations, pc);
 	}
@@ -157,7 +157,8 @@ void lt_runtime_error(lt_VM* vm, const char* message)
 
 	lt_Frame* topmost = &vm->callstack[vm->depth - 1];
 	lt_DebugInfo* info = _lt_get_debuginfo(topmost->callee);
-	lt_DebugLoc loc = _lt_get_location(info, topmost->pc);
+	uint32_t pc = topmost->pc > 0 ? topmost->pc - 1 : 0;
+	lt_DebugLoc loc = _lt_get_location(info, pc);
 
 	const char* name = "<unknown>";
 	if (info) name = info->module_name;
@@ -575,7 +576,6 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 				else PUSH_STR_TOKEN("while", LT_TOKEN_WHILE)
 				else PUSH_STR_TOKEN("with", LT_TOKEN_WITH)
 				else PUSH_STR_TOKEN("import", LT_TOKEN_IMPORT)
-				else PUSH_STR_TOKEN("from", LT_TOKEN_FROM)
 				else PUSH_STR_TOKEN("break", LT_TOKEN_BREAK)
 				else PUSH_STR_TOKEN("return", LT_TOKEN_RETURN)
 				else PUSH_STR_TOKEN("async", LT_TOKEN_ASYNC)
@@ -1101,6 +1101,13 @@ static lt_Token* _lt_parse_destructure_pattern(lt_VM* vm, lt_Parser* p, lt_Token
 	return current;
 }
 
+static uint8_t _lt_token_is_name(lt_Parser* p, lt_Token* token, const char* name)
+{
+	if (token->type != LT_TOKEN_IDENTIFIER) return 0;
+	lt_Identifier* id = lt_buffer_at(&p->tkn->identifier_buffer, token->idx);
+	return faststrcmp(name, strlen(name), id->name, strlen(id->name));
+}
+
 lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* dst, uint8_t expects_terminator, uint8_t makes_scope, lt_Token** argnames)
 {
 	if (makes_scope)
@@ -1309,7 +1316,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 			lt_AstNode* declare = _lt_get_node_of_type(vm, import_token, p, LT_AST_NODE_DECLARE);
 			current = _lt_parse_destructure_pattern(vm, p, current, declare);
-			if (current->type != LT_TOKEN_FROM) _lt_parse_error(vm, p->tkn->module, current, "Expected 'from' after import destructuring pattern!");
+			if (!_lt_token_is_name(p, current, "from")) _lt_parse_error(vm, p->tkn->module, current, "Expected 'from' after import destructuring pattern!");
 			current++;
 
 			lt_AstNode* path_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
@@ -1691,17 +1698,18 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 	lt_Buffer result = lt_buffer_new(sizeof(lt_AstNode*));
 	lt_Buffer operator_stack = lt_buffer_new(sizeof(lt_TokenType));
+	lt_Buffer operator_tokens = lt_buffer_new(sizeof(lt_Token*));
 
-#define PUSH_EXPR_FROM_OP(op) \
+#define PUSH_EXPR_FROM_OP(op, op_tok) \
 	if (op == LT_TOKEN_NOT || op == LT_TOKEN_NEGATE || op == LT_TOKEN_TYPE || op == LT_TOKEN_TYPEOF) \
 	{																				\
-		lt_AstNode* unaryop = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_UNARYOP);			\
+		lt_AstNode* unaryop = _lt_get_node_of_type(vm, op_tok, p, LT_AST_NODE_UNARYOP);		\
 		unaryop->unary_op.type = op;											    \
 		lt_buffer_push(vm, &result, &unaryop);											\
 	}																				\
 	else																			\
 	{																				\
-		lt_AstNode* binaryop = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_BINARYOP);		\
+		lt_AstNode* binaryop = _lt_get_node_of_type(vm, op_tok, p, LT_AST_NODE_BINARYOP);		\
 		binaryop->binary_op.type = op;											    \
 		lt_buffer_push(vm, &result, &binaryop);											\
 	}
@@ -1922,13 +1930,16 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 				{
 					lt_TokenType shunted = *(lt_TokenType*)lt_buffer_last(&operator_stack);
 					lt_buffer_pop(&operator_stack);
+					lt_Token* shunted_tok = *(lt_Token**)lt_buffer_last(&operator_tokens);
+					lt_buffer_pop(&operator_tokens);
 
-					PUSH_EXPR_FROM_OP(shunted);
+					PUSH_EXPR_FROM_OP(shunted, shunted_tok);
 				}
 				else break;
 			}
 
 			lt_buffer_push(vm, &operator_stack, &optype);
+			lt_buffer_push(vm, &operator_tokens, &current);
 			NEXT();
 		} break;
 
@@ -1971,7 +1982,9 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			else
 			{
 				n_open++;
-				lt_buffer_push(vm, &operator_stack, &current->type); NEXT();
+				lt_buffer_push(vm, &operator_stack, &current->type);
+				lt_buffer_push(vm, &operator_tokens, &current);
+				NEXT();
 			}
 		} break;
 
@@ -1985,13 +1998,16 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 				if (back == LT_TOKEN_OPENPAREN) break;
 
 				lt_buffer_pop(&operator_stack);
-				PUSH_EXPR_FROM_OP(back);
+				lt_Token* back_tok = *(lt_Token**)lt_buffer_last(&operator_tokens);
+				lt_buffer_pop(&operator_tokens);
+				PUSH_EXPR_FROM_OP(back, back_tok);
 			}
 
 			if (operator_stack.length == 0) _lt_parse_error(vm, p->tkn->module, current, "Malformed expression!");
 			else
 			{
 				lt_buffer_pop(&operator_stack);
+				lt_buffer_pop(&operator_tokens);
 				n_open--;
 			}
 		} break;
@@ -2109,7 +2125,9 @@ expr_end:
 	{
 		lt_TokenType back = *(lt_TokenType*)lt_buffer_last(&operator_stack);
 		lt_buffer_pop(&operator_stack);
-		PUSH_EXPR_FROM_OP(back);
+		lt_Token* back_tok = *(lt_Token**)lt_buffer_last(&operator_tokens);
+		lt_buffer_pop(&operator_tokens);
+		PUSH_EXPR_FROM_OP(back, back_tok);
 	}
 
 	lt_Buffer value_stack = lt_buffer_new(sizeof(lt_AstNode*));
@@ -2154,6 +2172,7 @@ expr_end:
 
 	lt_buffer_destroy(vm, &result);
 	lt_buffer_destroy(vm, &operator_stack);
+	lt_buffer_destroy(vm, &operator_tokens);
 	lt_buffer_destroy(vm, &value_stack);
 
 	return current;
@@ -3431,13 +3450,18 @@ static lt_Value _lt_compile_function_value(lt_VM* vm, lt_Parser* p, const char* 
 		fn->fn.debug->module_name = name;
 	}
 
+	lt_Buffer* debug = vm->generate_debug ? &fn->fn.debug->locations : 0;
 	lt_Op op = { LT_OP_PUSH, 0 };
 	lt_buffer_push(vm, &fn->fn.code, &op);
+	if (debug) lt_buffer_push(vm, debug, &node->loc);
 
-	_lt_compile_body(vm, p, name, &fn->fn.debug->locations, &node->fn.body, node->fn.scope, &fn->fn.code, &fn->fn.constants);
+	_lt_compile_body(vm, p, name, debug, &node->fn.body, node->fn.scope, &fn->fn.code, &fn->fn.constants);
 
+	lt_DebugLoc ret_loc = { 0, 0 };
+	if (debug && debug->length > 0) ret_loc = *(lt_DebugLoc*)lt_buffer_at(debug, debug->length - 1);
 	lt_Op op2 = { LT_OP_RET, 0 };
 	lt_buffer_push(vm, &fn->fn.code, &op2);
+	if (debug) lt_buffer_push(vm, debug, &ret_loc);
 
 	((lt_Op*)lt_buffer_at(&fn->fn.code, 0))->arg = node->fn.scope->locals.length;
 	return LT_VALUE_OBJECT(fn);
@@ -3932,13 +3956,18 @@ lt_Value lt_compile(lt_VM* vm, lt_Parser* p)
 		chunk->chunk.debug->module_name = chunk->chunk.name;
 	}
 
+	lt_Buffer* debug = vm->generate_debug ? &chunk->chunk.debug->locations : 0;
 	lt_Op op = { LT_OP_PUSH, 0 };
 	lt_buffer_push(vm, &chunk->chunk.code, &op);
+	if (debug) lt_buffer_push(vm, debug, &p->root->loc);
 
-	_lt_compile_body(vm, p, chunk->chunk.name, &chunk->chunk.debug->locations, &p->root->chunk.body, p->root->chunk.scope, &chunk->chunk.code, &chunk->chunk.constants);
-	
+	_lt_compile_body(vm, p, chunk->chunk.name, debug, &p->root->chunk.body, p->root->chunk.scope, &chunk->chunk.code, &chunk->chunk.constants);
+
+	lt_DebugLoc ret_loc = { 0, 0 };
+	if (debug && debug->length > 0) ret_loc = *(lt_DebugLoc*)lt_buffer_at(debug, debug->length - 1);
 	lt_Op op2 = { LT_OP_RET, 0 };
 	lt_buffer_push(vm, &chunk->chunk.code, &op2);
+	if (debug) lt_buffer_push(vm, debug, &ret_loc);
 
 	((lt_Op*)lt_buffer_at(&chunk->chunk.code, 0))->arg = p->root->chunk.scope->locals.length;
 
