@@ -150,6 +150,8 @@ Expressions consist of all literals and operators.
 * `array` literals are a list of values between brackets - `[ 1, true, null, "banana" ]`
 * `table` literals are `key: value` pairs grouped between braces - `{ a: 10 b: 20 c: true }`
     * Identifier shorthand is supported: `{ id, name }` expands to `{ id: id name: name }`
+    * Keywords can be used as keys in `key: value` form - `{ if: 1 var: 2 }`. Keyword shorthand is not supported: `{ if }` is an error.
+    * Literal keys (`null`, `true`, `false`, `number`, `string`) are valid in `key: value` form - `{ "name": "Ada" 1: "one" }`. Operator tokens like `and` cannot be used as keys.
 * `function` literals are declared with this syntax: `var my_fn = fn(a, b) { return a + b }`
     * They are first-class objects, and can only be stored through assignment
     * Can be trivially passed as parameters as well
@@ -167,8 +169,8 @@ The logical operators `or`, `and`, and `not` compare values based on truthiness.
 
 `typeof` returns an instance's concrete class object. Applied to a class, it returns that class itself; for every other value it returns `null`.
 The index operator `[expression]` works on any `table` and `array` values.
-The dot operator `.` is syntax sugar for indexing `tables` - `my_table.my_index = 10`.
-The colon operator `:` is syntax sugar for receiver-passing method calls - `obj:method(a)` is equivalent to `obj.method(obj, a)`. Methods conventionally name the first parameter `this`.
+The dot operator `.` is syntax sugar for indexing `tables` - `my_table.my_index = 10`. Keyword names can be used after the dot: `t.if` reads the key `"if"`.
+The colon operator `:` is syntax sugar for receiver-passing method calls - `obj:method(a)` is equivalent to `obj.method(obj, a)`. Methods conventionally name the first parameter `this`. Keyword method names work too: `obj:if(a)` calls the key `"if"` with `obj` as receiver. The `@` shorthand (`@name`) also accepts keywords: `@if` is `this.if`. Word operators (`and`, `or`, `not`, `is`, `isnt`) are not valid member access names after `.`, `:`, or `@`.
 
 Important: `and` is not a value-selection operator in Little. It always returns a boolean. Use `if` for guarded access or guarded calls:
 

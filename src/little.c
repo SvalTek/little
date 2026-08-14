@@ -1702,6 +1702,20 @@ static lt_Token* _lt_parse_table_literal(lt_VM* vm, lt_Parser* p, lt_Token* curr
 		lt_Token* key_token = current++;
 		key->literal.token = key_token;
 
+		switch (key_token->type)
+		{
+		case LT_TOKEN_NULL_LITERAL:
+		case LT_TOKEN_TRUE_LITERAL:
+		case LT_TOKEN_FALSE_LITERAL:
+		case LT_TOKEN_NUMBER_LITERAL:
+		case LT_TOKEN_STRING_LITERAL:
+		case LT_TOKEN_IDENTIFIER:
+			break;
+		default:
+			if (!_lt_token_is_keyword(key_token)) _lt_parse_error(vm, p->tkn->module, key_token, "Expected identifier, literal, or keyword as table key!");
+			break;
+		}
+
 		lt_AstNode* value = 0;
 		if (current->type == LT_TOKEN_COLON)
 		{
