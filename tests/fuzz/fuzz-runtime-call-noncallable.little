@@ -23,4 +23,5 @@ var r4 = pcall(fn() { number() })
 io.print(r4.ok is false)
 io.print(string.contains(r4.error, "Value is not callable!"))
 
+
 io.print("after")
