@@ -1,0 +1,19 @@
+if: 1.000000
+var: 2.000000
+else: 3.000000
+for: 4.000000
+while: 5.000000
+return: 6.000000
+class: 7.000000
+fn: 8.000000
+in: 9.000000
+bracket: 1.000000
+sum: 3.000000
+diff: 4.000000
+product: 4.000000
+negate: -1.000000
+coloncall: 110.000000
+dotcall: 10.000000
+chain: 3.000000
+index: 1.000000
+done

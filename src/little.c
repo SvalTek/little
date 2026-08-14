@@ -359,6 +359,28 @@ static lt_Value _lt_table_set_raw(lt_VM* vm, lt_Table* table, lt_Value key, lt_V
 	return val;
 }
 
+static uint16_t _lt_register_identifier_name(lt_VM* vm, lt_Tokenizer* t, const char* name, uint16_t length)
+{
+	for (uint32_t i = 0; i < t->identifier_buffer.length; i++)
+	{
+		lt_Identifier* id = lt_buffer_at(&t->identifier_buffer, i);
+		if (faststrcmp(name, length, id->name, strlen(id->name)))
+		{
+			id->num_references++;
+			return (uint16_t)i;
+		}
+	}
+
+	lt_Identifier newid;
+	newid.num_references = 1;
+	newid.name = vm->alloc(length + 1);
+	strncpy_s(newid.name, length + 1, name, length);
+	newid.name[length] = 0;
+
+	lt_buffer_push(vm, &t->identifier_buffer, &newid);
+	return (uint16_t)(t->identifier_buffer.length - 1);
+}
+
 lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 {
 	lt_Tokenizer t;
@@ -562,7 +584,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 
 #define PUSH_STR_TOKEN(name, new_type) \
 	if(faststrcmp(name, sizeof(name) - 1, start, length)) { \
-		lt_Token _t; _t.type = new_type; _t.line = line; _t.col = col; col += length; _t.idx = 0; \
+		lt_Token _t; _t.type = new_type; _t.line = line; _t.col = col; col += length; _t.idx = _lt_register_identifier_name(vm, &t, start, length); \
 		lt_buffer_push(vm, &t.token_buffer, &_t); found = 1; }
 
 				PUSH_STR_TOKEN("fn", LT_TOKEN_FN)
@@ -1106,6 +1128,19 @@ static uint8_t _lt_token_is_name(lt_Parser* p, lt_Token* token, const char* name
 	if (token->type != LT_TOKEN_IDENTIFIER) return 0;
 	lt_Identifier* id = lt_buffer_at(&p->tkn->identifier_buffer, token->idx);
 	return faststrcmp(name, strlen(name), id->name, strlen(id->name));
+}
+
+static uint8_t _lt_token_is_keyword(lt_Token* token)
+{
+	return token->type >= LT_TOKEN_FN && token->type <= LT_TOKEN_RETURN;
+}
+
+static lt_Token* _lt_keyword_as_identifier(lt_VM* vm, lt_Token* keyword)
+{
+	lt_Token* ident = vm->alloc(sizeof(lt_Token));
+	*ident = *keyword;
+	ident->type = LT_TOKEN_IDENTIFIER;
+	return ident;
 }
 
 lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* dst, uint8_t expects_terminator, uint8_t makes_scope, lt_Token** argnames)
@@ -1670,6 +1705,7 @@ static lt_Token* _lt_parse_table_literal(lt_VM* vm, lt_Parser* p, lt_Token* curr
 		lt_AstNode* value = 0;
 		if (current->type == LT_TOKEN_COLON)
 		{
+			if (_lt_token_is_keyword(key_token)) key->literal.token = _lt_keyword_as_identifier(vm, key_token);
 			current++; // eat colon
 			value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 			current = _lt_parse_expression(vm, p, current, value);
@@ -1743,9 +1779,19 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			BREAK_ON_EXPR_BOUNDRY
 			lt_Token* loc = current;
 			NEXT();
-			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier after '@'!");
-			lt_AstNode* index = _lt_make_self_index_node(vm, p, loc, NEXT());
-			lt_buffer_push(vm, &result, &index);
+			if (_lt_token_is_keyword(current))
+			{
+				lt_AstNode* index = _lt_make_self_index_node(vm, p, loc, _lt_keyword_as_identifier(vm, current));
+				last = index->index.idx->literal.token;
+				current++;
+				lt_buffer_push(vm, &result, &index);
+			}
+			else
+			{
+				if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier after '@'!");
+				lt_AstNode* index = _lt_make_self_index_node(vm, p, loc, NEXT());
+				lt_buffer_push(vm, &result, &index);
+			}
 			} break;
 		case LT_TOKEN_SUPER: {
 			BREAK_ON_EXPR_BOUNDRY
@@ -1756,8 +1802,9 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			if (current->type == LT_TOKEN_PERIOD)
 			{
 				current++;
-				if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected method name after 'super.'!");
-				super->super_expr.method = current++;
+				if (_lt_token_is_keyword(current)) super->super_expr.method = _lt_keyword_as_identifier(vm, current++);
+				else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected method name after 'super.'!");
+				else super->super_expr.method = current++;
 			}
 			else
 			{
@@ -1829,8 +1876,14 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 			NEXT(); // eat period
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
-			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow '.' operator!");
-			idx_expr->literal.token = NEXT();
+			if (_lt_token_is_keyword(current))
+			{
+				idx_expr->literal.token = _lt_keyword_as_identifier(vm, current);
+				last = idx_expr->literal.token;
+				current++;
+			}
+			else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow '.' operator!");
+			else idx_expr->literal.token = NEXT();
 
 			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
 			lt_AstNode* index = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_INDEX);
@@ -1854,8 +1907,14 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 			NEXT(); // eat colon
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
-			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
-			idx_expr->literal.token = NEXT();
+			if (_lt_token_is_keyword(current))
+			{
+				idx_expr->literal.token = _lt_keyword_as_identifier(vm, current);
+				last = idx_expr->literal.token;
+				current++;
+			}
+			else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
+			else idx_expr->literal.token = NEXT();
 
 			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
 			lt_AstNode* index = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_INDEX);
@@ -3544,6 +3603,15 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 			lt_Identifier* i = lt_buffer_at(&p->tkn->identifier_buffer, t->idx);
 			lt_Value val = lt_make_string(vm, i->name);
 			OPARG(PUSHC, _lt_push_constant(vm, constants, val));
+		} break;
+		default: {
+			if (_lt_token_is_keyword(t))
+			{
+				lt_Identifier* i = lt_buffer_at(&p->tkn->identifier_buffer, t->idx);
+				lt_Value val = lt_make_string(vm, i->name);
+				OPARG(PUSHC, _lt_push_constant(vm, constants, val));
+			}
+			else lt_error(vm, "Invalid token in literal expression!");
 		} break;
 		}
 	} break;

@@ -1,0 +1,34 @@
+var t = { if: 1 var: 2 else: 3 for: 4 while: 5 return: 6 class: 7 fn: 8 in: 9 }
+io.print("if:", t.if)
+io.print("var:", t.var)
+io.print("else:", t.else)
+io.print("for:", t.for)
+io.print("while:", t.while)
+io.print("return:", t.return)
+io.print("class:", t.class)
+io.print("fn:", t.fn)
+io.print("in:", t.in)
+io.print("bracket:", t["if"])
+io.print("sum:", t.if + t.var)
+io.print("diff:", t.return - 2)
+io.print("product:", t.if * t.for)
+io.print("negate:", -t.if)
+
+var m = {
+    if: fn(this, x) {
+        return this.return + x
+    }
+    return: 100
+    var: fn(x) {
+        return x * 2
+    }
+}
+io.print("coloncall:", m:if(10))
+io.print("dotcall:", m.var(5))
+
+var nested = { while: { for: 3 } }
+io.print("chain:", nested.while.for)
+
+var arr = [t.if, t.var]
+io.print("index:", arr[0])
+io.print("done")
