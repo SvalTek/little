@@ -1,6 +1,7 @@
 #include "little.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -71,6 +72,54 @@ static char hex_digit(uint32_t value)
     return value < 10 ? (char)('0' + value) : (char)('a' + value - 10);
 }
 
+static uint32_t hex_value(char c)
+{
+    if (c >= '0' && c <= '9') return (uint32_t)(c - '0');
+    if (c >= 'a' && c <= 'f') return (uint32_t)(c - 'a' + 10);
+    if (c >= 'A' && c <= 'F') return (uint32_t)(c - 'A' + 10);
+    return 0xFFFFFFFFu;
+}
+
+static uint32_t parse_hex4(JsonParser* parser)
+{
+    uint32_t value = 0;
+    for (uint8_t i = 0; i < 4; ++i)
+    {
+        uint32_t digit = hex_value(parser->text[parser->pos]);
+        if (digit == 0xFFFFFFFFu)
+        {
+            parser->failed = 1;
+            return 0;
+        }
+        parser->pos++;
+        value = (value << 4) | digit;
+    }
+    return value;
+}
+
+static void write_utf8(lt_VM* vm, JsonWriter* writer, uint32_t cp)
+{
+    if (cp <= 0x7F) writer_push(vm, writer, (char)cp);
+    else if (cp <= 0x7FF)
+    {
+        writer_push(vm, writer, (char)(0xC0 | (cp >> 6)));
+        writer_push(vm, writer, (char)(0x80 | (cp & 0x3F)));
+    }
+    else if (cp <= 0xFFFF)
+    {
+        writer_push(vm, writer, (char)(0xE0 | (cp >> 12)));
+        writer_push(vm, writer, (char)(0x80 | ((cp >> 6) & 0x3F)));
+        writer_push(vm, writer, (char)(0x80 | (cp & 0x3F)));
+    }
+    else
+    {
+        writer_push(vm, writer, (char)(0xF0 | (cp >> 18)));
+        writer_push(vm, writer, (char)(0x80 | ((cp >> 12) & 0x3F)));
+        writer_push(vm, writer, (char)(0x80 | ((cp >> 6) & 0x3F)));
+        writer_push(vm, writer, (char)(0x80 | (cp & 0x3F)));
+    }
+}
+
 static char* parse_string_raw(lt_VM* vm, JsonParser* parser)
 {
     if (parser->text[parser->pos] != '"')
@@ -113,19 +162,27 @@ static char* parse_string_raw(lt_VM* vm, JsonParser* parser)
         case 'r': writer_push(vm, &writer, '\r'); break;
         case 't': writer_push(vm, &writer, '\t'); break;
         case 'u':
-            writer_text(vm, &writer, "\\u");
-            for (uint8_t i = 0; i < 4; ++i)
+        {
+            uint32_t cp = parse_hex4(parser);
+            if (parser->failed) break;
+            if (cp >= 0xD800 && cp <= 0xDBFF)
             {
-                char hex = parser->text[parser->pos];
-                if (!isxdigit((unsigned char)hex))
+                /* High surrogate: expect a following \uXXXX low surrogate. */
+                if (parser->text[parser->pos] == '\\' && parser->text[parser->pos + 1] == 'u')
                 {
-                    parser->failed = 1;
-                    break;
+                    parser->pos += 2;
+                    uint32_t low = parse_hex4(parser);
+                    if (parser->failed) break;
+                    if (low >= 0xDC00 && low <= 0xDFFF)
+                        cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                    else cp = 0xFFFD; /* malformed pair: replacement char */
                 }
-                parser->pos++;
-                writer_push(vm, &writer, hex);
+                else cp = 0xFFFD; /* lone high surrogate: replacement char */
             }
+            else if (cp >= 0xDC00 && cp <= 0xDFFF) cp = 0xFFFD; /* lone low surrogate */
+            write_utf8(vm, &writer, cp);
             break;
+        }
         default:
             parser->failed = 1;
             break;
@@ -365,9 +422,18 @@ static uint8_t stringify_value(lt_VM* vm, JsonWriter* writer, lt_Value value, ui
     else if (LT_IS_FALSE(value)) writer_text(vm, writer, "false");
     else if (LT_IS_NUMBER(value))
     {
-        char scratch[64];
-        snprintf(scratch, sizeof(scratch), "%.17g", lt->get_number(value));
-        writer_text(vm, writer, scratch);
+        double number = lt->get_number(value);
+        if (!isfinite(number))
+        {
+            /* JSON has no representation for inf/nan; emit null instead. */
+            writer_text(vm, writer, "null");
+        }
+        else
+        {
+            char scratch[64];
+            snprintf(scratch, sizeof(scratch), "%.17g", number);
+            writer_text(vm, writer, scratch);
+        }
     }
     else if (LT_IS_STRING(value)) stringify_string(vm, writer, lt->get_string(vm, value));
     else if (LT_IS_ARRAY(value)) return stringify_array(vm, writer, value, depth);

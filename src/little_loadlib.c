@@ -3,6 +3,7 @@
 #include "little_internal.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -81,6 +82,19 @@ static const char* _lt_native_library_suffix(void)
 #else
     return ".so";
 #endif
+}
+
+/* POSIX dlopen only searches the current directory when the path contains a
+   separator; a bare basename would be looked up in the loader search path
+   instead. Prefix cwd-relative names so they resolve against the working
+   directory like they did when _lt_resolve_native_library_base found them. */
+static char* _lt_make_dlopen_path(lt_VM* vm, const char* path)
+{
+#ifndef _WIN32
+    if (!strchr(path, '/') && !strchr(path, '\\'))
+        return lt_common_join_path(vm, ".", path);
+#endif
+    return lt_common_copy_string(vm, path);
 }
 
 static char* _lt_resolve_native_library_base(lt_VM* vm, const char* base)
@@ -200,6 +214,10 @@ static uint8_t _lt_load_library(lt_VM* vm, uint8_t argc)
         snprintf(message, sizeof(message), "Failed to load native library '%s'!", requested);
         lt_runtime_error(vm, message);
     }
+
+    char* open_path = _lt_make_dlopen_path(vm, resolved);
+    vm->free(resolved);
+    resolved = open_path;
 
     lt_Value resolved_key = lt_make_string(vm, resolved);
     cached = lt_table_get(vm, cache, resolved_key);

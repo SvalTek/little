@@ -2,6 +2,7 @@
 #include "webui.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -219,6 +220,31 @@ static uint8_t json_match(JsonParser* parser, const char* text)
     return 1;
 }
 
+static uint32_t json_hex_value(char c)
+{
+    if (c >= '0' && c <= '9') return (uint32_t)(c - '0');
+    if (c >= 'a' && c <= 'f') return (uint32_t)(c - 'a' + 10);
+    if (c >= 'A' && c <= 'F') return (uint32_t)(c - 'A' + 10);
+    return 0xFFFFFFFFu;
+}
+
+static uint32_t json_parse_hex4(JsonParser* parser)
+{
+    uint32_t value = 0;
+    for (uint8_t i = 0; i < 4; ++i)
+    {
+        uint32_t digit = json_hex_value(parser->text[parser->pos]);
+        if (digit == 0xFFFFFFFFu)
+        {
+            parser->failed = 1;
+            return 0;
+        }
+        parser->pos++;
+        value = (value << 4) | digit;
+    }
+    return value;
+}
+
 static char* json_parse_string_raw(lt_VM* vm, JsonParser* parser)
 {
     if (parser->text[parser->pos] != '"')
@@ -265,8 +291,26 @@ static char* json_parse_string_raw(lt_VM* vm, JsonParser* parser)
             case 'r': ch = '\r'; break;
             case 't': ch = '\t'; break;
             case 'u':
-                /* Keep unicode escapes ASCII-preserved for now. */
-                if (length + 6 >= capacity)
+            {
+                uint32_t cp = json_parse_hex4(parser);
+                if (parser->failed) break;
+                if (cp >= 0xD800 && cp <= 0xDBFF)
+                {
+                    /* High surrogate: expect a following \uXXXX low surrogate. */
+                    if (parser->text[parser->pos] == '\\' && parser->text[parser->pos + 1] == 'u')
+                    {
+                        parser->pos += 2;
+                        uint32_t low = json_parse_hex4(parser);
+                        if (parser->failed) break;
+                        if (low >= 0xDC00 && low <= 0xDFFF)
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                        else cp = 0xFFFD; /* malformed pair: replacement char */
+                    }
+                    else cp = 0xFFFD; /* lone high surrogate: replacement char */
+                }
+                else if (cp >= 0xDC00 && cp <= 0xDFFF) cp = 0xFFFD; /* lone low surrogate */
+
+                if (length + 4 >= capacity)
                 {
                     capacity *= 2;
                     char* next = lt->alloc(vm, capacity);
@@ -279,20 +323,27 @@ static char* json_parse_string_raw(lt_VM* vm, JsonParser* parser)
                     lt->free(vm, out);
                     out = next;
                 }
-                out[length++] = '\\';
-                out[length++] = 'u';
-                for (uint8_t i = 0; i < 4; ++i)
+                if (cp <= 0x7F) out[length++] = (char)cp;
+                else if (cp <= 0x7FF)
                 {
-                    char hex = parser->text[parser->pos];
-                    if (!isxdigit((unsigned char)hex))
-                    {
-                        parser->failed = 1;
-                        break;
-                    }
-                    parser->pos++;
-                    out[length++] = hex;
+                    out[length++] = (char)(0xC0 | (cp >> 6));
+                    out[length++] = (char)(0x80 | (cp & 0x3F));
+                }
+                else if (cp <= 0xFFFF)
+                {
+                    out[length++] = (char)(0xE0 | (cp >> 12));
+                    out[length++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                    out[length++] = (char)(0x80 | (cp & 0x3F));
+                }
+                else
+                {
+                    out[length++] = (char)(0xF0 | (cp >> 18));
+                    out[length++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+                    out[length++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                    out[length++] = (char)(0x80 | (cp & 0x3F));
                 }
                 continue;
+            }
             default:
                 parser->failed = 1;
                 break;
@@ -588,9 +639,18 @@ static uint8_t stringify_value(lt_VM* vm, JsonWriter* writer, lt_Value value, ui
     else if (LT_IS_FALSE(value)) writer_text(vm, writer, "false");
     else if (LT_IS_NUMBER(value))
     {
-        char scratch[64];
-        snprintf(scratch, sizeof(scratch), "%.17g", lt->get_number(value));
-        writer_text(vm, writer, scratch);
+        double number = lt->get_number(value);
+        if (!isfinite(number))
+        {
+            /* JSON has no representation for inf/nan; emit null instead. */
+            writer_text(vm, writer, "null");
+        }
+        else
+        {
+            char scratch[64];
+            snprintf(scratch, sizeof(scratch), "%.17g", number);
+            writer_text(vm, writer, scratch);
+        }
     }
     else if (LT_IS_STRING(value)) stringify_string(vm, writer, lt->get_string(vm, value));
     else if (LT_IS_ARRAY(value)) return stringify_array(vm, writer, value, depth);

@@ -16,8 +16,10 @@ if (!$SkipBuild) {
     $dynamicFlags = @()
     if ($env:OS -ne "Windows_NT") {
         $threadFlags += "-pthread"
-        $dynamicFlags += "-rdynamic"
-        $dynamicFlags += "-ldl"
+        if (-not $IsMacOS) {
+            $dynamicFlags += "-rdynamic"
+            $dynamicFlags += "-ldl"
+        }
     }
     else {
         $dynamicFlags += "-Wl,--export-all-symbols"
@@ -86,6 +88,10 @@ if (!$SkipBuild) {
         @{
             Source = Join-Path $repo "nativelib/json/json.c"
             Output = Join-Path $repo "nativelib/json/build/json$nativeExt"
+        },
+        @{
+            Source = Join-Path $repo "tests/native/reenter.c"
+            Output = Join-Path $repo "tests/native/reenter$nativeExt"
         }
     )
     $nativeFlags = @("-std=c11", "-shared", "-I", (Join-Path $repo "src"))
