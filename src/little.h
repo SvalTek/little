@@ -612,7 +612,7 @@ uint8_t lt_equals(lt_Value a, lt_Value b);
 lt_Value lt_make_table(lt_VM* vm);
 lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val);
 lt_Value lt_table_get(lt_VM* vm, lt_Value table, lt_Value key);
-uint8_t  lt_table_next(lt_VM* vm, lt_Value table, uint32_t* cursor, lt_Value* key, lt_Value* val);
+uint8_t  lt_table_next(lt_VM* vm, lt_Value table, uint64_t* cursor, lt_Value* key, lt_Value* val);
 uint8_t  lt_table_pop(lt_VM* vm, lt_Value table, lt_Value key);
 
 lt_Value  lt_make_array(lt_VM* vm);
@@ -654,7 +654,7 @@ struct lt_Api {
 
 	lt_Value (*table_set)(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val);
 	lt_Value (*table_get)(lt_VM* vm, lt_Value table, lt_Value key);
-	uint8_t (*table_next)(lt_VM* vm, lt_Value table, uint32_t* cursor, lt_Value* key, lt_Value* val);
+	uint8_t (*table_next)(lt_VM* vm, lt_Value table, uint64_t* cursor, lt_Value* key, lt_Value* val);
 	uint8_t (*table_pop)(lt_VM* vm, lt_Value table, lt_Value key);
 
 	lt_Value (*array_push)(lt_VM* vm, lt_Value array, lt_Value val);

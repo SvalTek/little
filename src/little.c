@@ -4030,13 +4030,13 @@ lt_Value lt_table_get(lt_VM* vm, lt_Value table, lt_Value key)
 	return LT_VALUE_NULL;
 }
 
-uint8_t lt_table_next(lt_VM* vm, lt_Value table, uint32_t* cursor, lt_Value* key, lt_Value* val)
+uint8_t lt_table_next(lt_VM* vm, lt_Value table, uint64_t* cursor, lt_Value* key, lt_Value* val)
 {
 	(void)vm;
 	if (!LT_IS_TABLE(table) || LT_GET_OBJECT(table)->type != LT_OBJECT_TABLE) return 0;
 
-	uint32_t bucket = (*cursor >> 24) & 0xFF;
-	uint32_t index = *cursor & 0xFFFFFF;
+	uint64_t bucket = *cursor >> 60;
+	uint64_t index = *cursor & 0x0FFFFFFFFFFFFFFF;
 	lt_Object* obj = LT_GET_OBJECT(table);
 
 	for (; bucket < 16; ++bucket)
@@ -4047,7 +4047,7 @@ uint8_t lt_table_next(lt_VM* vm, lt_Value table, uint32_t* cursor, lt_Value* key
 			lt_TablePair* pair = lt_buffer_at(buf, index);
 			*key = pair->key;
 			*val = pair->value;
-			*cursor = ((bucket & 0xFF) << 24) | ((index + 1) & 0xFFFFFF);
+			*cursor = (bucket << 60) | (index + 1);
 			return 1;
 		}
 		index = 0;

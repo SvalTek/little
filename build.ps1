@@ -14,8 +14,10 @@ $threadFlags = @()
 $dynamicFlags = @()
 if ($env:OS -ne "Windows_NT") {
     $threadFlags += "-pthread"
-    $dynamicFlags += "-rdynamic"
-    $dynamicFlags += "-ldl"
+    if (-not $IsMacOS) {
+        $dynamicFlags += "-rdynamic"
+        $dynamicFlags += "-ldl"
+    }
 }
 else {
     $dynamicFlags += "-Wl,--export-all-symbols"

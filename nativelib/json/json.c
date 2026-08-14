@@ -97,6 +97,11 @@ static char* parse_string_raw(lt_VM* vm, JsonParser* parser)
         }
 
         ch = (unsigned char)parser->text[parser->pos++];
+        if (ch == 0)
+        {
+            parser->failed = 1;
+            break;
+        }
         switch (ch)
         {
         case '"': writer_push(vm, &writer, '"'); break;
@@ -111,12 +116,13 @@ static char* parse_string_raw(lt_VM* vm, JsonParser* parser)
             writer_text(vm, &writer, "\\u");
             for (uint8_t i = 0; i < 4; ++i)
             {
-                char hex = parser->text[parser->pos++];
+                char hex = parser->text[parser->pos];
                 if (!isxdigit((unsigned char)hex))
                 {
                     parser->failed = 1;
                     break;
                 }
+                parser->pos++;
                 writer_push(vm, &writer, hex);
             }
             break;
@@ -124,6 +130,8 @@ static char* parse_string_raw(lt_VM* vm, JsonParser* parser)
             parser->failed = 1;
             break;
         }
+
+        if (parser->failed) break;
     }
 
     if (parser->failed || parser->text[parser->pos] != '"')
@@ -331,7 +339,7 @@ static uint8_t stringify_array(lt_VM* vm, JsonWriter* writer, lt_Value array, ui
 static uint8_t stringify_table(lt_VM* vm, JsonWriter* writer, lt_Value table, uint8_t depth)
 {
     uint8_t first = 1;
-    uint32_t cursor = 0;
+    uint64_t cursor = 0;
     lt_Value key = LT_VALUE_NULL;
     lt_Value value = LT_VALUE_NULL;
 
