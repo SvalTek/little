@@ -73,7 +73,6 @@ static WebuiQueuedEvent* current_dispatch_event = 0;
 
 #ifdef _WIN32
 static CRITICAL_SECTION queue_lock;
-static uint8_t queue_lock_ready = 0;
 #else
 static pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
@@ -81,11 +80,6 @@ static pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
 static void lock_queue(void)
 {
 #ifdef _WIN32
-    if (!queue_lock_ready)
-    {
-        InitializeCriticalSection(&queue_lock);
-        queue_lock_ready = 1;
-    }
     EnterCriticalSection(&queue_lock);
 #else
     pthread_mutex_lock(&queue_lock);
@@ -122,6 +116,13 @@ static WebuiBinding* find_binding(size_t bind_id)
 
 static uint8_t add_binding(size_t bind_id, lt_Value callback)
 {
+    WebuiBinding* existing = find_binding(bind_id);
+    if (existing)
+    {
+        existing->callback = callback;
+        return 1;
+    }
+
     if (binding_count >= binding_capacity)
     {
         uint32_t capacity = binding_capacity == 0 ? 8 : binding_capacity * 2;
@@ -236,7 +237,7 @@ static char* json_parse_string_raw(lt_VM* vm, JsonParser* parser)
         return 0;
     }
 
-    while (parser->text[parser->pos] && parser->text[parser->pos] != '"')
+    while (!parser->failed && parser->text[parser->pos] && parser->text[parser->pos] != '"')
     {
         unsigned char ch = (unsigned char)parser->text[parser->pos++];
         if (ch < 0x20)
@@ -248,6 +249,11 @@ static char* json_parse_string_raw(lt_VM* vm, JsonParser* parser)
         if (ch == '\\')
         {
             ch = (unsigned char)parser->text[parser->pos++];
+            if (ch == 0)
+            {
+                parser->failed = 1;
+                break;
+            }
             switch (ch)
             {
             case '"': ch = '"'; break;
@@ -277,12 +283,13 @@ static char* json_parse_string_raw(lt_VM* vm, JsonParser* parser)
                 out[length++] = 'u';
                 for (uint8_t i = 0; i < 4; ++i)
                 {
-                    char hex = parser->text[parser->pos++];
+                    char hex = parser->text[parser->pos];
                     if (!isxdigit((unsigned char)hex))
                     {
                         parser->failed = 1;
                         break;
                     }
+                    parser->pos++;
                     out[length++] = hex;
                 }
                 continue;
@@ -555,7 +562,7 @@ static uint8_t stringify_array(lt_VM* vm, JsonWriter* writer, lt_Value array, ui
 static uint8_t stringify_table(lt_VM* vm, JsonWriter* writer, lt_Value table, uint8_t depth)
 {
     uint8_t first = 1;
-    uint32_t cursor = 0;
+    uint64_t cursor = 0;
     lt_Value key = LT_VALUE_NULL;
     lt_Value value = LT_VALUE_NULL;
 
@@ -598,9 +605,14 @@ static char* stringify_response(lt_VM* vm, lt_Value value)
     if (!stringify_value(vm, &writer, value, 0))
     {
         if (writer.data) lt->free(vm, writer.data);
+        writer.data = 0;
+        writer.length = 0;
+        writer.capacity = 0;
+        writer.failed = 0;
         writer_text(vm, &writer, "null");
     }
     writer_push(vm, &writer, 0);
+    if (writer.failed) return 0;
     return writer.data;
 }
 
@@ -998,6 +1010,9 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
         return LT_VALUE_NULL;
 
     lt = api;
+#ifdef _WIN32
+    InitializeCriticalSection(&queue_lock);
+#endif
     webui_set_config(asynchronous_response, true);
     bound_vm = vm;
     (void)bound_vm;

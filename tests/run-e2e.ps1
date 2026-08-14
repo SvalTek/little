@@ -73,7 +73,7 @@ if (!$SkipBuild) {
         throw "loadLibrary opt-in harness failed with exit code $LASTEXITCODE"
     }
 
-    $nativeExt = if ($env:OS -eq "Windows_NT") { ".dll" } else { ".so" }
+    $nativeExt = if ($env:OS -eq "Windows_NT") { ".dll" } elseif ($IsMacOS) { ".dylib" } else { ".so" }
     $nativeLibs = @(
         @{
             Source = Join-Path $repo "nativelib/native_math/native_math.c"

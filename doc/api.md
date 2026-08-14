@@ -198,7 +198,7 @@ Tables can be manipulated with:
 ```c
 lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val);
 lt_Value lt_table_get(lt_VM* vm, lt_Value table, lt_Value key);
-uint8_t  lt_table_next(lt_VM* vm, lt_Value table, uint32_t* cursor, lt_Value* key, lt_Value* val);
+uint8_t  lt_table_next(lt_VM* vm, lt_Value table, uint64_t* cursor, lt_Value* key, lt_Value* val);
 uint8_t  lt_table_pop(lt_VM* vm, lt_Value table, lt_Value key);
 ```
 
