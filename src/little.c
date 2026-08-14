@@ -2825,6 +2825,9 @@ static void _lt_instance_set(lt_VM* vm, lt_Value instance_value, lt_Value key, l
 
 uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 {
+	uint16_t base = vm->top - argc;
+	uint16_t saved_depth = vm->depth;
+	lt_Frame* saved_current = vm->current;
 	void* saved_error_buf = vm->error_buf;
 	jmp_buf error_buf;
 	vm->error_buf = &error_buf;
@@ -2837,9 +2840,12 @@ uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 	}
 	else
 	{
-		vm->depth = 0;
-		vm->top = 0;
-		vm->current = 0;
+		/* Unwind the failed execution back to our own frame so reentrant
+		   callers (e.g. natives that re-enter the VM) keep their frame,
+		   argument stack and current pointer intact. */
+		vm->top = base;
+		vm->depth = saved_depth;
+		vm->current = saved_current;
 		vm->error_buf = saved_error_buf;
 		return 0;
 	}

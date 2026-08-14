@@ -9,3 +9,15 @@ io.print(data.items[1])
 io.print(data.items[2] is null)
 io.print(json.stringify([ "Ada", 2, true, null ]))
 io.print(json.parse("{ nope") is null)
+
+; \uXXXX escape decoding: basic, surrogate pair, lone surrogates -> U+FFFD
+io.print(json.parse("\"\\u0041\""))
+io.print(json.parse("\"\\uD83D\\uDE00\""))
+io.print(string.len(json.parse("\"\\uD800\"")))
+io.print(string.len(json.parse("\"\\uDC00\"")))
+io.print(string.len(json.parse("\"\\uD800x\"")))
+
+; Non-finite numbers serialize as null (JSON has no inf/nan)
+io.print(json.stringify(1 / 0))
+io.print(json.stringify([1 / 0, 2, -1 / 0]))
+io.print(json.stringify({ "inf": 1 / 0 }))

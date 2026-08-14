@@ -627,7 +627,7 @@ lt_Value lt_make_native(lt_VM* vm, lt_NativeFn fn);
 lt_Value lt_make_ptr(lt_VM* vm, void* ptr);
 void* lt_get_ptr(lt_Value ptr);
 
-#define LT_API_VERSION 1
+#define LT_API_VERSION 2
 
 struct lt_Api {
 	uint32_t version;
