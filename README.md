@@ -76,9 +76,10 @@ to the w64devkit root; the Taskfile loads that file without committing it.
 
 GitHub Actions builds and tests on Windows, Linux, and macOS. It downloads the
 pinned WebUI submodule and compiles WebUI without launching a GUI. Pull requests
-targeting `develop` produce development packages; pushes to `main` produce
-release packages. The workflow can also be manually run for any ref, defaulting
-to `develop`.
+targeting `develop` produce per-PR development packages. Pushes to `develop`
+produce development packages after merges; pushes to `main` produce optimized
+release packages after merges from `develop`. The workflow can also be manually
+run for any ref, defaulting to `develop`, with either package type.
 
 Each run uploads these packages for every target:
 
