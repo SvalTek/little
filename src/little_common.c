@@ -1,12 +1,19 @@
 #include "little_common.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+static size_t checked_add(lt_VM* vm, size_t left, size_t right)
+{
+    if (left > SIZE_MAX - right) lt_runtime_error(vm, "String allocation size overflow!");
+    return left + right;
+}
 
 char* lt_common_copy_string(lt_VM* vm, const char* string)
 {
     size_t len = strlen(string);
-    char* copy = vm->alloc(len + 1);
+    char* copy = vm->alloc(checked_add(vm, len, 1));
     memcpy(copy, string, len + 1);
     return copy;
 }
@@ -15,7 +22,7 @@ char* lt_common_make_suffixed_path(lt_VM* vm, const char* path, const char* suff
 {
     size_t path_len = strlen(path);
     size_t suffix_len = strlen(suffix);
-    char* result = vm->alloc(path_len + suffix_len + 1);
+    char* result = vm->alloc(checked_add(vm, checked_add(vm, path_len, suffix_len), 1));
     memcpy(result, path, path_len);
     memcpy(result + path_len, suffix, suffix_len + 1);
     return result;
@@ -26,7 +33,7 @@ char* lt_common_join_path(lt_VM* vm, const char* root, const char* path)
     size_t root_len = strlen(root);
     size_t path_len = strlen(path);
     uint8_t needs_sep = root_len > 0 && root[root_len - 1] != '/' && root[root_len - 1] != '\\';
-    char* result = vm->alloc(root_len + needs_sep + path_len + 1);
+    char* result = vm->alloc(checked_add(vm, checked_add(vm, checked_add(vm, root_len, needs_sep), path_len), 1));
     memcpy(result, root, root_len);
     if (needs_sep) result[root_len++] = '/';
     memcpy(result + root_len, path, path_len + 1);
@@ -47,9 +54,9 @@ char* lt_common_expand_path_pattern(lt_VM* vm, const char* pattern, const char* 
     size_t subpath_len = strlen(subpath);
     uint8_t has_subpath = subpath_len > 0;
 
-    size_t total = has_subpath ? subpath_len + 2 : 1;
+    size_t total = has_subpath ? checked_add(vm, subpath_len, 2) : 1;
     for (const char* cursor = pattern; *cursor; ++cursor)
-        total += *cursor == '?' ? package_len : 1;
+        total = checked_add(vm, total, *cursor == '?' ? package_len : 1);
 
     char* result = vm->alloc(total);
     char* out = result;

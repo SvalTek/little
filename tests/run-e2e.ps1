@@ -1,5 +1,5 @@
 param(
-    [string]$Compiler = "gcc",
+    [string]$Compiler = "",
     [string]$Exe = "",
     [switch]$SkipBuild
 )
@@ -7,6 +7,12 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = Split-Path -Parent $PSScriptRoot
+$toolchainBin = if ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin" } else { "" }
+if ($toolchainBin -and (Test-Path $toolchainBin)) {
+    $env:PATH = "$toolchainBin$([IO.Path]::PathSeparator)$env:PATH"
+}
+$Compiler = if ($Compiler) { $Compiler } elseif ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin/gcc.exe" } else { "gcc" }
+$includeFlags = if ($env:INCLUDES_PATH) { @("-I", $env:INCLUDES_PATH) } else { @() }
 $buildDir = Join-Path $repo "build"
 $exe = if ($Exe) { $Exe } else { Join-Path $buildDir "little-e2e.exe" }
 
@@ -26,6 +32,7 @@ if (!$SkipBuild) {
     }
 
     & $Compiler -std=c11 `
+        $includeFlags `
         (Join-Path $repo "main.c") `
         (Join-Path $repo "src/little_buffer.c") `
         (Join-Path $repo "src/little.c") `
@@ -49,6 +56,7 @@ if (!$SkipBuild) {
 
     $optInHarness = Join-Path $buildDir "loadlib-opt-in.exe"
     & $Compiler -std=c11 `
+        $includeFlags `
         (Join-Path $repo "tests/native/loadlib-opt-in.c") `
         (Join-Path $repo "src/little_buffer.c") `
         (Join-Path $repo "src/little.c") `
@@ -95,6 +103,7 @@ if (!$SkipBuild) {
         }
     )
     $nativeFlags = @("-std=c11", "-shared", "-I", (Join-Path $repo "src"))
+    $nativeFlags += $includeFlags
     if ($env:OS -ne "Windows_NT") {
         $nativeFlags += "-fPIC"
     }
@@ -131,7 +140,14 @@ $tests = $tests | Sort-Object DirectoryName, Name
 
 foreach ($test in $tests) {
     $testFailed = $false
-    $output = Normalize((& $exe $test.FullName 2>&1 | Out-String))
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = Normalize((& $exe $test.FullName 2>&1 | Out-String))
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     $expectedPath = "$($test.FullName).expected"
     $containsPath = "$($test.FullName).contains"
 

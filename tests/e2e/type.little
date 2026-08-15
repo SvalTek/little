@@ -1,0 +1,29 @@
+var number = 7
+var text = "little"
+var tableValue = {}
+var arrayValue = []
+var callback = fn() {}
+
+class Fruit {}
+class Apple extends Fruit {}
+var apple = Apple()
+
+io.print(type null)
+io.print(type true)
+io.print(type number)
+io.print(type text)
+io.print(type tableValue)
+io.print(type arrayValue)
+io.print(type callback)
+io.print(type Fruit)
+io.print(type apple)
+
+if type text is "string" {
+    io.print("string condition")
+}
+
+io.print(typeof apple)
+io.print(typeof Fruit)
+io.print(typeof text)
+io.print(typeof apple is Apple)
+io.print(typeof apple isnt Fruit)

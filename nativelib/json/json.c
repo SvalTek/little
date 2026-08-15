@@ -29,8 +29,18 @@ static const lt_Api* lt = 0;
 static void writer_push(lt_VM* vm, JsonWriter* writer, char ch)
 {
     if (writer->failed) return;
+    if (writer->length >= UINT32_MAX - 1)
+    {
+        writer->failed = 1;
+        return;
+    }
     if (writer->capacity <= writer->length + 1)
     {
+        if (writer->capacity > UINT32_MAX / 2)
+        {
+            writer->failed = 1;
+            return;
+        }
         uint32_t capacity = writer->capacity == 0 ? 64 : writer->capacity * 2;
         char* data = lt->alloc(vm, capacity);
         if (!data)
@@ -145,12 +155,12 @@ static char* parse_string_raw(lt_VM* vm, JsonParser* parser)
             continue;
         }
 
-        ch = (unsigned char)parser->text[parser->pos++];
-        if (ch == 0)
+        if (parser->text[parser->pos] == 0)
         {
             parser->failed = 1;
             break;
         }
+        ch = (unsigned char)parser->text[parser->pos++];
         switch (ch)
         {
         case '"': writer_push(vm, &writer, '"'); break;
@@ -200,6 +210,12 @@ static char* parse_string_raw(lt_VM* vm, JsonParser* parser)
 
     parser->pos++;
     writer_push(vm, &writer, 0);
+    if (writer.failed)
+    {
+        if (writer.data) lt->free(vm, writer.data);
+        parser->failed = 1;
+        return 0;
+    }
     return writer.data;
 }
 
@@ -484,6 +500,12 @@ static uint8_t json_stringify_native(lt_VM* vm, uint8_t argc)
         return 1;
     }
     writer_push(vm, &writer, 0);
+    if (writer.failed)
+    {
+        if (writer.data) lt->free(vm, writer.data);
+        lt->push(vm, LT_VALUE_NULL);
+        return 1;
+    }
     lt_Value result = lt->make_string(vm, writer.data);
     lt->free(vm, writer.data);
     lt->push(vm, result);

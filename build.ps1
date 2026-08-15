@@ -1,5 +1,5 @@
 param(
-    [string]$Compiler = "gcc",
+    [string]$Compiler = "",
     [string]$Output = "build/little.exe",
     [string]$CFlags = "",
     [string]$LdFlags = ""
@@ -8,6 +8,12 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = $PSScriptRoot
+$toolchainBin = if ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin" } else { "" }
+if ($toolchainBin -and (Test-Path $toolchainBin)) {
+    $env:PATH = "$toolchainBin$([IO.Path]::PathSeparator)$env:PATH"
+}
+$Compiler = if ($Compiler) { $Compiler } elseif ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin/gcc.exe" } else { "gcc" }
+$includeFlags = if ($env:INCLUDES_PATH) { @("-I", $env:INCLUDES_PATH) } else { @() }
 $outPath = Join-Path $repo $Output
 $outDir = Split-Path -Parent $outPath
 $threadFlags = @()
@@ -35,6 +41,7 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 & $Compiler -std=c11 `
     $extraCFlags `
+    $includeFlags `
     (Join-Path $repo "main.c") `
     (Join-Path $repo "src/little_buffer.c") `
     (Join-Path $repo "src/little.c") `

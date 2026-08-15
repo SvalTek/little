@@ -15,7 +15,7 @@ var window = webui.newWindow()
 webui.setSize(window, 520, 360)
 webui.setCenter(window)
 
-; Serve index.html, app.js, and style.css from this folder.
+; Serve index.html, style.css, and deno_test.ts from this folder.
 var rootReady = webui.setRootFolder(window, "scripts/webui/demo")
 ; Deno interprets .ts files requested from the static root.
 webui.setRuntime(window, webui.Deno)
@@ -27,7 +27,7 @@ if not rootReady {
     webui.clean()
 } else {
     ; "*" receives connection lifecycle events. Named callbacks receive payloads
-    ; from app.js through sendToLittle(name, object).
+    ; from index.html through sendToLittle(name, object).
     webui.bind(window, "*", fn(event) {
         io.print("webui event:", event.eventType)
     })

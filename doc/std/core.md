@@ -25,9 +25,9 @@ Trapped errors are not sent to the host error callback.
 Indexes are 0-based, and `end` is inclusive:
 
 ```js
-unpack([ 10, 20, 30 ])       // 10, 20, 30
-unpack([ 10, 20, 30 ], 1)    // 20, 30
-unpack([ 10, 20, 30 ], 1, 1) // 20
+unpack([ 10, 20, 30 ])       ; 10, 20, 30
+unpack([ 10, 20, 30 ], 1)    ; 20, 30
+unpack([ 10, 20, 30 ], 1, 1) ; 20
 ```
 
 `start` defaults to `0`. `end` defaults to the last array index. Bounds must be numbers, and the first argument must be an array.

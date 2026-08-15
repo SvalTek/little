@@ -123,6 +123,25 @@ if status isnt "blocked" { ... }
 
 Little does not have `==` or `!=`. Use `is` and `isnt`.
 
+`type` is a prefix operator, not a function call. It returns the value's type
+name as a string:
+
+```js
+if type value is "string" {
+    io.print(value)
+}
+```
+
+`typeof` returns an instance's concrete class object (or a class value itself)
+and returns `null` for other values. This makes direct-class checks use normal
+identity equality:
+
+```js
+if typeof apple is Apple {
+    io.print("an Apple")
+}
+```
+
 Parentheses group expressions and may also wrap control-flow conditions:
 
 ```js

@@ -147,6 +147,8 @@ typedef enum {
 	LT_TOKEN_AND,
 	LT_TOKEN_OR,
 	LT_TOKEN_NOT,
+	LT_TOKEN_TYPE,
+	LT_TOKEN_TYPEOF,
 
 	LT_TOKEN_END,
 } lt_TokenType;

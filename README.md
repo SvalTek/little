@@ -53,6 +53,25 @@ int main(char** argv, int argc)
 ---
 ## Compiling
 
+The included Taskfile is the supported development workflow:
+
+```powershell
+task build
+build/little.exe --help
+build/little.exe scripts/hello.little
+build/little.exe -e 'io.print("hello")'
+build/little.exe -I lib scripts/main.little
+```
+
+The CLI accepts one script path, or `-e SOURCE` for a short inline program. It
+returns a non-zero exit code for command-line, file, parse, or runtime errors.
+Use `--help` to see its options and `--version` to see the linked API version.
+Use `-I DIRECTORY` (more than once if needed) to add source-module search paths
+without baking those local launch details into the script.
+
+For a local Windows compiler, copy `.env.example` to `.env` and set `GCC_PATH`
+to the w64devkit root; the Taskfile loads that file without committing it.
+
 #### Linux
 ```
 gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_std.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -lm -pthread -o little

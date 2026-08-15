@@ -248,6 +248,9 @@ static uint8_t _lt_load_library(lt_VM* vm, uint8_t argc)
         lt_runtime_error(vm, "Native library does not export ltopen!");
     }
 
+    /* A native library can re-enter the VM and collect while opening. */
+    lt_push(vm, requested_key);
+    lt_push(vm, resolved_key);
     lt_Value value = open_fn(vm, &_lt_native_api);
     if (value == LT_VALUE_NULL)
     {
@@ -266,6 +269,8 @@ static uint8_t _lt_load_library(lt_VM* vm, uint8_t argc)
     lt_table_set(vm, cache, requested_key, wrapper);
 
     if (LT_IS_OBJECT(value)) lt_resumecollect(vm, LT_GET_OBJECT(value));
+    lt_pop(vm);
+    lt_pop(vm);
     vm->free(resolved);
     lt_push(vm, value);
     return 1;

@@ -26,6 +26,8 @@ var webui = loadLibrary("nativelib/webui/build/webui")
 
 The module value is a table of native functions and constants. The library uses
 WebUI's browser-window mode by default; `showWv` is exposed for WebView mode.
+On macOS, the native build includes WebUI's WKWebView backend and links Cocoa
+and WebKit.
 
 ## Basic Window
 
@@ -272,3 +274,7 @@ enabling upstream verbose logging.
 This library is intentionally a small optional binding. It does not expose every
 WebUI function yet, and it does not integrate with `import`; use `loadLibrary`
 for native libraries and `import` for `.little` source modules.
+
+WebUI callback state is process-global. Load this library into only one Little
+VM per process; a second VM load is rejected rather than routing callbacks to
+the wrong VM.

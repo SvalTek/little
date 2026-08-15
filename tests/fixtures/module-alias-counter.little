@@ -1,0 +1,2 @@
+global moduleAliasLoads = moduleAliasLoads + 1
+return { loads: moduleAliasLoads }

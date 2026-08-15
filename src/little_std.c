@@ -397,7 +397,7 @@ char* ltstd_tostring(lt_VM* vm, lt_Value val)
         case LT_OBJECT_NATIVEFN: len = snprintf(scratch, sizeof(scratch), "native %p", (void*)obj); break;
         case LT_OBJECT_BOUND_NATIVE: len = snprintf(scratch, sizeof(scratch), "bound_native %p", (void*)obj); break;
         case LT_OBJECT_PROMISE: len = snprintf(scratch, sizeof(scratch), "promise %p", (void*)obj); break;
-        case LT_OBJECT_CLASS: len = snprintf(scratch, sizeof(scratch), "class %p", (void*)obj); break;
+        case LT_OBJECT_CLASS: len = snprintf(scratch, sizeof(scratch), "%s", lt_get_string(vm, obj->class_def.name)); break;
         case LT_OBJECT_INSTANCE: len = snprintf(scratch, sizeof(scratch), "instance %p", (void*)obj); break;
         case LT_OBJECT_CELL: len = snprintf(scratch, sizeof(scratch), "cell %p", (void*)obj); break;
         case LT_OBJECT_PTR: len = snprintf(scratch, sizeof(scratch), "ptr %p", (void*)obj); break;

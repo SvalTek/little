@@ -105,7 +105,7 @@ The VM starts without standard libraries. Use `ltstd_open_all` for the tradition
 
 `loadLibrary` is deliberately opt-in. Embedders that want scripts to load native code can call `ltstd_open_loadlib(vm)`. Embedders that do not call it will not expose the `loadLibrary` global. The CLI opens it because it is designed to run full local scripts.
 
-`loadLibrary(path)` loads a platform native library and calls its exported
+`loadLibrary(path)` loads a platform-native library and calls its exported
 `ltopen(lt_VM* vm, const lt_Api* lt)` function. The `ltopen` function returns
 the Little value that `loadLibrary` returns, normally a table of native
 functions. Native libraries call Little through the passed `lt_Api` table, so

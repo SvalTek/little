@@ -90,7 +90,13 @@ libraries are loaded explicitly with `loadLibrary(...)`, not with `import`.
 
 ## Cache Behavior
 
-Imports are cached per VM by resolved path. Importing the same file again returns the cached value without rerunning the module body.
+Imports are cached per VM by the resolved path spelling. Importing the same
+spelling again returns the cached value without rerunning the module body.
+
+Paths are not canonicalized. For example, `import "lib/tool"` and
+`import "./lib/tool"` can resolve to the same file but have separate cache
+entries, so use one consistent path spelling when module initialization must
+run only once.
 
 Caching starts before the module body runs, so simple import cycles can observe a partially initialized module value. The cached placeholder is replaced with the module's returned value after execution completes. If module execution fails, the placeholder is removed.
 

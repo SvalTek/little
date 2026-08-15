@@ -38,6 +38,22 @@ The returned promise rejects with an error string when:
 * the worker result cannot cross the VM boundary.
 * the host thread cannot be created.
 
+Task-boundary and worker failures are asynchronous promise rejections. `pcall`
+only catches errors raised while its callback is executing; it does not catch a
+later rejection from the promise returned by `task.run`. Attach `.catch(...)`
+to observe task failure:
+
+```js
+var result = pcall(fn() {
+    return task.run(fn(state) { return state.item }, { item: SomeClass() })
+})
+
+io.print(result.ok) ; true: task creation returned a promise
+result.value.catch(fn(reason) {
+    io.print(reason)
+})
+```
+
 ## Shared State
 
 Tables and arrays in `state` are promoted to shared task objects. The parent VM and worker VM each hold proxy objects to the same backing storage, so mutations through table fields and array elements are visible across the boundary:
