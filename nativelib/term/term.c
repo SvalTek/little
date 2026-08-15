@@ -35,21 +35,43 @@ typedef struct
 static const lt_Api* lt = 0;
 static TermState state;
 
+/**
+ * Requires an exact number of arguments for the current call.
+ * @param vm Virtual machine reporting the runtime error.
+ * @param argc Number of arguments provided.
+ * @param expected Required number of arguments.
+ * @param message Error message to report when the counts differ.
+ */
 static void require_args(lt_VM* vm, uint8_t argc, uint8_t expected, const char* message)
 {
     if (argc != expected) lt->runtime_error(vm, message);
 }
 
+/**
+ * Requires an active terminal owned by the specified VM.
+ * @param vm VM that must own the active terminal.
+ */
 static void require_active(lt_VM* vm)
 {
     if (!state.active || state.vm != vm) lt->runtime_error(vm, "Call term.open before using the terminal!");
 }
 
+/**
+ * Determines whether a value can be invoked.
+ * @param value Value to inspect.
+ * @return `1` if the value is a function, closure, native function, or class; `0` otherwise.
+ */
 static uint8_t is_callable(lt_Value value)
 {
     return LT_IS_FUNCTION(value) || LT_IS_CLOSURE(value) || LT_IS_NATIVE(value) || LT_IS_CLASS(value);
 }
 
+/**
+ * Maps a terminal key code to its event name.
+ *
+ * @param key Terminal key code.
+ * @returns The corresponding event name, or a null pointer for an unmapped key.
+ */
 static const char* event_key_name(int key)
 {
     switch (key)
@@ -74,6 +96,11 @@ static const char* event_key_name(int key)
     }
 }
 
+/**
+ * Creates an event table for a terminal input code.
+ * @param key Terminal key or resize code.
+ * @return Event table containing the code and its corresponding event data.
+ */
 static lt_Value make_event(lt_VM* vm, int key)
 {
     lt_Value event = lt->make_table(vm);
@@ -96,12 +123,20 @@ static lt_Value make_event(lt_VM* vm, int key)
     return event;
 }
 
+/**
+ * Reads the next terminal key without waiting for input.
+ *
+ * @return The next key code, or ERR when no key is available.
+ */
 static int next_key(void)
 {
     timeout(0);
     return getch();
 }
 
+/**
+ * Configures the terminal output region above the reserved input row.
+ */
 static void configure_output_region(void)
 {
     int rows, columns;
@@ -114,6 +149,10 @@ static void configure_output_region(void)
     }
 }
 
+/**
+ * Advances the terminal output cursor to the beginning of the next line,
+ * scrolling the output region when necessary.
+ */
 static void output_newline(void)
 {
     int rows, columns;
@@ -131,6 +170,12 @@ static void output_newline(void)
     move(state.output_y, state.output_x);
 }
 
+/**
+ * Writes text to the terminal output region, handling carriage returns, newlines, and line wrapping.
+ *
+ * @param text Text to write.
+ * @returns 1 if the text was written; 0 if the terminal is inactive, the text is null, or the screen is too small.
+ */
 uint8_t lt_term_write_output(const char* text)
 {
     int rows, columns;
@@ -156,17 +201,27 @@ uint8_t lt_term_write_output(const char* text)
     return 1;
 }
 
+/**
+ * Begins an empty multiline input composer.
+ */
 void lt_term_begin_composer(void)
 {
     state.composer = "";
     state.composer_active = 1;
 }
 
+/**
+ * Updates the text displayed in the active input composer.
+ * @param text Replacement composer text; a null pointer clears the text.
+ */
 void lt_term_update_composer(const char* text)
 {
     state.composer = text ? text : "";
 }
 
+/**
+ * Commits the active composer and clears its display area.
+ */
 void lt_term_commit_composer(void)
 {
     if (!state.active || !state.composer_active) return;
@@ -185,7 +240,12 @@ void lt_term_commit_composer(void)
     refresh();
 }
 
-/* One event per turn keeps terminal callbacks fair with timers and promises. */
+/**
+ * Processes at most one pending terminal input event for the owning VM.
+ *
+ * @param context Terminal state associated with the poll hook.
+ * @return The poll status indicating whether work was performed or remains pending.
+ */
 static lt_PollResult term_poll_hook(lt_VM* vm, void* context)
 {
     TermState* terminal = context;
@@ -202,11 +262,24 @@ static lt_PollResult term_poll_hook(lt_VM* vm, void* context)
     return LT_POLL_WORK;
 }
 
+/**
+ * Processes one pending terminal event for the virtual machine.
+ *
+ * @param vm Virtual machine associated with the terminal.
+ * @returns `1` if terminal work was processed, `0` otherwise.
+ */
 uint8_t ltterm_update(lt_VM* vm)
 {
     return term_poll_hook(vm, &state) == LT_POLL_WORK;
 }
 
+/**
+ * Opens the terminal for the calling Little VM.
+ *
+ * @param vm Little VM requesting terminal ownership.
+ * @param argc Number of arguments supplied to the native function.
+ * @return Number of values pushed onto the VM stack.
+ */
 static uint8_t term_open(lt_VM* vm, uint8_t argc)
 {
     require_args(vm, argc, 0, "Expected no arguments to term.open!");
@@ -234,6 +307,11 @@ static uint8_t term_open(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+/**
+ * Closes the terminal owned by the calling VM and clears its terminal state.
+ * @param vm The VM that owns the terminal.
+ * @param argc The number of arguments supplied to the function.
+ */
 static uint8_t term_close(lt_VM* vm, uint8_t argc)
 {
     require_args(vm, argc, 0, "Expected no arguments to term.close!");
@@ -253,6 +331,11 @@ static uint8_t term_close(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+/**
+ * Determines whether the terminal is active for the calling VM.
+ *
+ * @returns `true` if the calling VM owns an active terminal, `false` otherwise.
+ */
 static uint8_t term_is_open(lt_VM* vm, uint8_t argc)
 {
     require_args(vm, argc, 0, "Expected no arguments to term.isOpen!");
@@ -260,6 +343,11 @@ static uint8_t term_is_open(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+/**
+ * Returns the dimensions of the active terminal.
+ *
+ * @returns A table containing the terminal width and height.
+ */
 static uint8_t term_size(lt_VM* vm, uint8_t argc)
 {
     int rows, columns;
@@ -273,6 +361,9 @@ static uint8_t term_size(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+/**
+ * Clears the terminal screen and resets the output position.
+ */
 static uint8_t term_clear(lt_VM* vm, uint8_t argc)
 {
     require_args(vm, argc, 0, "Expected no arguments to term.clear!");
@@ -284,6 +375,9 @@ static uint8_t term_clear(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+/**
+ * Clears the terminal row specified by the numeric argument.
+ */
 static uint8_t term_clear_line(lt_VM* vm, uint8_t argc)
 {
     lt_Value y;
@@ -296,6 +390,9 @@ static uint8_t term_clear_line(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+/**
+ * Refreshes the terminal display.
+ */
 static uint8_t term_present(lt_VM* vm, uint8_t argc)
 {
     require_args(vm, argc, 0, "Expected no arguments to term.present!");
@@ -304,6 +401,11 @@ static uint8_t term_present(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+/**
+ * Moves the terminal cursor to the specified coordinates.
+ * @param vm Virtual machine executing the operation.
+ * @param argc Number of arguments supplied.
+ */
 static uint8_t term_move(lt_VM* vm, uint8_t argc)
 {
     lt_Value y, x;
@@ -316,6 +418,11 @@ static uint8_t term_move(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+/**
+ * Sets the terminal cursor visibility.
+ * @param vm Virtual machine invoking the function.
+ * @param argc Number of arguments provided.
+ */
 static uint8_t term_cursor(lt_VM* vm, uint8_t argc)
 {
     lt_Value visible;
@@ -327,6 +434,12 @@ static uint8_t term_cursor(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+/**
+ * Writes text at the specified terminal coordinates.
+ *
+ * @param vm Virtual machine whose active terminal is used.
+ * @param argc Number of arguments supplied to the function.
+ */
 static uint8_t term_write(lt_VM* vm, uint8_t argc)
 {
     lt_Value text, y, x;
@@ -341,6 +454,9 @@ static uint8_t term_write(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+/**
+ * Emits a terminal alert sound.
+ */
 static uint8_t term_bell(lt_VM* vm, uint8_t argc)
 {
     require_args(vm, argc, 0, "Expected no arguments to term.bell!");
@@ -349,6 +465,10 @@ static uint8_t term_bell(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+/**
+ * Polls the terminal for one input event without blocking.
+ * @returns A terminal event, or null when no input is available.
+ */
 static uint8_t term_poll(lt_VM* vm, uint8_t argc)
 {
     int key;
@@ -359,6 +479,10 @@ static uint8_t term_poll(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+/**
+ * Updates the terminal and reports whether work was performed.
+ * @returns `true` if terminal input or callbacks required processing, `false` otherwise.
+ */
 static uint8_t term_update_native(lt_VM* vm, uint8_t argc)
 {
     require_args(vm, argc, 0, "Expected no arguments to term.update!");
@@ -367,6 +491,13 @@ static uint8_t term_update_native(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+/**
+ * Registers a callable callback for terminal events.
+ *
+ * @param argc Number of arguments supplied.
+ * @returns The registered callback.
+ * @throws Runtime error if the terminal is inactive, the argument count is invalid, or the callback is not callable.
+ */
 static uint8_t term_on_event(lt_VM* vm, uint8_t argc)
 {
     lt_Value callback;
@@ -383,6 +514,12 @@ static uint8_t term_on_event(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+/**
+ * Renders the input prompt, editable line, and active multiline composer, then refreshes the terminal display.
+ * @param prompt Prompt displayed before the input line.
+ * @param line Current editable input text.
+ * @param cursor Cursor offset within the input line.
+ */
 static void draw_input(const char* prompt, const char* line, uint32_t cursor)
 {
     const char* source;
@@ -435,6 +572,11 @@ static void draw_input(const char* prompt, const char* line, uint32_t cursor)
     refresh();
 }
 
+/**
+ * Stores a nonempty command line in history unless it duplicates the most recent entry.
+ *
+ * @param line Command line to store.
+ */
 static void history_push(const char* line)
 {
     if (!line[0]) return;
@@ -449,6 +591,12 @@ static void history_push(const char* line)
     state.history_count++;
 }
 
+/**
+ * Reads an editable line of input from the terminal.
+ *
+ * @param prompt Text displayed before the input line.
+ * @returns The submitted input string, or null if input is cancelled.
+ */
 static uint8_t term_read_line(lt_VM* vm, uint8_t argc)
 {
     lt_Value prompt_value;
@@ -516,12 +664,22 @@ static uint8_t term_read_line(lt_VM* vm, uint8_t argc)
     }
 }
 
+/**
+ * Shuts down the terminal and resets its state.
+ */
 void lt_term_shutdown(void)
 {
     if (state.active) endwin();
     memset(&state, 0, sizeof(state));
 }
 
+/**
+ * Initializes and returns the terminal module.
+ *
+ * @param vm Virtual machine receiving the module.
+ * @param api API interface used by the module.
+ * @return The terminal module table, or null when the API version or size is invalid.
+ */
 LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
 {
     lt_Value term;

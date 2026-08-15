@@ -20,6 +20,12 @@ static int had_error = 0;
 
 static char* copy_string(const char* value);
 
+/**
+ * Records a VM error and writes its message through the available output channel.
+ *
+ * @param vm VM associated with the error.
+ * @param msg Error message to report.
+ */
 static void error(lt_VM* vm, const char* msg)
 {
     (void)vm;
@@ -36,12 +42,22 @@ static void error(lt_VM* vm, const char* msg)
     printf("LT ERROR: %s\n", msg);
 }
 
+/**
+ * Closes terminal resources and destroys the virtual machine.
+ *
+ * @param vm Virtual machine to destroy.
+ */
 static void destroy_vm(lt_VM* vm)
 {
     ltstd_close_term();
     lt_destroy(vm);
 }
 
+/**
+ * Prints command-line usage and option information to the specified stream.
+ *
+ * @param stream Stream to which the usage information is written.
+ */
 static void print_usage(FILE* stream)
 {
     fprintf(stream,
@@ -58,6 +74,14 @@ static void print_usage(FILE* stream)
         "  --                     Stop option processing; remaining values are script arguments.\n");
 }
 
+/**
+ * Invokes a terminal function with an optional prompt and optionally stores its result.
+ * @param vm Virtual machine used to invoke the terminal function.
+ * @param name Name of the terminal function.
+ * @param prompt Prompt passed to the function, or NULL when no prompt is needed.
+ * @param result Destination for the first returned value, or NULL to discard all returned values.
+ * @return 1 if the function completes successfully, or 0 if a VM error occurs.
+ */
 static int call_term(lt_VM* vm, const char* name, const char* prompt, lt_Value* result)
 {
     lt_Value term = lt_table_get(vm, vm->global, lt_make_string(vm, "term"));
@@ -80,6 +104,14 @@ static int call_term(lt_VM* vm, const char* name, const char* prompt, lt_Value* 
     return 1;
 }
 
+/**
+ * Appends a line and a trailing newline to a dynamically sized source buffer.
+ * @param source Buffer receiving the appended line.
+ * @param length Current length of the source buffer.
+ * @param capacity Allocated capacity of the source buffer.
+ * @param line Line to append.
+ * @return 1 on success, 0 if the buffer cannot be resized.
+ */
 static int append_repl_line(char** source, size_t* length, size_t* capacity, const char* line)
 {
     size_t line_length = strlen(line);
@@ -100,6 +132,11 @@ static int append_repl_line(char** source, size_t* length, size_t* capacity, con
     return 1;
 }
 
+/**
+ * Echoes a REPL input line with its prompt.
+ * @param line Input line to display.
+ * @param length Number of characters to display.
+ */
 static void echo_repl_line(const char* line, size_t length)
 {
     char character[2] = { 0, 0 };
@@ -112,6 +149,11 @@ static void echo_repl_line(const char* line, size_t length)
     ltstd_write_output("\n");
 }
 
+/**
+ * Echoes REPL source, optionally enclosing multiline input in triple quotes.
+ * @param source Source text to echo.
+ * @param multiline Whether to include multiline delimiters.
+ */
 static void echo_repl_source(const char* source, int multiline)
 {
     const char* line = source;
@@ -127,6 +169,13 @@ static void echo_repl_source(const char* source, int multiline)
     if (multiline) echo_repl_line("\"\"\"", 3);
 }
 
+/**
+ * Executes source entered in the interactive session and displays its returned values.
+ *
+ * @param vm Virtual machine used to execute the source.
+ * @param source Source code to execute.
+ * @return 1 after processing the source, including when execution reports an error.
+ */
 static int run_repl_source(lt_VM* vm, const char* source)
 {
     uint32_t nreturn = lt_dostring(vm, source, "<interactive>");
@@ -146,6 +195,13 @@ static int run_repl_source(lt_VM* vm, const char* source)
     return 1;
 }
 
+/**
+ * Runs the interactive read-eval-print loop, supporting single-line and multiline input.
+ *
+ * @param vm Virtual machine used to execute interactive input.
+ * @param repl_echo Whether entered source is echoed.
+ * @return 1 if the session ends normally, 0 if terminal or input processing fails.
+ */
 static int run_repl(lt_VM* vm, int repl_echo)
 {
     char banner[128];
@@ -208,6 +264,11 @@ done:
     return success;
 }
 
+/**
+ * Creates a heap-allocated copy of a null-terminated string.
+ * @param value String to copy.
+ * @return A newly allocated copy, or NULL if allocation fails.
+ */
 static char* copy_string(const char* value)
 {
     size_t length = strlen(value);
@@ -217,6 +278,13 @@ static char* copy_string(const char* value)
     return copy;
 }
 
+/**
+ * Joins two path components with a separator when needed.
+ *
+ * @param left The first path component.
+ * @param right The second path component.
+ * @return A newly allocated combined path, or NULL if allocation fails.
+ */
 static char* join_path(const char* left, const char* right)
 {
     size_t left_length = strlen(left);
@@ -230,6 +298,11 @@ static char* join_path(const char* left, const char* right)
     return path;
 }
 
+/**
+ * Returns the directory component of a path.
+ * @param path Path whose parent directory is requested.
+ * @return A newly allocated parent path, or "." when no separator is present. Returns NULL if allocation fails.
+ */
 static char* parent_path(const char* path)
 {
     const char* slash = strrchr(path, '/');
@@ -246,17 +319,35 @@ static char* parent_path(const char* path)
     return parent;
 }
 
+/**
+ * Determines whether a path is absolute.
+ *
+ * @param path Path to inspect.
+ * @return 1 if the path is absolute, 0 otherwise.
+ */
 static int is_absolute_path(const char* path)
 {
     if (path[0] == '/' || path[0] == '\\') return 1;
     return path[0] && path[1] == ':' && (path[2] == '/' || path[2] == '\\');
 }
 
+/**
+ * Resolves a path relative to a directory when it is not absolute.
+ * @param directory Base directory for relative paths.
+ * @param path Path to resolve.
+ * @returns A newly allocated absolute or directory-relative path.
+ */
 static char* path_from_directory(const char* directory, const char* path)
 {
     return is_absolute_path(path) ? copy_string(path) : join_path(directory, path);
 }
 
+/**
+ * Retrieves the path of the running executable.
+ *
+ * @param argv0 Fallback executable path supplied by the command line.
+ * @return An allocated executable path, or a copy of {@p argv0} if the path cannot be determined.
+ */
 static char* executable_path(const char* argv0)
 {
 #ifdef _WIN32
@@ -275,6 +366,11 @@ static char* executable_path(const char* argv0)
     return copy_string(argv0);
 }
 
+/**
+ * Removes leading and trailing whitespace from a mutable string.
+ * @param value String to trim.
+ * @returns The trimmed string.
+ */
 static char* trim(char* value)
 {
     while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n') value++;
@@ -284,6 +380,11 @@ static char* trim(char* value)
     return value;
 }
 
+/**
+ * Adds a directory to the module search path.
+ * @param path Directory to add to the module search path.
+ * @return `true` if the path is added successfully, `false` if a VM error occurs.
+ */
 static int add_module_path(lt_VM* vm, const char* path)
 {
     lt_Value module = lt_table_get(vm, vm->global, lt_make_string(vm, "module"));
@@ -294,6 +395,15 @@ static int add_module_path(lt_VM* vm, const char* path)
     return !had_error;
 }
 
+/**
+ * Loads module, library, and REPL echo settings from a configuration file.
+ *
+ * @param vm VM to configure.
+ * @param path Configuration file path.
+ * @param required Whether failure to open the file is an error.
+ * @param repl_echo Receives the configured REPL echo setting.
+ * @return 1 if the configuration is loaded successfully or an optional file is absent, 0 otherwise.
+ */
 static int load_config(lt_VM* vm, const char* path, int required, int* repl_echo)
 {
     FILE* file = fopen(path, "rb");
@@ -398,6 +508,13 @@ static int load_config(lt_VM* vm, const char* path, int required, int* repl_echo
     return 1;
 }
 
+/**
+ * Adds the default library directories derived from the executable path.
+ *
+ * @param vm VM to configure.
+ * @param executable Path to the executable.
+ * @return 1 if both library paths are created and registered, 0 on allocation failure.
+ */
 static int add_default_library_paths(lt_VM* vm, const char* executable)
 {
     char* directory = parent_path(executable);
@@ -422,6 +539,13 @@ static int add_default_library_paths(lt_VM* vm, const char* executable)
     return 1;
 }
 
+/**
+ * Sets the global `arg` array with the script name followed by its arguments.
+ *
+ * @param script Script name stored as the first element.
+ * @param count Number of arguments in `values`.
+ * @param values Script argument values.
+ */
 static void set_script_args(lt_VM* vm, const char* script, int count, char** values)
 {
     lt_Value args = lt_make_array(vm);
@@ -431,6 +555,11 @@ static void set_script_args(lt_VM* vm, const char* script, int count, char** val
     lt_table_set(vm, vm->global, lt_make_string(vm, "arg"), args);
 }
 
+/**
+ * Reads a source file into a null-terminated string.
+ * @param path Path to the source file.
+ * @return Newly allocated file contents, or NULL if the file cannot be read or memory allocation fails.
+ */
 static char* read_source_file(const char* path)
 {
     FILE* file = fopen(path, "rb");
@@ -478,6 +607,13 @@ static char* read_source_file(const char* path)
     return source;
 }
 
+/**
+ * Runs the little command-line interpreter.
+ *
+ * @param argc Number of command-line arguments.
+ * @param argv Command-line arguments.
+ * @return 0 on success, 1 if initialization or execution fails, or 2 for invalid command-line usage.
+ */
 int main(int argc, char** argv)
 {
     const char* source = NULL;

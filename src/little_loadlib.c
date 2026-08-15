@@ -13,6 +13,11 @@
 
 typedef lt_Value (*lt_NativeLibraryOpenFn)(lt_VM* vm, const lt_Api* api);
 
+/**
+ * Retrieves the global native-library search path array, optionally creating it.
+ * @param create Whether to create and store an empty array when no path array exists.
+ * @returns The native-library search path array, or `LT_VALUE_NULL` if it does not exist and creation is disabled.
+ */
 static lt_Value _lt_native_library_paths(lt_VM* vm, uint8_t create)
 {
     lt_Value key = lt_make_string(vm, "__native_library_paths");
@@ -25,6 +30,12 @@ static lt_Value _lt_native_library_paths(lt_VM* vm, uint8_t create)
     return paths;
 }
 
+/**
+ * Allocates memory using the VM's allocator.
+ * @param vm VM whose allocator performs the allocation.
+ * @param size Number of bytes to allocate.
+ * @return Pointer to the allocated memory.
+ */
 static void* _lt_api_alloc(lt_VM* vm, size_t size)
 {
     return vm->alloc(size);
@@ -87,11 +98,21 @@ static const lt_Api _lt_native_api = {
     _lt_api_promise_result,
 };
 
+/**
+ * Retrieves the native API table.
+ *
+ * @return Pointer to the native API table.
+ */
 const lt_Api* ltstd_native_api(void)
 {
     return &_lt_native_api;
 }
 
+/**
+ * Gets the native library filename suffix for the current platform.
+ *
+ * @return The platform-specific native library suffix.
+ */
 static const char* _lt_native_library_suffix(void)
 {
 #ifdef _WIN32
@@ -116,6 +137,12 @@ static char* _lt_make_dlopen_path(lt_VM* vm, const char* path)
     return lt_common_copy_string(vm, path);
 }
 
+/**
+ * Resolves a native library base path to an existing platform-specific library file.
+ *
+ * @param base Base path or package directory to search.
+ * @return An allocated path to the matching library, or `NULL` if no library is found.
+ */
 static char* _lt_resolve_native_library_base(lt_VM* vm, const char* base)
 {
     const char* suffix = _lt_native_library_suffix();
@@ -157,6 +184,12 @@ static char* _lt_resolve_native_library_base(lt_VM* vm, const char* base)
     return 0;
 }
 
+/**
+ * Resolves a native library request using direct, configured native-library, and module search paths.
+ *
+ * @param requested Library path or name to resolve.
+ * @returns The resolved library path, or `NULL` if no matching library is found.
+ */
 static char* _lt_resolve_native_library(lt_VM* vm, const char* requested)
 {
     char* resolved = _lt_resolve_native_library_base(vm, requested);
@@ -195,12 +228,26 @@ static char* _lt_resolve_native_library(lt_VM* vm, const char* requested)
     return resolved;
 }
 
+/**
+ * Adds a directory to the native-library search path.
+ *
+ * @param vm VM used to store the search path.
+ * @param path Directory to search for native libraries.
+ */
 void ltstd_add_library_path(lt_VM* vm, const char* path)
 {
     lt_Value paths = _lt_native_library_paths(vm, 1);
     lt_array_push(vm, paths, lt_make_string(vm, path));
 }
 
+/**
+ * Opens a native library at the specified path.
+ *
+ * @param path Path to the native library.
+ * @param error Buffer that receives an error message if loading fails.
+ * @param error_size Size of the error buffer.
+ * @return The native library handle, or NULL if loading fails.
+ */
 static void* _lt_open_native_library(const char* path, char* error, size_t error_size)
 {
 #ifdef _WIN32

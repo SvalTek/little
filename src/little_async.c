@@ -1119,6 +1119,11 @@ static void _lt_release_value(lt_VM* vm, lt_Value value)
 	if (LT_IS_OBJECT(value)) lt_resumecollect(vm, LT_GET_OBJECT(value));
 }
 
+/**
+ * Initializes the asynchronous runtime state for a virtual machine.
+ *
+ * @param vm Virtual machine whose asynchronous state is initialized.
+ */
 void ltasync_init_state(lt_VM* vm)
 {
 	vm->microtasks = lt_buffer_new(sizeof(lt_Microtask));
@@ -1153,6 +1158,11 @@ static void _lt_worker_destroy(lt_VM* vm, lt_Worker* worker, uint8_t join)
 	vm->free(worker);
 }
 
+/**
+ * Destroys the asynchronous runtime state associated with a VM.
+ *
+ * @param vm VM whose workers and asynchronous runtime buffers are destroyed.
+ */
 void ltasync_destroy_state(lt_VM* vm)
 {
 	for (uint32_t i = 0; i < vm->workers.length; ++i)
@@ -1167,6 +1177,13 @@ void ltasync_destroy_state(lt_VM* vm)
 	lt_buffer_destroy(vm, &vm->poll_hooks);
 }
 
+/**
+ * Registers a callback to be invoked during event-loop polling.
+ * @param vm VM that owns the poll hook.
+ * @param hook Callback to invoke.
+ * @param context User-defined context passed to the callback.
+ * @returns A nonzero hook identifier, or 0 if hook is NULL.
+ */
 uint32_t lt_add_poll_hook(lt_VM* vm, lt_PollHook hook, void* context)
 {
 	if (!hook) return 0;
@@ -1177,6 +1194,11 @@ uint32_t lt_add_poll_hook(lt_VM* vm, lt_PollHook hook, void* context)
 	return id;
 }
 
+/**
+ * Marks a registered poll hook for removal.
+ * @param vm Virtual machine containing the poll hook.
+ * @param hook_id Identifier of the poll hook to remove.
+ */
 void lt_remove_poll_hook(lt_VM* vm, uint32_t hook_id)
 {
 	if (hook_id == 0) return;
@@ -1191,6 +1213,12 @@ void lt_remove_poll_hook(lt_VM* vm, uint32_t hook_id)
 	}
 }
 
+/**
+ * Dispatches the poll hooks that were registered at the start of the poll cycle.
+ * @param vm Virtual machine whose poll hooks are dispatched.
+ * @param pending Set to 1 when a hook reports work or pending activity.
+ * @returns 1 if any hook reports work, 0 otherwise.
+ */
 uint8_t ltasync_poll_hooks(lt_VM* vm, uint8_t* pending)
 {
 	uint8_t did_work = 0;
@@ -1214,6 +1242,11 @@ uint8_t ltasync_poll_hooks(lt_VM* vm, uint8_t* pending)
 	return did_work;
 }
 
+/**
+ * Releases the reaction storage associated with a promise.
+ * @param vm VM that owns the promise.
+ * @param promise Promise whose reactions are being released.
+ */
 void ltasync_free_promise(lt_VM* vm, lt_Object* promise)
 {
 	lt_buffer_destroy(vm, &promise->promise.reactions);
@@ -1263,6 +1296,11 @@ void ltasync_mark_roots(lt_VM* vm)
 	}
 }
 
+/**
+ * Processes one pending asynchronous runtime task or timer and updates the event-loop state.
+ *
+ * @returns `1` if work was performed or pending activity remains, `0` otherwise.
+ */
 uint8_t lt_poll(lt_VM* vm)
 {
 	uint8_t did_work = 0;
