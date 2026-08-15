@@ -74,22 +74,19 @@ to the w64devkit root; the Taskfile loads that file without committing it.
 
 ### CI and release packages
 
-GitHub Actions builds and tests on Windows and Linux. It downloads the
+GitHub Actions builds and tests on Windows, Linux, and macOS. It downloads the
 pinned WebUI submodule and compiles WebUI without launching a GUI. Pull requests
-targeting `develop` produce per-PR development packages. Pushes to `develop`
-produce development packages after merges; pushes to `main` produce optimized
-release packages after merges from `develop`. The workflow can also be manually
-run for any ref, defaulting to `develop`, with either package type.
+targeting `develop` produce development packages; pushes to `main` produce
+release packages. The workflow can also be manually run for any ref, defaulting
+to `develop`.
 
-Each successful run attaches one self-contained package for every target to a
-rolling GitHub Release: `pr-<number>` for pull requests, `develop` for develop
-builds, and `main` for main builds.
+Each run uploads these packages for every target:
 
-* `little-windows-x64.zip` contains `little.exe`, `libs/json/json.dll`, and
-  `libs/webui/webui.dll`.
-* `little-linux-x64.zip` contains `little`, `libs/json/json.so`, and
-  `libs/webui/webui.so`.
-
+* `little-<target>.*` is the target CLI (`.exe` on Windows, no extension
+  elsewhere).
+* `nativelibs-<target>.zip` contains `json/json.<extension>` and
+  `webui/webui.<extension>`. Extract its contents into the directory where
+  native libraries are kept, then load them by path with `loadLibrary(...)`.
 
 #### Linux
 ```

@@ -102,7 +102,8 @@ if (!$SkipBuild) {
             Output = Join-Path $repo "tests/native/reenter$nativeExt"
         }
     )
-    $nativeFlags = @("-std=c11", "-shared", "-I", (Join-Path $repo "src"))
+    $sharedLibraryFlag = if ($IsMacOS) { "-dynamiclib" } else { "-shared" }
+    $nativeFlags = @("-std=c11", $sharedLibraryFlag, "-I", (Join-Path $repo "src"))
     $nativeFlags += $includeFlags
     if ($env:OS -ne "Windows_NT") {
         $nativeFlags += "-fPIC"
