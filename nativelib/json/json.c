@@ -190,6 +190,12 @@ static char* parse_string_raw(lt_VM* vm, JsonParser* parser)
                 else cp = 0xFFFD; /* lone high surrogate: replacement char */
             }
             else if (cp >= 0xDC00 && cp <= 0xDFFF) cp = 0xFFFD; /* lone low surrogate */
+            if (cp == 0)
+            {
+                /* Little strings are NUL-terminated and cannot represent U+0000. */
+                parser->failed = 1;
+                break;
+            }
             write_utf8(vm, &writer, cp);
             break;
         }

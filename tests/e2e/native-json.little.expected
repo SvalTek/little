@@ -14,3 +14,5 @@ A
 null
 [null,2,null]
 {"inf":null}
+true
+{"answer":42}
