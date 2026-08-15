@@ -75,6 +75,8 @@ jobs:
     name: Package Linux
     needs: test-linux
     runs-on: ubuntu-latest
+    outputs:
+      release_ready: ${{ steps.package-ready.outputs.ready }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,6 +94,11 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/package.ps1 -Target linux-x64 -Binary build/little-release.exe
+      - name: Mark package ready
+        id: package-ready
+        if: hashFiles('nativelib/json/json.c') != ''
+        shell: pwsh
+        run: '"ready=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append'
       - uses: actions/upload-artifact@v4
         if: hashFiles('nativelib/json/json.c') != ''
         with:
@@ -161,6 +168,8 @@ jobs:
     name: Package Windows
     needs: test-windows
     runs-on: windows-latest
+    outputs:
+      release_ready: ${{ steps.package-ready.outputs.ready }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -178,9 +187,77 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/package.ps1 -Target windows-x64 -Binary build/little-release.exe
+      - name: Mark package ready
+        id: package-ready
+        if: hashFiles('nativelib/json/json.c') != ''
+        shell: pwsh
+        run: '"ready=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append'
       - uses: actions/upload-artifact@v4
         if: hashFiles('nativelib/json/json.c') != ''
         with:
           name: little-windows-x64
           path: dist/little-windows-x64.zip
           if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [package-linux, package-windows]
+    if: needs.package-linux.outputs.release_ready == 'true' && needs.package-windows.outputs.release_ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: little-linux-x64
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: little-windows-x64
+          path: release
+      - name: Choose release
+        id: release
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          REF_NAME: ${{ github.ref_name }}
+          REQUESTED_REF: ${{ inputs.ref }}
+        run: |
+          if ($env:EVENT_NAME -eq 'pull_request') {
+            $tag = "pr-$env:PULL_REQUEST_NUMBER"
+            $title = "PR #$env:PULL_REQUEST_NUMBER development build"
+            $prerelease = 'true'
+          }
+          elseif ($env:REF_NAME -eq 'main' -or $env:REQUESTED_REF -match '(^|/)main$') {
+            $tag = 'main'
+            $title = 'Main release build'
+            $prerelease = 'false'
+          }
+          else {
+            $tag = 'develop'
+            $title = 'Develop build'
+            $prerelease = 'true'
+          }
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "title=$title" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "prerelease=$prerelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Publish ZIPs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TITLE: ${{ steps.release.outputs.title }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          $files = @('release/little-linux-x64.zip', 'release/little-windows-x64.zip')
+          gh release view $env:TAG 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG $files --clobber
+          }
+          elseif ($env:PRERELEASE -eq 'true') {
+            gh release create $env:TAG $files --title $env:TITLE --notes 'Automated development build.' --prerelease
+          }
+          else {
+            gh release create $env:TAG $files --title $env:TITLE --notes 'Automated main build.'
+          }

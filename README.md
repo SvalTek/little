@@ -81,7 +81,9 @@ produce development packages after merges; pushes to `main` produce optimized
 release packages after merges from `develop`. The workflow can also be manually
 run for any ref, defaulting to `develop`, with either package type.
 
-Each run uploads one self-contained package for every target:
+Each successful run attaches one self-contained package for every target to a
+rolling GitHub Release: `pr-<number>` for pull requests, `develop` for develop
+builds, and `main` for main builds.
 
 * `little-windows-x64.zip` contains `little.exe`, `libs/json/json.dll`, and
   `libs/webui/webui.dll`.
