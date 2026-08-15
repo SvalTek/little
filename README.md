@@ -58,13 +58,16 @@ The included Taskfile is the supported development workflow:
 ```powershell
 task build
 build/little.exe --help
+build/little.exe -i
 build/little.exe scripts/hello.little first-argument
 build/little.exe -e 'io.print("hello")'
 build/little.exe -I lib scripts/main.little
 build/little.exe -L native scripts/main.little
 ```
 
-The CLI accepts one script path, or `-e SOURCE` for a short inline program. It
+The CLI accepts one script path, `-e SOURCE` for a short inline program, or
+`-i` / `--interactive` for an editable interactive prompt. The prompt keeps
+its in-process command history; press Ctrl-C or Ctrl-D to leave it. It
 returns a non-zero exit code for command-line, file, parse, or runtime errors.
 Use `--help` to see its options and `--version` to see the linked API version.
 Use `-I DIRECTORY` (more than once if needed) to add source-module search paths
@@ -117,18 +120,10 @@ recognizes the older portable `libs/` directory beside the executable. A
 packaged library can be loaded by name, for example `loadLibrary("json")` or
 `loadLibrary("webui")`: the loader tries both `name.*` and `name/name.*`.
 
-#### Linux
-```
-gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_common.c src/little_std.c src/little_loadlib.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -lm -pthread -rdynamic -ldl -o little
-```
-
-#### Windows
-you need [msys2](https://www.msys2.org) _just follow the installation instructions_ 
-```powershell
-pacman -S mingw-w64-ucrt-x86_64-gcc
-
-gcc main.c src/little_buffer.c src/little.c src/little_common.c src/little_std.c src/little_loadlib.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -Wl,--export-all-symbols -o little
-```
+The supported build entry point is `build.ps1` (normally through `task build`).
+It builds the vendored PDCursesMod backend and links it statically into the
+CLI: WinCon on Windows and the VT backend on Linux. This keeps the interactive
+CLI self-contained and avoids a terminal-library DLL beside `little.exe`.
 ---
 ## Links
 * **[Language overview](doc/lt.md)**

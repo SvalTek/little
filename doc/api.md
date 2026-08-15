@@ -94,16 +94,42 @@ void lt_runloop(lt_VM* vm);
 Polls or drains asynchronous work owned by the VM, including promise callbacks, timers, and task completions. `lt_poll` returns non-zero while work was performed or remains pending.
 
 ---
+
+```c
+uint32_t lt_add_poll_hook(lt_VM* vm, lt_PollHook hook, void* context);
+void lt_remove_poll_hook(lt_VM* vm, uint32_t hook_id);
+```
+
+Native integrations can participate in the VM main loop by registering a host
+poll hook. The hook runs on the VM-owning thread whenever `lt_poll` runs, and
+returns one of `LT_POLL_IDLE`, `LT_POLL_WORK`, or `LT_POLL_PENDING`.
+
+Return `LT_POLL_WORK` after handling input or another event. Return
+`LT_POLL_PENDING` while the integration is waiting for work and needs
+`lt_runloop`/`mainloop.run()` to keep polling. Return `LT_POLL_IDLE` when it
+has no work and does not keep the loop alive. Remove the hook before releasing
+its context; a hook added during a callback first runs on the next poll.
+
+The registration ID is non-zero on success and can be passed to
+`lt_remove_poll_hook`. It is an API v3 addition, so native libraries should
+continue to check both `lt_Api.version` and `lt_Api.size` before using it.
+
+---
 ## Library loading
 
 ```c
 void ltstd_open_all(lt_VM* vm);
 void ltstd_open_loadlib(lt_VM* vm);
+void ltstd_open_term(lt_VM* vm);
 void ltasync_open_all(lt_VM* vm);
 ```
 The VM starts without standard libraries. Use `ltstd_open_all` for the traditional stdlib modules (`io`, `math`, `array`, `table`, `string`, `gc`, and core globals such as `pcall`, `unpack`, and `import`) and `ltasync_open_all` for optional Promise, timer, and task globals.
 
 `loadLibrary` is deliberately opt-in. Embedders that want scripts to load native code can call `ltstd_open_loadlib(vm)`. Embedders that do not call it will not expose the `loadLibrary` global. The CLI opens it because it is designed to run full local scripts.
+
+`ltstd_open_term(vm)` exposes the built-in `term` module. It is separate from
+`ltstd_open_all` because it owns an interactive terminal session; call
+`ltstd_close_term()` before destroying the VM when it may have been opened.
 
 `loadLibrary(path)` loads a platform-native library and calls its exported
 `ltopen(lt_VM* vm, const lt_Api* lt)` function. The `ltopen` function returns
@@ -118,9 +144,10 @@ check that the pointer is not `NULL`, `lt->version == LT_API_VERSION`, and
 `null` from `ltopen` rejects the library load.
 
 The table includes value constructors/accessors, table and array helpers,
-`exec`, `poll`, and promise inspection helpers. Native libraries that integrate
-with asynchronous host APIs should use those function pointers rather than
-linking against VM symbols or reading VM stack/frame internals.
+`exec`, `poll`, poll-hook registration, and promise inspection helpers. Native
+libraries that integrate with asynchronous host APIs should use those function
+pointers rather than linking against VM symbols or reading VM stack/frame
+internals.
 
 ---
 ```c

@@ -16,12 +16,21 @@ function Assert-Run([string]$Name, [string]$Expected, [scriptblock]$Command) {
     }
 }
 
+function Assert-Fails([string]$Name, [int]$ExpectedExit, [string]$ExpectedText, [scriptblock]$Command) {
+    $actual = Normalize((& $Command 2>&1 | Out-String))
+    if ($LASTEXITCODE -ne $ExpectedExit -or !$actual.Contains($ExpectedText)) {
+        throw "$Name failed.`nExpected exit: $ExpectedExit`nExpected text: $ExpectedText`nActual exit: $LASTEXITCODE`nActual:`n$actual"
+    }
+}
+
 $repo = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $repo "build"
 $nativeMath = Join-Path $repo "nativelib/native_math/build/native_math.dll"
 if (!(Test-Path $nativeMath)) {
     throw "Expected native test library at $nativeMath"
 }
+
+Assert-Fails "interactive source conflict" 2 "Usage: little" { & $Exe --no-config -i -e 'io.print("no")' }
 
 $script = Join-Path $build "cli-args.little"
 Set-Content -LiteralPath $script -NoNewline -Value @'

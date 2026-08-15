@@ -16,6 +16,8 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - nativelib/term/**
+      - vendor/pdcursesmod/**
     generates:
       - build/little.exe
 
@@ -27,6 +29,8 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - nativelib/term/**
+      - vendor/pdcursesmod/**
     generates:
       - build/little-baseline.exe
 
@@ -38,6 +42,8 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - nativelib/term/**
+      - vendor/pdcursesmod/**
     generates:
       - build/little-release.exe
 
@@ -49,6 +55,8 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - nativelib/term/**
+      - vendor/pdcursesmod/**
     generates:
       - build/little-small.exe
 
@@ -60,6 +68,8 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - nativelib/term/**
+      - vendor/pdcursesmod/**
     generates:
       - build/little-small-aggressive.exe
 

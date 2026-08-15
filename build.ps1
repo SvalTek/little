@@ -37,6 +37,19 @@ if ($LdFlags.Trim().Length -gt 0) {
     $extraLdFlags = $LdFlags -split '\s+'
 }
 
+$terminalVendor = Join-Path $repo "vendor/pdcursesmod"
+$terminalPort = if ($env:OS -eq "Windows_NT") { "wincon" } else { "vt" }
+$terminalDir = Join-Path $terminalVendor $terminalPort
+$make = if ($toolchainBin -and (Test-Path (Join-Path $toolchainBin "make.exe"))) { Join-Path $toolchainBin "make.exe" } else { "make" }
+if (!(Test-Path $terminalDir)) { throw "Expected terminal backend at $terminalDir" }
+$makeArgs = @("-C", $terminalDir, "PDCURSES_SRCDIR=..", "WIDE=Y", "UTF8=Y")
+if ($env:OS -eq "Windows_NT") { $makeArgs += "PREFIX=" }
+& $make $makeArgs
+if ($LASTEXITCODE -ne 0) { throw "Terminal backend build failed with exit code $LASTEXITCODE" }
+$terminalLibName = if ($env:OS -eq "Windows_NT") { "pdcurses.a" } else { "libpdcurses.a" }
+$terminalLib = Join-Path $terminalDir $terminalLibName
+$terminalFlags = if ($env:OS -eq "Windows_NT") { @("-lwinmm") } else { @() }
+
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 & $Compiler -std=c11 `
@@ -49,14 +62,20 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     (Join-Path $repo "src/little_std.c") `
     (Join-Path $repo "src/little_loadlib.c") `
     (Join-Path $repo "src/little_std_io.c") `
+    (Join-Path $repo "src/little_std_term.c") `
     (Join-Path $repo "src/little_std_math.c") `
     (Join-Path $repo "src/little_std_array.c") `
     (Join-Path $repo "src/little_std_table.c") `
     (Join-Path $repo "src/little_std_string.c") `
     (Join-Path $repo "src/little_std_gc.c") `
     (Join-Path $repo "src/little_async.c") `
+    (Join-Path $repo "nativelib/term/term.c") `
+    -I $terminalVendor `
+    -DPDC_FORCE_UTF8 `
     $threadFlags `
     $dynamicFlags `
+    $terminalLib `
+    $terminalFlags `
     -lm `
     $extraLdFlags `
     -o $outPath

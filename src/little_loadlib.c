@@ -80,10 +80,17 @@ static const lt_Api _lt_native_api = {
     lt_array_remove,
     lt_array_length,
     lt_poll,
+    lt_add_poll_hook,
+    lt_remove_poll_hook,
     _lt_api_is_promise,
     _lt_api_promise_state,
     _lt_api_promise_result,
 };
+
+const lt_Api* ltstd_native_api(void)
+{
+    return &_lt_native_api;
+}
 
 static const char* _lt_native_library_suffix(void)
 {

@@ -18,18 +18,30 @@
 
 static int had_error = 0;
 
+static char* copy_string(const char* value);
+
 static void error(lt_VM* vm, const char* msg)
 {
     (void)vm;
     had_error = 1;
+    /* A terminal program must never leave the caller in raw mode just because
+       the VM rejected a script. */
+    ltstd_close_term();
     printf("LT ERROR: %s\n", msg);
+}
+
+static void destroy_vm(lt_VM* vm)
+{
+    ltstd_close_term();
+    lt_destroy(vm);
 }
 
 static void print_usage(FILE* stream)
 {
     fprintf(stream,
-        "Usage: little [options] (-e SOURCE | FILE [ARG]...)\n"
+        "Usage: little [options] (-i | -e SOURCE | FILE [ARG]...)\n"
         "\n"
+        "  -i, --interactive      Start an interactive terminal session.\n"
         "  -e SOURCE              Execute Little source supplied on the command line.\n"
         "  -I, --module-path DIR  Add a source-module search directory. May be repeated.\n"
         "  -L, --library-path DIR Add a native-library search directory. May be repeated.\n"
@@ -38,6 +50,68 @@ static void print_usage(FILE* stream)
         "  -v, --version          Show the Little API version used by this CLI.\n"
         "  -h, --help             Show this help.\n"
         "  --                     Stop option processing; remaining values are script arguments.\n");
+}
+
+static int call_term(lt_VM* vm, const char* name, const char* prompt, lt_Value* result)
+{
+    lt_Value term = lt_table_get(vm, vm->global, lt_make_string(vm, "term"));
+    lt_Value function = lt_table_get(vm, term, lt_make_string(vm, name));
+    uint8_t argc = prompt ? 1 : 0;
+    if (prompt) lt_push(vm, lt_make_string(vm, prompt));
+    uint16_t returns = lt_exec(vm, function, argc);
+    if (had_error) return 0;
+
+    if (result)
+    {
+        *result = returns ? lt_pop(vm) : LT_VALUE_NULL;
+        while (returns > 1)
+        {
+            lt_pop(vm);
+            returns--;
+        }
+    }
+    else while (returns-- > 0) lt_pop(vm);
+    return 1;
+}
+
+static int run_repl(lt_VM* vm)
+{
+    printf("little API %d interactive mode (Ctrl-C or Ctrl-D to exit)\n", LT_API_VERSION);
+    for (;;)
+    {
+        lt_Value line = LT_VALUE_NULL;
+        char* source;
+        uint32_t nreturn;
+
+        if (!call_term(vm, "open", 0, 0)) return 0;
+        if (!call_term(vm, "readLine", "little> ", &line)) return 0;
+        if (!call_term(vm, "close", 0, 0)) return 0;
+        if (LT_IS_NULL(line)) return 1;
+
+        /* readLine's return value is no longer on the VM stack. Keep a host
+           copy so compiling the entry cannot collect the string underneath us. */
+        source = copy_string(lt_get_string(vm, line));
+        if (!source)
+        {
+            fprintf(stderr, "ERROR: Failed to allocate interactive input\n");
+            return 0;
+        }
+        nreturn = lt_dostring(vm, source, "<interactive>");
+        free(source);
+        if (had_error)
+        {
+            /* A bad entry must not end the interactive session. */
+            had_error = 0;
+            continue;
+        }
+
+        while (nreturn-- > 0)
+        {
+            char* returned = ltstd_tostring(vm, lt_pop(vm));
+            printf("%s\n", returned);
+            free(returned);
+        }
+    }
 }
 
 static char* copy_string(const char* value)
@@ -308,6 +382,7 @@ int main(int argc, char** argv)
     uint32_t library_path_count = 0;
     const char* config_path = NULL;
     int no_config = 0;
+    int interactive = 0;
     int script_arg_count = 0;
     char** script_args = NULL;
 
@@ -372,9 +447,22 @@ int main(int argc, char** argv)
         {
             no_config = 1;
         }
+        else if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--interactive") == 0)
+        {
+            if (source || interactive)
+            {
+                print_usage(stderr);
+                free(module_paths);
+                free(library_paths);
+                return 2;
+            }
+            interactive = 1;
+            module_name = "<interactive>";
+            script_name = "<interactive>";
+        }
         else if (strcmp(argv[i], "-e") == 0)
         {
-            if (source || ++i >= argc)
+            if (source || interactive || ++i >= argc)
             {
                 print_usage(stderr);
                 free(module_paths);
@@ -387,7 +475,7 @@ int main(int argc, char** argv)
         }
         else if (strcmp(argv[i], "--") == 0)
         {
-            if (++i >= argc || source)
+            if (++i >= argc || source || interactive)
             {
                 print_usage(stderr);
                 free(module_paths);
@@ -415,7 +503,7 @@ int main(int argc, char** argv)
             free(library_paths);
             return 2;
         }
-        else if (source)
+        else if (source || interactive)
         {
             print_usage(stderr);
             free(module_paths);
@@ -440,7 +528,7 @@ int main(int argc, char** argv)
         }
     }
 
-    if (!source)
+    if (!source && !interactive)
     {
         print_usage(stderr);
         free(module_paths);
@@ -460,6 +548,7 @@ int main(int argc, char** argv)
     }
     ltstd_open_all(vm);
     ltstd_open_loadlib(vm);
+    ltstd_open_term(vm);
     ltasync_open_all(vm);
 
     had_error = 0;
@@ -468,7 +557,7 @@ int main(int argc, char** argv)
     {
         fprintf(stderr, "ERROR: Failed to configure default library paths\n");
         free(executable);
-        lt_destroy(vm);
+        destroy_vm(vm);
         free(file_source);
         free(module_paths);
         free(library_paths);
@@ -480,7 +569,7 @@ int main(int argc, char** argv)
         if (!load_config(vm, config_path, 1))
         {
             free(executable);
-            lt_destroy(vm);
+            destroy_vm(vm);
             free(file_source);
             free(module_paths);
             free(library_paths);
@@ -497,7 +586,7 @@ int main(int argc, char** argv)
             {
                 free(user_config);
                 free(executable);
-                lt_destroy(vm);
+                destroy_vm(vm);
                 free(file_source);
                 free(module_paths);
                 free(library_paths);
@@ -512,7 +601,7 @@ int main(int argc, char** argv)
         {
             free(local_config);
             free(executable);
-            lt_destroy(vm);
+            destroy_vm(vm);
             free(file_source);
             free(module_paths);
             free(library_paths);
@@ -526,7 +615,7 @@ int main(int argc, char** argv)
     {
         if (!add_module_path(vm, module_paths[i]))
         {
-            lt_destroy(vm);
+            destroy_vm(vm);
             free(file_source);
             free(module_paths);
             free(library_paths);
@@ -538,17 +627,24 @@ int main(int argc, char** argv)
 
     set_script_args(vm, script_name, script_arg_count, script_args);
 
-    uint32_t nreturn = lt_dostring(vm, source, module_name);
-    if (!had_error) lt_runloop(vm);
-
-    while (!had_error && nreturn-- > 0)
+    if (interactive)
     {
-        char* returned = ltstd_tostring(vm, lt_pop(vm));
-        printf("Returned: %s\n", returned);
-        free(returned);
+        if (!run_repl(vm)) had_error = 1;
+    }
+    else
+    {
+        uint32_t nreturn = lt_dostring(vm, source, module_name);
+        if (!had_error) lt_runloop(vm);
+
+        while (!had_error && nreturn-- > 0)
+        {
+            char* returned = ltstd_tostring(vm, lt_pop(vm));
+            printf("Returned: %s\n", returned);
+            free(returned);
+        }
     }
 
-    lt_destroy(vm);
+    destroy_vm(vm);
     free(file_source);
     free(module_paths);
     free(library_paths);

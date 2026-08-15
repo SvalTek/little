@@ -431,6 +431,17 @@ typedef struct lt_Api lt_Api;
 
 typedef uint8_t(*lt_NativeFn)(lt_VM* vm, uint8_t argc);
 
+/* A host poll hook is called by lt_poll on the VM's owning thread. Return
+   LT_POLL_WORK when it handled input, LT_POLL_PENDING while it needs the
+   mainloop to keep running, or LT_POLL_IDLE when it has nothing to do. */
+typedef enum {
+	LT_POLL_IDLE,
+	LT_POLL_WORK,
+	LT_POLL_PENDING,
+} lt_PollResult;
+
+typedef lt_PollResult(*lt_PollHook)(lt_VM* vm, void* context);
+
 typedef struct lt_Object {
 	lt_ObjectType type;
 
@@ -549,8 +560,10 @@ struct lt_VM {
 	lt_Buffer async_calls;
 	lt_Buffer timers;
 	lt_Buffer workers;
+	lt_Buffer poll_hooks;
 	lt_Buffer native_libraries;
 	uint32_t next_timer_id;
+	uint32_t next_poll_hook_id;
 	uint8_t runloop_stop;
 	uint8_t last_call_returns;
 
@@ -589,6 +602,8 @@ void lt_setupval(lt_VM* vm, uint8_t idx, lt_Value val);
 uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc);
 uint8_t lt_poll(lt_VM* vm);
 void lt_runloop(lt_VM* vm);
+uint32_t lt_add_poll_hook(lt_VM* vm, lt_PollHook hook, void* context);
+void lt_remove_poll_hook(lt_VM* vm, uint32_t hook_id);
 void lt_error(lt_VM* vm, const char* msg);
 void lt_runtime_error(lt_VM* vm, const char* message);
 
@@ -628,7 +643,7 @@ lt_Value lt_make_native(lt_VM* vm, lt_NativeFn fn);
 lt_Value lt_make_ptr(lt_VM* vm, void* ptr);
 void* lt_get_ptr(lt_Value ptr);
 
-#define LT_API_VERSION 2
+#define LT_API_VERSION 3
 
 struct lt_Api {
 	uint32_t version;
@@ -665,6 +680,8 @@ struct lt_Api {
 	uint32_t (*array_length)(lt_Value array);
 
 	uint8_t (*poll)(lt_VM* vm);
+	uint32_t (*add_poll_hook)(lt_VM* vm, lt_PollHook hook, void* context);
+	void (*remove_poll_hook)(lt_VM* vm, uint32_t hook_id);
 	uint8_t (*is_promise)(lt_Value value);
 	lt_PromiseState (*promise_state)(lt_Value value);
 	lt_Value (*promise_result)(lt_Value value);

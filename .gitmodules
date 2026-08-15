@@ -1,3 +1,6 @@
 [submodule "vendor/webui"]
 	path = vendor/webui
 	url = https://github.com/webui-dev/webui.git
+[submodule "vendor/pdcursesmod"]
+	path = vendor/pdcursesmod
+	url = https://github.com/Bill-Gray/PDCursesMod.git

@@ -15,6 +15,7 @@ uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc);
 void ltasync_init_state(lt_VM* vm);
 void ltasync_destroy_state(lt_VM* vm);
 void ltasync_mark_roots(lt_VM* vm);
+uint8_t ltasync_poll_hooks(lt_VM* vm, uint8_t* pending);
 void ltasync_mark_promise(lt_VM* vm, lt_Object* promise);
 void ltasync_free_promise(lt_VM* vm, lt_Object* promise);
 lt_Value ltasync_get_promise_method(lt_VM* vm, lt_Value promise, lt_Value key);

@@ -61,6 +61,13 @@ typedef struct {
 	uint8_t cancelled;
 } lt_Timer;
 
+typedef struct {
+	uint32_t id;
+	lt_PollHook hook;
+	void* context;
+	uint8_t removed;
+} lt_PollHookEntry;
+
 typedef enum {
 	LT_SHARED_TABLE,
 	LT_SHARED_ARRAY,
@@ -1118,7 +1125,9 @@ void ltasync_init_state(lt_VM* vm)
 	vm->async_calls = lt_buffer_new(sizeof(lt_AsyncCall));
 	vm->timers = lt_buffer_new(sizeof(lt_Timer));
 	vm->workers = lt_buffer_new(sizeof(lt_Worker*));
+	vm->poll_hooks = lt_buffer_new(sizeof(lt_PollHookEntry));
 	vm->next_timer_id = 1;
+	vm->next_poll_hook_id = 1;
 	vm->runloop_stop = 0;
 }
 
@@ -1155,6 +1164,54 @@ void ltasync_destroy_state(lt_VM* vm)
 	lt_buffer_destroy(vm, &vm->async_calls);
 	lt_buffer_destroy(vm, &vm->timers);
 	lt_buffer_destroy(vm, &vm->workers);
+	lt_buffer_destroy(vm, &vm->poll_hooks);
+}
+
+uint32_t lt_add_poll_hook(lt_VM* vm, lt_PollHook hook, void* context)
+{
+	if (!hook) return 0;
+	uint32_t id = vm->next_poll_hook_id++;
+	if (id == 0) id = vm->next_poll_hook_id++;
+	lt_PollHookEntry entry = { id, hook, context, 0 };
+	lt_buffer_push(vm, &vm->poll_hooks, &entry);
+	return id;
+}
+
+void lt_remove_poll_hook(lt_VM* vm, uint32_t hook_id)
+{
+	if (hook_id == 0) return;
+	for (uint32_t i = 0; i < vm->poll_hooks.length; ++i)
+	{
+		lt_PollHookEntry* entry = lt_buffer_at(&vm->poll_hooks, i);
+		if (entry->id == hook_id)
+		{
+			entry->removed = 1;
+			return;
+		}
+	}
+}
+
+uint8_t ltasync_poll_hooks(lt_VM* vm, uint8_t* pending)
+{
+	uint8_t did_work = 0;
+	/* Hooks added by a callback begin on the next poll. This also prevents a
+	   callback which registers another hook from extending this dispatch. */
+	uint32_t hook_count = vm->poll_hooks.length;
+	for (uint32_t i = 0; i < hook_count; ++i)
+	{
+		lt_PollHookEntry entry = *(lt_PollHookEntry*)lt_buffer_at(&vm->poll_hooks, i);
+		if (entry.removed) continue;
+		lt_PollResult result = entry.hook(vm, entry.context);
+		if (result == LT_POLL_WORK) did_work = 1;
+		if (result == LT_POLL_WORK || result == LT_POLL_PENDING) *pending = 1;
+	}
+
+	for (uint32_t i = 0; i < vm->poll_hooks.length; ++i)
+	{
+		lt_PollHookEntry* entry = lt_buffer_at(&vm->poll_hooks, i);
+		if (entry->removed) lt_buffer_cycle(&vm->poll_hooks, i--);
+	}
+	return did_work;
 }
 
 void ltasync_free_promise(lt_VM* vm, lt_Object* promise)
@@ -1212,6 +1269,7 @@ uint8_t lt_poll(lt_VM* vm)
 	uint8_t has_pending = 0;
 	uint8_t has_next_timer = 0;
 	uint64_t next_timer_due = 0;
+	did_work = ltasync_poll_hooks(vm, &has_pending);
 
 	if (vm->async_calls.length > 0)
 	{
