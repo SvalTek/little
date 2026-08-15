@@ -150,21 +150,6 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
       - uses: go-task/setup-task@v2
-      - name: Install C toolchain
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: mingw-w64-ucrt-x86_64-gcc
-      - name: Configure toolchain
-        shell: pwsh
-        run: |
-          $gcc = Get-ChildItem -Path $env:RUNNER_TEMP -Filter gcc.exe -Recurse |
-            Where-Object FullName -Match '[\\/]ucrt64[\\/]bin[\\/]gcc\.exe$' |
-            Select-Object -First 1
-          if (!$gcc) { throw 'MSYS2 UCRT64 gcc.exe was not found.' }
-          $gccPath = Split-Path $gcc.DirectoryName
-          Set-Content -Encoding utf8 .env "GCC_PATH=$gccPath"
       - uses: actions/download-artifact@v4
         with:
           name: build-windows-x64
