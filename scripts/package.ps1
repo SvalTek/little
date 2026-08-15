@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[a-z0-9][a-z0-9-]*$')]
-    [string]$Target
+    [string]$Target,
+    [string]$Binary = "build/little.exe"
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $nativeExt = if ($env:OS -eq "Windows_NT") { ".dll" } elseif ($IsMacOS) { ".dylib" } else { ".so" }
 $binaryExt = if ($env:OS -eq "Windows_NT") { ".exe" } else { "" }
-$binarySource = Join-Path $repo "build/little.exe"
+$binarySource = Join-Path $repo $Binary
 $dist = Join-Path $repo "dist"
 $packageStage = Join-Path $repo "build/package-$Target"
 
