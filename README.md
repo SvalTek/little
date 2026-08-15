@@ -53,6 +53,41 @@ int main(char** argv, int argc)
 ---
 ## Compiling
 
+The included Taskfile is the supported development workflow:
+
+```powershell
+task build
+build/little.exe --help
+build/little.exe scripts/hello.little
+build/little.exe -e 'io.print("hello")'
+build/little.exe -I lib scripts/main.little
+```
+
+The CLI accepts one script path, or `-e SOURCE` for a short inline program. It
+returns a non-zero exit code for command-line, file, parse, or runtime errors.
+Use `--help` to see its options and `--version` to see the linked API version.
+Use `-I DIRECTORY` (more than once if needed) to add source-module search paths
+without baking those local launch details into the script.
+
+For a local Windows compiler, copy `.env.example` to `.env` and set `GCC_PATH`
+to the w64devkit root; the Taskfile loads that file without committing it.
+
+### CI and release packages
+
+GitHub Actions builds and tests on Windows and Linux. It downloads the
+pinned WebUI submodule and compiles WebUI without launching a GUI. Pull requests
+targeting `develop` produce per-PR development packages. Pushes to `develop`
+produce development packages after merges; pushes to `main` produce optimized
+release packages after merges from `develop`. The workflow can also be manually
+run for any ref, defaulting to `develop`, with either package type.
+
+Each run uploads one self-contained package for every target:
+
+* `little-windows-x64.zip` contains `little.exe`, `libs/json/json.dll`, and
+  `libs/webui/webui.dll`.
+* `little-linux-x64.zip` contains `little`, `libs/json/json.so`, and
+  `libs/webui/webui.so`.
+
 #### Linux
 ```
 gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_std.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -lm -pthread -o little

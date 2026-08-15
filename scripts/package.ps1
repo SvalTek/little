@@ -11,7 +11,7 @@ $nativeExt = if ($env:OS -eq "Windows_NT") { ".dll" } elseif ($IsMacOS) { ".dyli
 $binaryExt = if ($env:OS -eq "Windows_NT") { ".exe" } else { "" }
 $binarySource = Join-Path $repo "build/little.exe"
 $dist = Join-Path $repo "dist"
-$nativeStage = Join-Path $repo "build/nativelibs-$Target"
+$packageStage = Join-Path $repo "build/package-$Target"
 
 if (!(Test-Path $binarySource)) {
     throw "Expected built CLI at $binarySource"
@@ -24,21 +24,20 @@ foreach ($library in @("json", "webui")) {
     }
 }
 
-if (Test-Path $nativeStage) {
-    Remove-Item -Recurse -Force -LiteralPath $nativeStage
+if (Test-Path $packageStage) {
+    Remove-Item -Recurse -Force -LiteralPath $packageStage
 }
-New-Item -ItemType Directory -Force -Path $nativeStage, $dist | Out-Null
-Copy-Item -LiteralPath $binarySource -Destination (Join-Path $dist "little-$Target$binaryExt")
+New-Item -ItemType Directory -Force -Path $packageStage, $dist | Out-Null
+Copy-Item -LiteralPath $binarySource -Destination (Join-Path $packageStage "little$binaryExt")
 
 foreach ($library in @("json", "webui")) {
-    $libraryStage = Join-Path $nativeStage $library
+    $libraryStage = Join-Path $packageStage "libs/$library"
     New-Item -ItemType Directory -Force -Path $libraryStage | Out-Null
     Copy-Item -LiteralPath (Join-Path $repo "nativelib/$library/build/$library$nativeExt") -Destination (Join-Path $libraryStage "$library$nativeExt")
 }
 
-$nativeZip = Join-Path $dist "nativelibs-$Target.zip"
-Remove-Item -Force -LiteralPath $nativeZip -ErrorAction SilentlyContinue
-Compress-Archive -Path (Join-Path $nativeStage "*") -DestinationPath $nativeZip
+$packageZip = Join-Path $dist "little-$Target.zip"
+Remove-Item -Force -LiteralPath $packageZip -ErrorAction SilentlyContinue
+Compress-Archive -Path (Join-Path $packageStage "*") -DestinationPath $packageZip
 
-Write-Host "Created $(Join-Path $dist "little-$Target$binaryExt")"
-Write-Host "Created $nativeZip"
+Write-Host "Created $packageZip"
