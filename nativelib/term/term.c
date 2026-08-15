@@ -169,11 +169,7 @@ void lt_term_update_composer(const char* text)
 
 void lt_term_commit_composer(void)
 {
-    const char* line;
-    const char* end;
-    char segment[TERM_MAX_LINE];
     if (!state.active || !state.composer_active) return;
-    line = state.composer ? state.composer : "";
     {
         int rows, columns;
         getmaxyx(stdscr, rows, columns);
@@ -186,30 +182,7 @@ void lt_term_commit_composer(void)
     }
     state.composer = 0;
     state.composer_active = 0;
-    lt_term_write_output(">> \"\"\"\n");
-    while (*line)
-    {
-        size_t length;
-        end = strchr(line, '\n');
-        length = end ? (size_t)(end - line) : strlen(line);
-        if (length >= sizeof(segment)) length = sizeof(segment) - 1;
-        memcpy(segment, line, length);
-        segment[length] = 0;
-        lt_term_write_output(">> ");
-        if (end)
-        {
-            lt_term_write_output(segment);
-            lt_term_write_output("\n");
-            line = end + 1;
-        }
-        else
-        {
-            lt_term_write_output(segment);
-            lt_term_write_output("\n");
-            break;
-        }
-    }
-    lt_term_write_output(">> \"\"\"\n");
+    refresh();
 }
 
 /* One event per turn keeps terminal callbacks fair with timers and promises. */

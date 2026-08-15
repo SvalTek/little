@@ -70,7 +70,8 @@ The CLI accepts one script path, `-e SOURCE` for a short inline program, or
 its in-process command history and reserves its `>> ` bottom line while output
 scrolls above it. Enter `"""` to start a multiline capture; entering `"""`
 again submits and runs the captured chunk. Capture lines grow upward from the
-bottom and are retained in the terminal transcript. Press Ctrl-C or Ctrl-D to leave it. It
+bottom while they are being edited, then clear before the output is shown.
+Press Ctrl-C or Ctrl-D to leave it. It
 returns a non-zero exit code for command-line, file, parse, or runtime errors.
 Use `--help` to see its options and `--version` to see the linked API version.
 Use `-I DIRECTORY` (more than once if needed) to add source-module search paths
