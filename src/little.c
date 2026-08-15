@@ -8,13 +8,12 @@
 
 static lt_Value LT_NULL = LT_VALUE_NULL;
 
-/* if running on linux */
-#if defined(__linux__) || defined(__linux) || defined(linux) || defined(__gnu_linux__)
+/* Microsoft provides these bounds-checked functions; provide the small subset
+ * Little uses on other C runtimes. */
+#if !defined(_WIN32)
 #include <stdarg.h>
 
-typedef unsigned long rsize_t;
-
-int sprintf_s(char *restrict buffer, rsize_t bufsz, const char *restrict format, ... )
+static int sprintf_s(char *restrict buffer, size_t bufsz, const char *restrict format, ...)
 {
 	va_list args;
     va_start(args, format);
@@ -23,9 +22,17 @@ int sprintf_s(char *restrict buffer, rsize_t bufsz, const char *restrict format,
 	return r;
 }
 
-int strncpy_s( char *restrict dest, rsize_t destsz, const char *restrict src, rsize_t count )
+static int strncpy_s(char *restrict dest, size_t destsz, const char *restrict src, size_t count)
 {
-	strncpy(dest, src, count);
+	if (!destsz) return 1;
+	if (!src) {
+		dest[0] = 0;
+		return 1;
+	}
+
+	if (count >= destsz) count = destsz - 1;
+	memcpy(dest, src, count);
+	dest[count] = 0;
 	return 0;
 }
 #endif
