@@ -1,2 +1,12 @@
 build/
+dist/
 .task/
+vendor/*
+!vendor/webui/
+!vendor/webui/**
+.env
+!.env.example
+tests/native/reenter.dll
+tests/native/reenter.so
+tests/native/reenter.dylib
+.little-user-lab/

@@ -1,5 +1,7 @@
 version: '3'
 
+dotenv: ['.env']
+
 tasks:
   default:
     desc: Show available tasks
@@ -9,7 +11,7 @@ tasks:
   build:
     desc: Build the baseline little CLI into build/little.exe
     cmds:
-      - powershell -ExecutionPolicy Bypass -File ./build.ps1
+      - pwsh -ExecutionPolicy Bypass -File ./build.ps1
     sources:
       - main.c
       - src/*.c
@@ -20,7 +22,7 @@ tasks:
   build:baseline:
     desc: Build baseline CLI into build/little-baseline.exe
     cmds:
-      - powershell -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-baseline.exe
+      - pwsh -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-baseline.exe
     sources:
       - main.c
       - src/*.c
@@ -31,7 +33,7 @@ tasks:
   build:release:
     desc: Build normal release CLI with -O2 -DNDEBUG -s
     cmds:
-      - powershell -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-release.exe -CFlags "-O2 -DNDEBUG" -LdFlags "-s"
+      - pwsh -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-release.exe -CFlags "-O2 -DNDEBUG" -LdFlags "-s"
     sources:
       - main.c
       - src/*.c
@@ -42,7 +44,7 @@ tasks:
   build:small:
     desc: Build small release CLI with -Os -DNDEBUG -s
     cmds:
-      - powershell -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-small.exe -CFlags "-Os -DNDEBUG" -LdFlags "-s"
+      - pwsh -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-small.exe -CFlags "-Os -DNDEBUG" -LdFlags "-s"
     sources:
       - main.c
       - src/*.c
@@ -53,7 +55,7 @@ tasks:
   build:small-aggressive:
     desc: Build aggressive small release CLI with LTO, function section GC, and no unwind tables
     cmds:
-      - powershell -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-small-aggressive.exe -CFlags "-Os -DNDEBUG -flto -ffunction-sections -fno-asynchronous-unwind-tables -fno-unwind-tables" -LdFlags "-flto -Wl,--gc-sections -s"
+      - pwsh -ExecutionPolicy Bypass -File ./build.ps1 -Output build/little-small-aggressive.exe -CFlags "-Os -DNDEBUG -flto -ffunction-sections -fno-asynchronous-unwind-tables -fno-unwind-tables" -LdFlags "-flto -Wl,--gc-sections -s"
     sources:
       - main.c
       - src/*.c
@@ -69,25 +71,54 @@ tasks:
       - build:small
       - build:small-aggressive
 
+  build:nativelibs:
+    desc: Build optional native libraries
+    cmds:
+      - pwsh -ExecutionPolicy Bypass -File ./nativelib/build.ps1
+    sources:
+      - nativelib/**/*.c
+      - src/*.h
+      - vendor/webui/**
+    generates:
+      - nativelib/json/build/json.dll
+      - nativelib/json/build/json.so
+      - nativelib/json/build/json.dylib
+
   sizes:
     desc: Build release-size variants and print artifact sizes
     deps: [build:variants]
     cmds:
-      - powershell -NoProfile -Command "Get-Item build/little-baseline.exe, build/little-release.exe, build/little-small.exe, build/little-small-aggressive.exe | Sort-Object Name | Format-Table Name,Length"
+      - pwsh -NoProfile -Command "Get-Item build/little-baseline.exe, build/little-release.exe, build/little-small.exe, build/little-small-aggressive.exe | Sort-Object Name | Format-Table Name,Length"
 
   test:
     desc: Run end-to-end language tests
     deps: [build]
     cmds:
-      - powershell -ExecutionPolicy Bypass -File ./test.ps1
+      - pwsh -ExecutionPolicy Bypass -File ./test.ps1
 
   scripts:
     desc: Run the runnable Little scripts
     deps: [build]
     cmds:
-      - powershell -ExecutionPolicy Bypass -File ./scripts/run.ps1
+      - pwsh -ExecutionPolicy Bypass -File ./scripts/run.ps1
+
+  package:
+    desc: Package the built CLI and native libraries for one platform target
+    deps: [build, build:nativelibs]
+    requires:
+      vars: [TARGET]
+    cmds:
+      - pwsh -ExecutionPolicy Bypass -File ./scripts/package.ps1 -Target {{.TARGET}}
+
+  package:release:
+    desc: Package the optimized release CLI and native libraries for one platform target
+    deps: [build:release, build:nativelibs]
+    requires:
+      vars: [TARGET]
+    cmds:
+      - pwsh -ExecutionPolicy Bypass -File ./scripts/package.ps1 -Target {{.TARGET}} -Binary build/little-release.exe
 
   clean:
     desc: Remove generated build output
     cmds:
-      - powershell -NoProfile -Command "if (Test-Path build) { Remove-Item -Recurse -Force build }"
+      - pwsh -NoProfile -Command "if (Test-Path build) { Remove-Item -Recurse -Force build }; Get-ChildItem nativelib -Directory -ErrorAction SilentlyContinue | ForEach-Object { $nativeBuild = Join-Path $_.FullName 'build'; if (Test-Path $nativeBuild) { Remove-Item -Recurse -Force $nativeBuild } }"
