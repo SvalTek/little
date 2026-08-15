@@ -1,4 +1,4 @@
-name: Build and test
+name: Build, test, and package
 
 on:
   pull_request:
@@ -28,35 +28,93 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify-and-package:
-    name: ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux-x64
-          - os: windows-latest
-            target: windows-x64
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.sha }}
           submodules: recursive
-
       - uses: go-task/setup-task@v2
+      - name: Build CLI
+        run: task build
+      - name: Build release CLI
+        if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release')
+        run: task build:release
+      - name: Build native libraries
+        if: hashFiles('nativelib/json/json.c') != ''
+        run: task build:nativelibs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-x64
+          path: |
+            build/little.exe
+            build/little-release.exe
+            nativelib/json/build/json.so
+            nativelib/webui/build/webui.so
+          if-no-files-found: error
 
-      - name: Install Windows C toolchain
-        if: runner.os == 'Windows'
+  test-linux:
+    name: Test Linux
+    needs: build-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: go-task/setup-task@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-linux-x64
+          path: .
+      - name: Run tests
+        run: task test
+
+  package-linux:
+    name: Package Linux
+    needs: test-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-linux-x64
+          path: .
+      - name: Create development package
+        if: hashFiles('nativelib/json/json.c') != '' && github.ref != 'refs/heads/main' && !(github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release')
+        shell: pwsh
+        run: ./scripts/package.ps1 -Target linux-x64
+      - name: Create release package
+        if: hashFiles('nativelib/json/json.c') != '' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release'))
+        shell: pwsh
+        run: |
+          ./scripts/package.ps1 -Target linux-x64 -Binary build/little-release.exe
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('nativelib/json/json.c') != ''
+        with:
+          name: little-linux-x64
+          path: dist/little-linux-x64.zip
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          submodules: recursive
+      - uses: go-task/setup-task@v2
+      - name: Install C toolchain
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: true
           install: mingw-w64-ucrt-x86_64-gcc
-
-      - name: Configure Windows toolchain
-        if: runner.os == 'Windows'
+      - name: Configure toolchain
         shell: pwsh
         run: |
           $gcc = Get-ChildItem -Path $env:RUNNER_TEMP -Filter gcc.exe -Recurse |
@@ -65,21 +123,79 @@ jobs:
           if (!$gcc) { throw 'MSYS2 UCRT64 gcc.exe was not found.' }
           $gccPath = Split-Path $gcc.DirectoryName
           Set-Content -Encoding utf8 .env "GCC_PATH=$gccPath"
+      - name: Build CLI
+        run: task build
+      - name: Build release CLI
+        if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release')
+        run: task build:release
+      - name: Build native libraries
+        if: hashFiles('nativelib/json/json.c') != ''
+        run: task build:nativelibs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-windows-x64
+          path: |
+            build/little.exe
+            build/little-release.exe
+            nativelib/json/build/json.dll
+            nativelib/webui/build/webui.dll
+          if-no-files-found: error
 
+  test-windows:
+    name: Test Windows
+    needs: build-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: go-task/setup-task@v2
+      - name: Install C toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+      - name: Configure toolchain
+        shell: pwsh
+        run: |
+          $gcc = Get-ChildItem -Path $env:RUNNER_TEMP -Filter gcc.exe -Recurse |
+            Where-Object FullName -Match '[\\/]ucrt64[\\/]bin[\\/]gcc\.exe$' |
+            Select-Object -First 1
+          if (!$gcc) { throw 'MSYS2 UCRT64 gcc.exe was not found.' }
+          $gccPath = Split-Path $gcc.DirectoryName
+          Set-Content -Encoding utf8 .env "GCC_PATH=$gccPath"
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-windows-x64
+          path: .
       - name: Run tests
         run: task test
 
-      - name: Package development CLI and native libraries
+  package-windows:
+    name: Package Windows
+    needs: test-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-windows-x64
+          path: .
+      - name: Create development package
         if: hashFiles('nativelib/json/json.c') != '' && github.ref != 'refs/heads/main' && !(github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release')
-        run: task package TARGET=${{ matrix.target }}
-
-      - name: Package release CLI and native libraries
+        shell: pwsh
+        run: ./scripts/package.ps1 -Target windows-x64
+      - name: Create release package
         if: hashFiles('nativelib/json/json.c') != '' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release'))
-        run: task package:release TARGET=${{ matrix.target }}
-
+        shell: pwsh
+        run: |
+          ./scripts/package.ps1 -Target windows-x64 -Binary build/little-release.exe
       - uses: actions/upload-artifact@v4
         if: hashFiles('nativelib/json/json.c') != ''
         with:
-          name: little-${{ matrix.target }}
-          path: dist/little-${{ matrix.target }}.zip
+          name: little-windows-x64
+          path: dist/little-windows-x64.zip
           if-no-files-found: error
