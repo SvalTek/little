@@ -23,6 +23,8 @@ typedef struct
     uint32_t poll_hook;
     uint8_t active;
     uint8_t callback_set;
+    int output_x;
+    int output_y;
     char history[TERM_HISTORY_CAPACITY][TERM_MAX_LINE];
     uint8_t history_count;
 } TermState;
@@ -97,6 +99,60 @@ static int next_key(void)
     return getch();
 }
 
+static void configure_output_region(void)
+{
+    int rows, columns;
+    getmaxyx(stdscr, rows, columns);
+    (void)columns;
+    if (rows > 1)
+    {
+        setscrreg(0, rows - 2);
+        scrollok(stdscr, TRUE);
+    }
+}
+
+static void output_newline(void)
+{
+    int rows, columns;
+    getmaxyx(stdscr, rows, columns);
+    (void)columns;
+    if (rows <= 1) return;
+    if (state.output_y >= rows - 2)
+    {
+        move(rows - 2, 0);
+        scroll(stdscr);
+        state.output_y = rows - 2;
+    }
+    else state.output_y++;
+    state.output_x = 0;
+    move(state.output_y, state.output_x);
+}
+
+uint8_t lt_term_write_output(const char* text)
+{
+    int rows, columns;
+    if (!state.active || !text) return 0;
+    getmaxyx(stdscr, rows, columns);
+    if (rows <= 1 || columns <= 0) return 0;
+    configure_output_region();
+    if (state.output_y > rows - 2) state.output_y = rows - 2;
+    if (state.output_x >= columns) state.output_x = 0;
+    move(state.output_y, state.output_x);
+    for (; *text; ++text)
+    {
+        if (*text == '\r') continue;
+        if (*text == '\n') output_newline();
+        else
+        {
+            addch((unsigned char)*text);
+            state.output_x++;
+            if (state.output_x >= columns) output_newline();
+        }
+    }
+    refresh();
+    return 1;
+}
+
 /* One event per turn keeps terminal callbacks fair with timers and promises. */
 static lt_PollResult term_poll_hook(lt_VM* vm, void* context)
 {
@@ -135,6 +191,10 @@ static uint8_t term_open(lt_VM* vm, uint8_t argc)
         }
         state.vm = vm;
         state.active = 1;
+        erase();
+        configure_output_region();
+        state.output_x = 0;
+        state.output_y = 0;
         state.poll_hook = lt->add_poll_hook(vm, term_poll_hook, &state);
     }
     else if (state.vm != vm) lt->runtime_error(vm, "The terminal is already owned by another Little VM!");
@@ -148,6 +208,7 @@ static uint8_t term_close(lt_VM* vm, uint8_t argc)
     if (state.active && state.vm == vm)
     {
         lt->remove_poll_hook(vm, state.poll_hook);
+        scrollok(stdscr, FALSE);
         endwin();
     }
     if (state.module && state.vm == vm)
@@ -185,6 +246,9 @@ static uint8_t term_clear(lt_VM* vm, uint8_t argc)
     require_args(vm, argc, 0, "Expected no arguments to term.clear!");
     require_active(vm);
     erase();
+    configure_output_region();
+    state.output_x = 0;
+    state.output_y = 0;
     return 0;
 }
 
@@ -289,14 +353,14 @@ static uint8_t term_on_event(lt_VM* vm, uint8_t argc)
 
 static void redraw_line(const char* prompt, const char* line, uint32_t cursor)
 {
-    int y, x;
-    getyx(stdscr, y, x);
-    (void)x;
-    move(y, 0);
+    int rows, columns;
+    getmaxyx(stdscr, rows, columns);
+    (void)columns;
+    move(rows - 1, 0);
     clrtoeol();
     addstr(prompt);
     addstr(line);
-    move(y, (int)(strlen(prompt) + cursor));
+    move(rows - 1, (int)(strlen(prompt) + cursor));
     refresh();
 }
 
@@ -327,6 +391,13 @@ static uint8_t term_read_line(lt_VM* vm, uint8_t argc)
     require_active(vm);
     if (!LT_IS_STRING(prompt_value)) lt->runtime_error(vm, "Expected string argument to term.readLine!");
     prompt = lt->get_string(vm, prompt_value);
+    {
+        int rows, columns;
+        getmaxyx(stdscr, rows, columns);
+        (void)columns;
+        move(rows - 1, 0);
+        clrtoeol();
+    }
     addstr(prompt);
     refresh();
     timeout(-1);

@@ -41,3 +41,10 @@ the entered string, or `null` for Ctrl-C, Ctrl-D, or end-of-input.
 Terminal drawing and `readLine` are intended for an interactive terminal. Do
 not call `readLine` from an event callback: it blocks the main loop until the
 line is complete.
+
+## CLI prompt
+
+`little -i` keeps one terminal session open: script output scrolls in the area
+above its `>> ` bottom prompt line. Enter `"""` alone to begin multiline capture.
+Enter `"""` alone to end it. The CLI waits at its regular prompt; pressing Enter
+there runs the captured chunk. Closing the capture never evaluates it by itself.

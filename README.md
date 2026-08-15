@@ -67,7 +67,10 @@ build/little.exe -L native scripts/main.little
 
 The CLI accepts one script path, `-e SOURCE` for a short inline program, or
 `-i` / `--interactive` for an editable interactive prompt. The prompt keeps
-its in-process command history; press Ctrl-C or Ctrl-D to leave it. It
+its in-process command history and reserves its `>> ` bottom line while output
+scrolls above it. Enter `"""` to start a multiline capture, enter `"""` again
+to finish it, then press Enter at the normal prompt to run the captured chunk.
+Press Ctrl-C or Ctrl-D to leave it. It
 returns a non-zero exit code for command-line, file, parse, or runtime errors.
 Use `--help` to see its options and `--version` to see the linked API version.
 Use `-I DIRECTORY` (more than once if needed) to add source-module search paths

@@ -24,6 +24,12 @@ static void error(lt_VM* vm, const char* msg)
 {
     (void)vm;
     had_error = 1;
+    if (ltstd_write_output("LT ERROR: "))
+    {
+        ltstd_write_output(msg);
+        ltstd_write_output("\n");
+        return;
+    }
     /* A terminal program must never leave the caller in raw mode just because
        the VM rejected a script. */
     ltstd_close_term();
@@ -74,44 +80,110 @@ static int call_term(lt_VM* vm, const char* name, const char* prompt, lt_Value* 
     return 1;
 }
 
+static int append_repl_line(char** source, size_t* length, size_t* capacity, const char* line)
+{
+    size_t line_length = strlen(line);
+    size_t required = *length + line_length + 2;
+    if (required > *capacity)
+    {
+        size_t next_capacity = *capacity ? *capacity * 2 : 256;
+        while (next_capacity < required) next_capacity *= 2;
+        char* next = realloc(*source, next_capacity);
+        if (!next) return 0;
+        *source = next;
+        *capacity = next_capacity;
+    }
+    memcpy(*source + *length, line, line_length);
+    *length += line_length;
+    (*source)[(*length)++] = '\n';
+    (*source)[*length] = 0;
+    return 1;
+}
+
+static int run_repl_source(lt_VM* vm, const char* source)
+{
+    uint32_t nreturn = lt_dostring(vm, source, "<interactive>");
+    if (had_error)
+    {
+        /* A bad entry must not end the interactive session. */
+        had_error = 0;
+        return 1;
+    }
+    while (nreturn-- > 0)
+    {
+        char* returned = ltstd_tostring(vm, lt_pop(vm));
+        ltstd_write_output(returned);
+        ltstd_write_output("\n");
+        free(returned);
+    }
+    return 1;
+}
+
 static int run_repl(lt_VM* vm)
 {
-    printf("little API %d interactive mode (Ctrl-C or Ctrl-D to exit)\n", LT_API_VERSION);
+    char banner[128];
+    char* captured = 0;
+    size_t captured_length = 0;
+    size_t captured_capacity = 0;
+    int capturing = 0;
+    int ready_to_run = 0;
+    int success = 0;
+
+    if (!call_term(vm, "open", 0, 0)) goto done;
+    snprintf(banner, sizeof(banner), "little API %d interactive mode (Ctrl-C or Ctrl-D to exit)\n", LT_API_VERSION);
+    ltstd_write_output(banner);
+    ltstd_write_output("Enter \"\"\" to begin a multiline capture.\n");
     for (;;)
     {
         lt_Value line = LT_VALUE_NULL;
-        char* source;
-        uint32_t nreturn;
+        const char* text;
+        if (!call_term(vm, "readLine", ">> ", &line)) goto done;
+        if (LT_IS_NULL(line)) { success = 1; goto done; }
+        text = lt_get_string(vm, line);
 
-        if (!call_term(vm, "open", 0, 0)) return 0;
-        if (!call_term(vm, "readLine", "little> ", &line)) return 0;
-        if (!call_term(vm, "close", 0, 0)) return 0;
-        if (LT_IS_NULL(line)) return 1;
-
-        /* readLine's return value is no longer on the VM stack. Keep a host
-           copy so compiling the entry cannot collect the string underneath us. */
-        source = copy_string(lt_get_string(vm, line));
-        if (!source)
+        if (capturing)
         {
-            fprintf(stderr, "ERROR: Failed to allocate interactive input\n");
-            return 0;
-        }
-        nreturn = lt_dostring(vm, source, "<interactive>");
-        free(source);
-        if (had_error)
-        {
-            /* A bad entry must not end the interactive session. */
-            had_error = 0;
+            if (strcmp(text, "\"\"\"") == 0)
+            {
+                capturing = 0;
+                ready_to_run = 1;
+                ltstd_write_output("Capture complete. Press Enter to run it.\n");
+            }
+            else if (!append_repl_line(&captured, &captured_length, &captured_capacity, text))
+            {
+                ltstd_write_output("ERROR: Failed to allocate multiline input.\n");
+                goto done;
+            }
             continue;
         }
 
-        while (nreturn-- > 0)
+        if (ready_to_run)
         {
-            char* returned = ltstd_tostring(vm, lt_pop(vm));
-            printf("%s\n", returned);
-            free(returned);
+            if (*text) {
+                ltstd_write_output("Press Enter to run the captured input.\n");
+                continue;
+            }
+            if (!run_repl_source(vm, captured ? captured : "")) goto done;
+            captured_length = 0;
+            if (captured) captured[0] = 0;
+            ready_to_run = 0;
+            continue;
         }
+
+        if (strcmp(text, "\"\"\"") == 0)
+        {
+            captured_length = 0;
+            if (captured) captured[0] = 0;
+            capturing = 1;
+            continue;
+        }
+        if (*text && !run_repl_source(vm, text)) goto done;
     }
+
+done:
+    free(captured);
+    call_term(vm, "close", 0, 0);
+    return success;
 }
 
 static char* copy_string(const char* value)

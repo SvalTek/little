@@ -3,20 +3,32 @@
 #include <stdio.h>
 #include <time.h>
 
+static ltstd_OutputWriter _ltstd_output_writer;
+
+void ltstd_set_output_writer(ltstd_OutputWriter writer)
+{
+    _ltstd_output_writer = writer;
+}
+
+uint8_t ltstd_write_output(const char* text)
+{
+    return _ltstd_output_writer ? _ltstd_output_writer(text) : 0;
+}
+
 static uint8_t _lt_print(lt_VM* vm, uint8_t argc)
 {
     for (int16_t i = argc - 1; i >= 0; --i)
     {
         char* str = ltstd_tostring(vm, vm->stack[vm->top - 1 - i]);
-        printf("%s", str);
+        if (!ltstd_write_output(str)) printf("%s", str);
         vm->free(str);
 
-        if (i > 0) printf(" ");
+        if (i > 0 && !ltstd_write_output(" ")) printf(" ");
     }
 
     for (int16_t i = argc - 1; i >= 0; --i) lt_pop(vm);
 
-    printf("\n");
+    if (!ltstd_write_output("\n")) printf("\n");
     return 0;
 }
 
@@ -25,10 +37,10 @@ static void _lt_write_values(lt_VM* vm, uint8_t argc)
     for (int16_t i = argc - 1; i >= 0; --i)
     {
         char* str = ltstd_tostring(vm, vm->stack[vm->top - 1 - i]);
-        printf("%s", str);
+        if (!ltstd_write_output(str)) printf("%s", str);
         vm->free(str);
 
-        if (i > 0) printf(" ");
+        if (i > 0 && !ltstd_write_output(" ")) printf(" ");
     }
 
     for (int16_t i = argc - 1; i >= 0; --i) lt_pop(vm);
@@ -43,7 +55,7 @@ static uint8_t _lt_write(lt_VM* vm, uint8_t argc)
 static uint8_t _lt_writeline(lt_VM* vm, uint8_t argc)
 {
     _lt_write_values(vm, argc);
-    printf("\n");
+    if (!ltstd_write_output("\n")) printf("\n");
     return 0;
 }
 
