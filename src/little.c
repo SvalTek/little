@@ -4095,12 +4095,14 @@ uint8_t lt_table_next(lt_VM* vm, lt_Value table, uint64_t* cursor, lt_Value* key
 	};
 	const uint64_t table_cursor_index_mask = (UINT64_C(1) << LT_TABLE_CURSOR_INDEX_BITS) - 1;
 
-	(void)vm;
-	if (!LT_IS_TABLE(table) || LT_GET_OBJECT(table)->type != LT_OBJECT_TABLE) return 0;
+	if (!LT_IS_TABLE(table)) return 0;
+	lt_Object* obj = LT_GET_OBJECT(table);
+	if (obj->type == LT_OBJECT_SHARED_TABLE)
+		return ltshared_table_next(vm, obj->shared, cursor, key, val);
+	if (obj->type != LT_OBJECT_TABLE) return 0;
 
 	uint64_t bucket = *cursor >> LT_TABLE_CURSOR_INDEX_BITS;
 	uint64_t index = *cursor & table_cursor_index_mask;
-	lt_Object* obj = LT_GET_OBJECT(table);
 
 	for (; bucket < LT_TABLE_CURSOR_BUCKET_COUNT; ++bucket)
 	{

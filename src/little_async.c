@@ -784,6 +784,42 @@ lt_Value ltshared_table_set(lt_VM* vm, lt_SharedObject* shared, lt_Value key, lt
 	return val;
 }
 
+uint8_t ltshared_table_next(lt_VM* vm, lt_SharedObject* shared, uint64_t* cursor, lt_Value* key, lt_Value* val)
+{
+	lt_SharedValue shared_key;
+	lt_SharedValue shared_value;
+	memset(&shared_key, 0, sizeof(shared_key));
+	memset(&shared_value, 0, sizeof(shared_value));
+
+	_lt_shared_lock(shared);
+	while (*cursor < shared->table.length)
+	{
+		lt_SharedPair* pair = &shared->table.pairs[(*cursor)++];
+		if (pair->value.type == LT_SHARED_VALUE_NULL) continue;
+		if (!_lt_shared_value_clone(&shared_key, &pair->key) ||
+			!_lt_shared_value_clone(&shared_value, &pair->value))
+		{
+			_lt_shared_value_clear(&shared_key);
+			_lt_shared_value_clear(&shared_value);
+			_lt_shared_unlock(shared);
+			return 0;
+		}
+		_lt_shared_value_retain_external(&shared_key);
+		_lt_shared_value_retain_external(&shared_value);
+		_lt_shared_unlock(shared);
+
+		*key = _lt_shared_to_vm(vm, &shared_key);
+		*val = _lt_shared_to_vm(vm, &shared_value);
+		_lt_shared_value_release_external(&shared_key);
+		_lt_shared_value_release_external(&shared_value);
+		_lt_shared_value_clear(&shared_key);
+		_lt_shared_value_clear(&shared_value);
+		return 1;
+	}
+	_lt_shared_unlock(shared);
+	return 0;
+}
+
 static lt_Value _lt_shared_table_collect_values(lt_VM* vm, lt_SharedObject* shared, uint8_t keys)
 {
 	lt_SharedValue* snapshot = 0;

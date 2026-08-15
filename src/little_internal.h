@@ -27,6 +27,7 @@ void ltshared_release(lt_SharedObject* shared);
 lt_Value ltshared_make_proxy(lt_VM* vm, lt_SharedObject* shared);
 lt_Value ltshared_table_get(lt_VM* vm, lt_SharedObject* shared, lt_Value key);
 lt_Value ltshared_table_set(lt_VM* vm, lt_SharedObject* shared, lt_Value key, lt_Value val);
+uint8_t ltshared_table_next(lt_VM* vm, lt_SharedObject* shared, uint64_t* cursor, lt_Value* key, lt_Value* val);
 lt_Value ltshared_table_keys(lt_VM* vm, lt_SharedObject* shared);
 lt_Value ltshared_table_values(lt_VM* vm, lt_SharedObject* shared);
 lt_Value ltshared_array_get(lt_VM* vm, lt_SharedObject* shared, uint32_t idx);
