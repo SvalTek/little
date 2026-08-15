@@ -60,7 +60,13 @@ jobs:
       - name: Configure Windows toolchain
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Set-Content -Encoding utf8 .env 'GCC_PATH=C:\msys64\ucrt64'
+        run: |
+          $gcc = Get-ChildItem -Path $env:RUNNER_TEMP -Filter gcc.exe -Recurse |
+            Where-Object FullName -Match '[\\/]ucrt64[\\/]bin[\\/]gcc\.exe$' |
+            Select-Object -First 1
+          if (!$gcc) { throw 'MSYS2 UCRT64 gcc.exe was not found.' }
+          $gccPath = Split-Path (Split-Path $gcc.DirectoryName)
+          Set-Content -Encoding utf8 .env "GCC_PATH=$gccPath"
 
       - name: Run tests
         run: task test
