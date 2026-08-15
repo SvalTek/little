@@ -25,6 +25,9 @@ typedef struct
     uint8_t callback_set;
     int output_x;
     int output_y;
+    const char* composer;
+    uint8_t composer_active;
+    int composer_top;
     char history[TERM_HISTORY_CAPACITY][TERM_MAX_LINE];
     uint8_t history_count;
 } TermState;
@@ -151,6 +154,62 @@ uint8_t lt_term_write_output(const char* text)
     }
     refresh();
     return 1;
+}
+
+void lt_term_begin_composer(void)
+{
+    state.composer = "";
+    state.composer_active = 1;
+}
+
+void lt_term_update_composer(const char* text)
+{
+    state.composer = text ? text : "";
+}
+
+void lt_term_commit_composer(void)
+{
+    const char* line;
+    const char* end;
+    char segment[TERM_MAX_LINE];
+    if (!state.active || !state.composer_active) return;
+    line = state.composer ? state.composer : "";
+    {
+        int rows, columns;
+        getmaxyx(stdscr, rows, columns);
+        (void)columns;
+        for (int y = state.composer_top; y < rows; ++y)
+        {
+            move(y, 0);
+            clrtoeol();
+        }
+    }
+    state.composer = 0;
+    state.composer_active = 0;
+    lt_term_write_output(">> \"\"\"\n");
+    while (*line)
+    {
+        size_t length;
+        end = strchr(line, '\n');
+        length = end ? (size_t)(end - line) : strlen(line);
+        if (length >= sizeof(segment)) length = sizeof(segment) - 1;
+        memcpy(segment, line, length);
+        segment[length] = 0;
+        lt_term_write_output(">> ");
+        if (end)
+        {
+            lt_term_write_output(segment);
+            lt_term_write_output("\n");
+            line = end + 1;
+        }
+        else
+        {
+            lt_term_write_output(segment);
+            lt_term_write_output("\n");
+            break;
+        }
+    }
+    lt_term_write_output(">> \"\"\"\n");
 }
 
 /* One event per turn keeps terminal callbacks fair with timers and promises. */
@@ -351,13 +410,52 @@ static uint8_t term_on_event(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
-static void redraw_line(const char* prompt, const char* line, uint32_t cursor)
+static void draw_input(const char* prompt, const char* line, uint32_t cursor)
 {
+    const char* source;
+    const char* end;
     int rows, columns;
+    int y;
     getmaxyx(stdscr, rows, columns);
     (void)columns;
+    y = rows - 1;
+    if (state.composer_active)
+    {
+        uint32_t count = 1;
+        for (source = state.composer ? state.composer : ""; *source; ++source)
+            if (*source == '\n') count++;
+        if (count + 1 < (uint32_t)rows) y = rows - (int)count - 1;
+        else y = 0;
+        state.composer_top = y;
+    }
+    for (int clear_y = y; clear_y < rows; ++clear_y)
+    {
+        move(clear_y, 0);
+        clrtoeol();
+    }
+    if (state.composer_active)
+    {
+        move(y++, 0);
+        addstr(">> \"\"\"");
+        source = state.composer ? state.composer : "";
+        while (*source && y < rows - 1)
+        {
+            end = strchr(source, '\n');
+            move(y++, 0);
+            addstr(">> ");
+            if (end)
+            {
+                for (const char* item = source; item < end; ++item) addch((unsigned char)*item);
+                source = end + 1;
+            }
+            else
+            {
+                addstr(source);
+                break;
+            }
+        }
+    }
     move(rows - 1, 0);
-    clrtoeol();
     addstr(prompt);
     addstr(line);
     move(rows - 1, (int)(strlen(prompt) + cursor));
@@ -391,28 +489,20 @@ static uint8_t term_read_line(lt_VM* vm, uint8_t argc)
     require_active(vm);
     if (!LT_IS_STRING(prompt_value)) lt->runtime_error(vm, "Expected string argument to term.readLine!");
     prompt = lt->get_string(vm, prompt_value);
-    {
-        int rows, columns;
-        getmaxyx(stdscr, rows, columns);
-        (void)columns;
-        move(rows - 1, 0);
-        clrtoeol();
-    }
-    addstr(prompt);
-    refresh();
+    draw_input(prompt, line, cursor);
     timeout(-1);
     for (;;)
     {
         int key = getch();
         if (key == ERR || key == 4 || key == 3)
         {
-            addch('\n'); refresh(); timeout(0);
+            timeout(0);
             lt->push(vm, LT_VALUE_NULL);
             return 1;
         }
         if (key == '\r' || key == '\n' || key == KEY_ENTER)
         {
-            addch('\n'); refresh(); timeout(0);
+            timeout(0);
             line[length] = 0;
             history_push(line);
             lt->push(vm, lt->make_string(vm, line));
@@ -449,7 +539,7 @@ static uint8_t term_read_line(lt_VM* vm, uint8_t argc)
             memmove(line + cursor + 1, line + cursor, length - cursor + 1);
             line[cursor++] = (char)key; length++; history_index = -1;
         }
-        redraw_line(prompt, line, cursor);
+        draw_input(prompt, line, cursor);
     }
 }
 

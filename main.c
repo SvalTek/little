@@ -145,6 +145,7 @@ static int run_repl(lt_VM* vm)
             if (strcmp(text, "\"\"\"") == 0)
             {
                 capturing = 0;
+                ltstd_term_commit_composer();
                 if (!run_repl_source(vm, captured ? captured : "")) goto done;
                 captured_length = 0;
                 if (captured) captured[0] = 0;
@@ -154,6 +155,7 @@ static int run_repl(lt_VM* vm)
                 ltstd_write_output("ERROR: Failed to allocate multiline input.\n");
                 goto done;
             }
+            else ltstd_term_update_composer(captured);
             continue;
         }
 
@@ -162,6 +164,7 @@ static int run_repl(lt_VM* vm)
             captured_length = 0;
             if (captured) captured[0] = 0;
             capturing = 1;
+            ltstd_term_begin_composer();
             continue;
         }
         if (*text && !run_repl_source(vm, text)) goto done;

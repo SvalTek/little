@@ -47,4 +47,7 @@ line is complete.
 `little -i` keeps one terminal session open: script output scrolls in the area
 above its `>> ` bottom prompt line. Enter `"""` alone to begin multiline capture.
 Enter `"""` alone to end capture and submit the accumulated chunk. The final
-Enter that submits that closing line is the explicit run action.
+Enter that submits that closing line is the explicit run action. While capture
+is active, its submitted lines remain visible and grow upward from the bottom;
+the output area above remains intact. On submission, the capture is retained in
+the scrolling terminal transcript before its result is printed.

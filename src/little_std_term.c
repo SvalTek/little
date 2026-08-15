@@ -4,6 +4,9 @@
 lt_Value ltopen(lt_VM* vm, const lt_Api* api);
 void lt_term_shutdown(void);
 uint8_t lt_term_write_output(const char* text);
+void lt_term_begin_composer(void);
+void lt_term_update_composer(const char* text);
+void lt_term_commit_composer(void);
 
 void ltstd_open_term(lt_VM* vm)
 {
@@ -17,4 +20,19 @@ void ltstd_close_term(void)
 {
     lt_term_shutdown();
     ltstd_set_output_writer(0);
+}
+
+void ltstd_term_begin_composer(void)
+{
+    lt_term_begin_composer();
+}
+
+void ltstd_term_update_composer(const char* text)
+{
+    lt_term_update_composer(text);
+}
+
+void ltstd_term_commit_composer(void)
+{
+    lt_term_commit_composer();
 }
