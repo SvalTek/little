@@ -1,0 +1,26 @@
+; Calling non-callable values (table, array) must raise a clean runtime
+; error, never crash the VM. Regression for the missing default case in
+; the lt_exec_internal call-dispatch switch (frame->code stayed NULL and
+; the interpreter loop dereferenced it -> access violation).
+var t = {}
+var a = [1, 2, 3]
+var none = null
+var number = 1
+
+var r1 = pcall(fn() { t() })
+io.print(r1.ok is false)
+io.print(string.contains(r1.error, "Value is not callable!"))
+
+var r2 = pcall(fn() { a() })
+io.print(r2.ok is false)
+io.print(string.contains(r2.error, "Value is not callable!"))
+
+var r3 = pcall(fn() { none() })
+io.print(r3.ok is false)
+io.print(string.contains(r3.error, "Value is not callable!"))
+
+var r4 = pcall(fn() { number() })
+io.print(r4.ok is false)
+io.print(string.contains(r4.error, "Value is not callable!"))
+
+io.print("after")

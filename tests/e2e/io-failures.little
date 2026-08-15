@@ -1,0 +1,9 @@
+var missingRead = pcall(fn() {
+    return io.readFile("build/does-not-exist.little")
+})
+var missingWrite = pcall(fn() {
+    return io.writeFile("build/no-such-directory/file.txt", "x")
+})
+
+io.print(missingRead.ok, string.contains(missingRead.error, "Unable to open file for reading"))
+io.print(missingWrite.ok, string.contains(missingWrite.error, "Unable to open file for writing"))

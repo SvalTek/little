@@ -34,7 +34,7 @@ Here are some samples of how to extend the language through the C API. For brevi
 
 ## Native library loading
 
-A native library is a platform shared library (`.dll` on Windows, `.so` on Linux,
+A native library is a platform-shared library (`.dll` on Windows, `.so` on Linux,
 `.dylib` on macOS) that exports an `ltopen` function:
 
 ```c

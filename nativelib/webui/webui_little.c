@@ -74,6 +74,7 @@ static WebuiQueuedEvent* current_dispatch_event = 0;
 
 #ifdef _WIN32
 static CRITICAL_SECTION queue_lock;
+static uint8_t queue_lock_initialized = 0;
 #else
 static pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
@@ -731,9 +732,10 @@ static uint32_t dispatch_events(lt_VM* vm)
         {
             lt_Value ev = make_event(vm, event);
             lt->push(vm, ev);
+            WebuiQueuedEvent* previous_dispatch_event = current_dispatch_event;
             current_dispatch_event = event;
             uint16_t returns = lt->exec(vm, binding->callback, 1);
-            current_dispatch_event = 0;
+            current_dispatch_event = previous_dispatch_event;
 
             lt_Value response = LT_VALUE_NULL;
             if (returns > 0)
@@ -1069,13 +1071,19 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     if (!api || api->version != LT_API_VERSION || api->size < sizeof(lt_Api))
         return LT_VALUE_NULL;
 
+    /* WebUI owns process-global callback state, so it cannot safely serve two VMs. */
+    if (bound_vm) return bound_vm == vm ? module_value : LT_VALUE_NULL;
+
     lt = api;
 #ifdef _WIN32
-    InitializeCriticalSection(&queue_lock);
+    if (!queue_lock_initialized)
+    {
+        InitializeCriticalSection(&queue_lock);
+        queue_lock_initialized = 1;
+    }
 #endif
     webui_set_config(asynchronous_response, true);
     bound_vm = vm;
-    (void)bound_vm;
     module_value = lt->make_table(vm);
     callback_registry = lt->make_table(vm);
     lt->table_set(vm, module_value, lt->make_string(vm, "__callbacks"), callback_registry);

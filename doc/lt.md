@@ -75,7 +75,17 @@ else {
 var a = [ 100, 200, 300 ]
 for item in array.each(a) { ... }
 ```
-`for` loops come in only one flavour in little, requireing a single identifier to be the loop variable, and an expression that evaluates into an iterator function. It will be repeatedly called - and it's result stored in the loop variable - until it evaluates to null.
+`for` loops require one loop-variable identifier and an expression that evaluates to an iterator function. Little repeatedly calls that function, stores its return value in the loop variable, and stops when it returns `null`.
+
+Arrays are not iterators themselves. Wrap an array with `array.each(...)`:
+
+```js
+for item in array.each(items) {
+    io.print(item)
+}
+```
+
+Passing an array directly to `for` attempts to call the array and raises a runtime error.
 
 ---
 ### while
@@ -153,6 +163,9 @@ The mathematical operators `+`, `-`, `*`, and `/` only operate on `number` value
 The comparison operators `<`, `<=`, `>`, and `>=` also only work with `number`s.
 The equality operators `is` and `isnt` work on all types. Little does not have `==` or `!=`; use `is` and `isnt`.
 The logical operators `or`, `and`, and `not` compare values based on truthiness. `not` returns a boolean. `and` returns a boolean. `or` returns the left operand when it is truthy, otherwise the right operand when it is truthy, otherwise `false`.
+`type` is a prefix operator that returns a type-name string without call parentheses. It returns `null`, `boolean`, `number`, `string`, `function`, `table`, `array`, `promise`, `class`, `instance`, or `pointer` for user-visible values.
+
+`typeof` returns an instance's concrete class object. Applied to a class, it returns that class itself; for every other value it returns `null`.
 The index operator `[expression]` works on any `table` and `array` values.
 The dot operator `.` is syntax sugar for indexing `tables` - `my_table.my_index = 10`.
 The colon operator `:` is syntax sugar for receiver-passing method calls - `obj:method(a)` is equivalent to `obj.method(obj, a)`. Methods conventionally name the first parameter `this`.
@@ -176,13 +189,33 @@ var label = requestedLabel or "untitled"
 Operator precedence, from highest to lowest:
 
 1. Calls, indexing, dot access, and receiver calls: `fn()`, `value[key]`, `table.key`, `obj:method()`
-2. Unary operators: `not value`, `-value`
+2. Unary operators: `not value`, `-value`, `type value`, `typeof value`
 3. Multiplication and division: `*`, `/`
 4. Addition and subtraction: `+`, `-`
 5. Comparisons and equality: `<`, `<=`, `>`, `>=`, `is`, `isnt`
 6. Logical operators: `and`, `or`
 
 Binary operators associate left-to-right within the same precedence level. Prefix unary operators associate right-to-left, so `not not false` works as `not (not false)`.
+
+`type` applies to the following expression, so it reads naturally in a condition:
+
+```js
+if type value is "string" {
+    io.print(value)
+}
+```
+
+`typeof` returns the concrete class object, which can be compared with the
+existing identity operator:
+
+```js
+io.print(typeof apple) ; Apple
+
+if typeof apple is Apple {
+    io.print("an Apple")
+}
+```
+
 
 This means:
 
@@ -259,12 +292,12 @@ Little supports multiple return values through `unpack(array)`. In scalar contex
 
 Final call arguments expand:
 ```js
-fn(1, unpack([ 2, 3 ])) // fn(1, 2, 3)
+fn(1, unpack([ 2, 3 ])) ; fn(1, 2, 3)
 ```
 
 Non-final call arguments use only the first value:
 ```js
-fn(unpack([ 1, 2 ]), 3) // fn(1, 3)
+fn(unpack([ 1, 2 ]), 3) ; fn(1, 3)
 ```
 
 Destructuring declarations consume multiple returns and pad missing values with `null`:
