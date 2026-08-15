@@ -1,0 +1,6 @@
+io.print(12 is 12)
+io.print(12 isnt 13)
+io.print("a" is "a")
+io.print(null is null)
+io.print(false or "fallback")
+io.print(true and "value")

@@ -1,0 +1,22 @@
+io.print("io files")
+
+; The examples write under build/ so generated files stay out of source.
+var path = "build/example-note.txt"
+var message = string.expand("{{name}} wrote this with {{tool}}\n", {
+    name: "Little"
+    tool: "io.writeFile"
+})
+
+; writeFile replaces the file, appendFile adds raw text, and appendLine adds a
+; newline after its arguments.
+io.print("write", io.writeFile(path, message))
+io.print("append", io.appendFile(path, "plus appendFile"))
+io.print("append line", io.appendLine(path, " and appendLine"))
+
+; readFile returns the complete file as a string.
+io.write(io.readFile(path))
+
+; `write` leaves the cursor on the same line. `writeLine` ends the line.
+io.write("write")
+io.write("without", "newline")
+io.writeLine(" done")

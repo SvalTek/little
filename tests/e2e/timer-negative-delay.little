@@ -1,0 +1,3 @@
+setTimeout(fn() {
+    io.print("should not run")
+}, -1)

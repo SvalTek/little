@@ -1,0 +1,6 @@
+fn capture(left, right) {
+    io.print("left:", left)
+    io.print("right:", right)
+}
+
+capture("x", string.concat("a", "b"))

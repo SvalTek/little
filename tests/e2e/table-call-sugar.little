@@ -1,0 +1,39 @@
+var consume = fn(t) {
+    io.print("consume", t.name, t.count)
+}
+
+consume {
+    name: "alpha"
+    count: 2
+}
+
+var obj = {
+    prefix: "obj"
+    add: fn(this, t) {
+        io.print(this.prefix, t.name)
+    }
+}
+
+obj:add {
+    name: "method"
+}
+
+var step3 = fn(t) {
+    io.print("step3", t.name)
+}
+
+var step2 = fn(t) {
+    io.print("step2", t.name)
+    return step3
+}
+
+var step1 = fn(t) {
+    io.print("step1", t.name)
+    return step2
+}
+
+step1 { name: "a" } { name: "b" } { name: "c" }
+
+if true {
+    io.print("if-ok")
+}

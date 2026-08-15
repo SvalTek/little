@@ -1,0 +1,5 @@
+io.print(10 - 3 - 2)
+io.print(8 / 4 / 2)
+io.print(1 + 2 + 3)
+io.print(not not false)
+io.print(false or false or "fallback")

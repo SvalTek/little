@@ -1,0 +1,71 @@
+io.print("mainloop scheduler")
+
+; mainloop.run keeps processing timers, promises, and task completions until
+; mainloop.stop is called or there is no more scheduled work.
+var shared = {
+    ticks: 0
+    results: {}
+    labels: []
+}
+
+var timer = { id: 0 }
+
+var maybeStop = fn() {
+    var keys = table.keys(shared.results)
+    if shared.ticks >= 5 and array.len(keys) >= 5 {
+        mainloop.stop()
+    }
+}
+
+; Keep the timer id in a table so the callback can see the later assignment.
+timer.id = setInterval(fn() {
+    with shared {
+        @ticks = @ticks + 1
+        array.push(@labels, "tick")
+    }
+
+    if shared.ticks >= 5 {
+        clearInterval(timer.id)
+        table.put(shared.results, "timer", "done")
+        maybeStop()
+    }
+}, 1)
+
+var delayedTask = fn(label, value, delay) {
+    return task.run(async fn(state) {
+        return await Promise(fn(resolve, reject) {
+            setTimeout(fn() {
+                resolve(state.value)
+            }, state.delay)
+        })
+    }, {
+        value
+        delay
+    }).next(fn(result) {
+        table.put(shared.results, label, result)
+        array.push(shared.labels, label)
+        maybeStop()
+    })
+}
+
+delayedTask("alpha", "A", 1)
+delayedTask("beta", "B", 2)
+delayedTask("gamma", "C", 3)
+
+; A synchronous worker can mutate shared tables and arrays too.
+task.run(fn(state) {
+    table.put(state.shared.results, "worker", "shared")
+    array.push(state.shared.labels, "worker")
+    return table.fetch(state.shared.results, "worker")
+}, { shared }).next(fn(value) {
+    table.put(shared.results, "workerResult", value)
+    maybeStop()
+})
+
+var steps = mainloop.run()
+var keys = table.keys(shared.results)
+
+io.print("ran", steps > 0)
+io.print("ticks", shared.ticks)
+io.print("results", array.len(keys), table.fetch(shared.results, "alpha"), table.fetch(shared.results, "beta"), table.fetch(shared.results, "gamma"), table.fetch(shared.results, "timer"), table.fetch(shared.results, "workerResult"))
+io.print("labels", array.len(shared.labels) >= 9)

@@ -1,0 +1,5 @@
+task.run(fn(state) {
+    return state.a + state.b
+}, { a: 2 b: 4 }).next(fn(value) {
+    io.print(value)
+})

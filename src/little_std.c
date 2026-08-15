@@ -1,17 +1,374 @@
 #include "little_std.h"
+#include "little_internal.h"
+#include "little_common.h"
 
-#include <ctype.h>
+#include <setjmp.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
-#include <math.h>
-#include <time.h>
+
+static uint8_t _ltstd_is_callable(lt_Value value)
+{
+    if (!LT_IS_OBJECT(value)) return 0;
+    lt_Object* obj = LT_GET_OBJECT(value);
+    return obj->type == LT_OBJECT_FN
+        || obj->type == LT_OBJECT_CLOSURE
+        || obj->type == LT_OBJECT_NATIVEFN
+        || obj->type == LT_OBJECT_BOUND_NATIVE
+        || obj->type == LT_OBJECT_CLASS;
+}
+
+static lt_Value _ltstd_pcall_result(lt_VM* vm, uint8_t ok, lt_Value value, const char* error)
+{
+    lt_Value result = lt_make_table(vm);
+    lt_table_set(vm, result, lt_make_string(vm, "ok"), ok ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    if (ok) lt_table_set(vm, result, lt_make_string(vm, "value"), value);
+    else lt_table_set(vm, result, lt_make_string(vm, "error"), lt_make_string(vm, error ? error : "Unknown error"));
+    return result;
+}
+
+static uint8_t _ltstd_pcall(lt_VM* vm, uint8_t argc)
+{
+    if (argc < 1) lt_runtime_error(vm, "Expected callable argument to pcall!");
+
+    uint16_t base = vm->top - argc;
+    lt_Value callable = vm->stack[base];
+    if (!_ltstd_is_callable(callable)) lt_runtime_error(vm, "Expected callable argument to pcall!");
+
+    for (uint16_t i = base + 1; i < vm->top; ++i)
+        vm->stack[i - 1] = vm->stack[i];
+    vm->top--;
+
+    uint16_t saved_depth = vm->depth;
+    lt_Frame* saved_current = vm->current;
+    void* saved_error_buf = vm->error_buf;
+    uint8_t saved_trap_errors = vm->trap_errors;
+    char* saved_error_trap = vm->error_trap;
+
+    jmp_buf error_buf;
+    vm->error_buf = &error_buf;
+    vm->trap_errors = 1;
+    vm->error_trap = 0;
+
+    if (!setjmp(error_buf))
+    {
+        uint16_t nret = lt_exec_internal(vm, callable, argc - 1);
+        lt_Value value = LT_VALUE_NULL;
+        if (nret > 0)
+        {
+            value = lt_pop(vm);
+            while (--nret > 0) lt_pop(vm);
+        }
+
+        vm->error_buf = saved_error_buf;
+        vm->trap_errors = saved_trap_errors;
+        if (vm->error_trap) vm->free(vm->error_trap);
+        vm->error_trap = saved_error_trap;
+
+        lt_push(vm, _ltstd_pcall_result(vm, 1, value, 0));
+        return 1;
+    }
+
+    char* error = vm->error_trap;
+    vm->top = base;
+    vm->depth = saved_depth;
+    vm->current = saved_current;
+    vm->error_buf = saved_error_buf;
+    vm->trap_errors = saved_trap_errors;
+    vm->error_trap = saved_error_trap;
+
+    lt_push(vm, _ltstd_pcall_result(vm, 0, LT_VALUE_NULL, error));
+    if (error) vm->free(error);
+    return 1;
+}
+
+static uint8_t _ltstd_unpack(lt_VM* vm, uint8_t argc)
+{
+    if (argc < 1 || argc > 3) lt_runtime_error(vm, "Expected 1-3 arguments to unpack!");
+
+    lt_Value end_value = LT_VALUE_NULL;
+    lt_Value start_value = LT_VALUE_NUMBER(0);
+    if (argc == 3) end_value = lt_pop(vm);
+    if (argc >= 2) start_value = lt_pop(vm);
+    lt_Value array = lt_pop(vm);
+
+    if (!LT_IS_ARRAY(array)) lt_runtime_error(vm, "Expected first argument to unpack to be array!");
+    if (!LT_IS_NUMBER(start_value)) lt_runtime_error(vm, "Expected start argument to unpack to be number!");
+    if (!LT_IS_NULL(end_value) && !LT_IS_NUMBER(end_value)) lt_runtime_error(vm, "Expected end argument to unpack to be number!");
+
+    int32_t start = (int32_t)LT_GET_NUMBER(start_value);
+    int32_t end = LT_IS_NULL(end_value) ? (int32_t)lt_array_length(array) - 1 : (int32_t)LT_GET_NUMBER(end_value);
+    if (start < 0 || end < -1) lt_runtime_error(vm, "Expected unpack bounds to be non-negative!");
+    if (start > end || start >= (int32_t)lt_array_length(array)) return 0;
+    if (end >= (int32_t)lt_array_length(array)) end = (int32_t)lt_array_length(array) - 1;
+
+    uint8_t count = 0;
+    for (int32_t i = start; i <= end && count < LT_MAX_RETURNS; ++i)
+    {
+        lt_push(vm, lt_array_get(vm, array, (uint32_t)i));
+        count++;
+    }
+    return count;
+}
+
+static FILE* _ltstd_open_module_base(lt_VM* vm, const char* base, char** resolved)
+{
+    char* candidate = 0;
+    size_t base_len = strlen(base);
+    if (base_len >= 7 && strcmp(base + base_len - 7, ".little") == 0)
+        candidate = lt_common_copy_string(vm, base);
+    else
+        candidate = lt_common_make_suffixed_path(vm, base, ".little");
+
+    FILE* file = fopen(candidate, "rb");
+    if (file)
+    {
+        *resolved = candidate;
+        return file;
+    }
+    vm->free(candidate);
+
+    candidate = lt_common_join_path(vm, base, "init.little");
+    file = fopen(candidate, "rb");
+    if (file)
+    {
+        *resolved = candidate;
+        return file;
+    }
+    vm->free(candidate);
+
+    return 0;
+}
+
+static char* _ltstd_read_module_file(lt_VM* vm, const char* requested, char** resolved)
+{
+    FILE* file = _ltstd_open_module_base(vm, requested, resolved);
+    lt_Value paths = lt_common_module_paths(vm, 0);
+
+    if (!file && LT_IS_ARRAY(paths))
+    {
+        for (uint32_t i = 0; i < lt_array_length(paths); ++i)
+        {
+            lt_Value entry = lt_array_get(vm, paths, i);
+            if (!LT_IS_STRING(entry)) continue;
+            char* base = lt_common_expand_path_pattern(vm, lt_get_string(vm, entry), requested);
+            file = _ltstd_open_module_base(vm, base, resolved);
+            vm->free(base);
+            if (file) break;
+        }
+    }
+
+    if (!file)
+        return 0;
+
+    if (fseek(file, 0, SEEK_END) != 0)
+    {
+        fclose(file);
+        vm->free(*resolved);
+        *resolved = 0;
+        return 0;
+    }
+
+    long size = ftell(file);
+    if (size < 0)
+    {
+        fclose(file);
+        vm->free(*resolved);
+        *resolved = 0;
+        return 0;
+    }
+    rewind(file);
+
+    char* source = vm->alloc((size_t)size + 1);
+    size_t read = fread(source, 1, (size_t)size, file);
+    fclose(file);
+    if (read != (size_t)size)
+    {
+        vm->free(source);
+        vm->free(*resolved);
+        *resolved = 0;
+        return 0;
+    }
+    source[read] = 0;
+
+    return source;
+}
+
+static uint8_t _ltstd_module_add_path(lt_VM* vm, uint8_t argc)
+{
+    if (argc < 1) lt_runtime_error(vm, "Expected at least one path for module.addPath!");
+    uint16_t base = vm->top - argc;
+    lt_Value paths = lt_common_module_paths(vm, 1);
+    for (uint16_t i = base; i < vm->top; ++i)
+    {
+        lt_Value path = vm->stack[i];
+        if (!LT_IS_STRING(path)) lt_runtime_error(vm, "Expected module search path to be string!");
+        lt_array_push(vm, paths, path);
+    }
+    vm->top = base;
+    return 0;
+}
+
+static uint8_t _ltstd_module_clear_paths(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt_runtime_error(vm, "Expected no arguments to module.clearPaths!");
+    lt_Value paths = lt_common_module_paths(vm, 1);
+    while (lt_array_length(paths) > 0) lt_array_remove(vm, paths, lt_array_length(paths) - 1);
+    return 0;
+}
+
+static uint8_t _ltstd_import(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt_runtime_error(vm, "Expected one argument to import!");
+    lt_Value path_value = lt_pop(vm);
+    if (!LT_IS_STRING(path_value)) lt_runtime_error(vm, "Expected import path to be string!");
+
+    const char* requested = LT_GET_STRING(vm, path_value);
+    lt_Value modules_key = lt_make_string(vm, "__modules");
+    lt_Value modules = lt_table_get(vm, vm->global, modules_key);
+    if (!LT_IS_TABLE(modules))
+    {
+        modules = lt_make_table(vm);
+        lt_table_set(vm, vm->global, modules_key, modules);
+    }
+
+    lt_Value cache_key = lt_make_string(vm, requested);
+    lt_Value cached = lt_table_get(vm, modules, cache_key);
+    if (LT_IS_TABLE(cached))
+    {
+        lt_Value value = lt_table_get(vm, cached, lt_make_string(vm, "value"));
+        lt_push(vm, value);
+        return 1;
+    }
+
+    size_t requested_len = strlen(requested);
+    char* fallback = vm->alloc(requested_len + 8);
+    memcpy(fallback, requested, requested_len);
+    memcpy(fallback + requested_len, ".little", 8);
+    lt_Value fallback_key = lt_make_string(vm, fallback);
+    cached = lt_table_get(vm, modules, fallback_key);
+    if (LT_IS_TABLE(cached))
+    {
+        lt_Value value = lt_table_get(vm, cached, lt_make_string(vm, "value"));
+        vm->free(fallback);
+        lt_push(vm, value);
+        return 1;
+    }
+    vm->free(fallback);
+
+    char* resolved = 0;
+    char* source = _ltstd_read_module_file(vm, requested, &resolved);
+    if (!source)
+    {
+        char message[256];
+        snprintf(message, sizeof(message), "Failed to import module '%s'!", requested);
+        lt_runtime_error(vm, message);
+    }
+
+    cache_key = lt_make_string(vm, resolved);
+    cached = lt_table_get(vm, modules, cache_key);
+    if (LT_IS_TABLE(cached))
+    {
+        lt_Value value = lt_table_get(vm, cached, lt_make_string(vm, "value"));
+        vm->free(source);
+        vm->free(resolved);
+        lt_push(vm, value);
+        return 1;
+    }
+
+    lt_Value callable = lt_loadstring(vm, source, resolved);
+    if (callable == LT_VALUE_NULL)
+    {
+        vm->free(source);
+        vm->free(resolved);
+        lt_runtime_error(vm, "Failed to compile imported module!");
+    }
+
+    lt_Value value_key = lt_make_string(vm, "value");
+    lt_push(vm, callable);
+    lt_Value wrapper = lt_make_table(vm);
+    lt_push(vm, wrapper);
+    lt_table_set(vm, wrapper, value_key, LT_VALUE_TRUE);
+    lt_table_set(vm, modules, cache_key, wrapper);
+    lt_pop(vm);
+    callable = lt_pop(vm);
+
+    uint16_t saved_top = vm->top;
+    uint16_t saved_depth = vm->depth;
+    lt_Frame* saved_current = vm->current;
+    void* saved_error_buf = vm->error_buf;
+    uint8_t saved_trap_errors = vm->trap_errors;
+    char* saved_error_trap = vm->error_trap;
+
+    jmp_buf error_buf;
+    vm->error_buf = &error_buf;
+    vm->trap_errors = 1;
+    vm->error_trap = 0;
+
+    uint16_t nret = 0;
+    if (!setjmp(error_buf))
+    {
+        nret = lt_exec_internal(vm, callable, 0);
+        vm->error_buf = saved_error_buf;
+        vm->trap_errors = saved_trap_errors;
+        if (vm->error_trap) vm->free(vm->error_trap);
+        vm->error_trap = saved_error_trap;
+    }
+    else
+    {
+        char* error = vm->error_trap;
+        vm->top = saved_top;
+        vm->depth = saved_depth;
+        vm->current = saved_current;
+        vm->error_buf = saved_error_buf;
+        vm->trap_errors = saved_trap_errors;
+        vm->error_trap = saved_error_trap;
+        lt_table_pop(vm, modules, cache_key);
+        lt_table_pop(vm, modules, lt_make_string(vm, requested));
+        vm->free(source);
+        vm->free(resolved);
+        if (saved_trap_errors)
+        {
+            if (vm->error_trap) vm->free(vm->error_trap);
+            vm->error_trap = error;
+            if (vm->error_buf) longjmp(*(jmp_buf*)vm->error_buf, 1);
+            abort();
+        }
+        lt_error(vm, error ? error : "Unknown import error");
+    }
+
+    lt_Value value = LT_VALUE_TRUE;
+    if (nret > 0)
+    {
+        uint16_t base = vm->top - nret;
+        value = vm->stack[base];
+        vm->stack[base] = value;
+        vm->top = base + 1;
+    }
+    else lt_push(vm, value);
+
+    lt_table_set(vm, wrapper, lt_make_string(vm, "value"), value);
+    lt_pop(vm);
+    vm->free(source);
+    vm->free(resolved);
+
+    lt_push(vm, value);
+    return 1;
+}
 
 void ltstd_open_all(lt_VM* vm)
 {
-	ltstd_open_io(vm);
-	ltstd_open_math(vm);
-	ltstd_open_array(vm);
+    lt_table_set(vm, vm->global, lt_make_string(vm, "pcall"), lt_make_native(vm, _ltstd_pcall));
+    lt_table_set(vm, vm->global, lt_make_string(vm, "unpack"), lt_make_native(vm, _ltstd_unpack));
+    lt_table_set(vm, vm->global, lt_make_string(vm, "import"), lt_make_native(vm, _ltstd_import));
+    lt_Value module = lt_make_table(vm);
+    lt_table_set(vm, module, lt_make_string(vm, "addPath"), lt_make_native(vm, _ltstd_module_add_path));
+    lt_table_set(vm, module, lt_make_string(vm, "clearPaths"), lt_make_native(vm, _ltstd_module_clear_paths));
+    lt_table_set(vm, vm->global, lt_make_string(vm, "module"), module);
+    ltstd_open_io(vm);
+    ltstd_open_math(vm);
+    ltstd_open_array(vm);
+    ltstd_open_table(vm);
     ltstd_open_string(vm);
     ltstd_open_gc(vm);
 }
@@ -19,515 +376,47 @@ void ltstd_open_all(lt_VM* vm)
 char* ltstd_tostring(lt_VM* vm, lt_Value val)
 {
     char scratch[256];
-    uint8_t len = 0;
+    int len = 0;
 
-    if (LT_IS_NUMBER(val)) len = sprintf_s(scratch, 256, "%f", LT_GET_NUMBER(val));
-    if (LT_IS_NULL(val)) len = sprintf_s(scratch, 256, "null");
-    if (LT_IS_TRUE(val)) len = sprintf_s(scratch, 256, "true");
-    if (LT_IS_FALSE(val)) len = sprintf_s(scratch, 256, "false");
-    if (LT_IS_STRING(val)) len = sprintf_s(scratch, 256, "%s", lt_get_string(vm, val));;
+    if (LT_IS_NUMBER(val)) len = snprintf(scratch, sizeof(scratch), "%f", LT_GET_NUMBER(val));
+    if (LT_IS_NULL(val)) len = snprintf(scratch, sizeof(scratch), "null");
+    if (LT_IS_TRUE(val)) len = snprintf(scratch, sizeof(scratch), "true");
+    if (LT_IS_FALSE(val)) len = snprintf(scratch, sizeof(scratch), "false");
+    if (LT_IS_STRING(val)) len = snprintf(scratch, sizeof(scratch), "%s", lt_get_string(vm, val));
 
     if (LT_IS_OBJECT(val))
     {
         lt_Object* obj = LT_GET_OBJECT(val);
         switch (obj->type)
         {
-        case LT_OBJECT_CHUNK: len = sprintf_s(scratch, 256, "chunk 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_CLOSURE: len = sprintf_s(scratch, 256, "closure 0x%llx | %d upvals", (uintptr_t)LT_GET_OBJECT(obj->closure.function), obj->closure.captures.length); break;
-        case LT_OBJECT_FN: len = sprintf_s(scratch, 256, "function 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_TABLE: len = sprintf_s(scratch, 256, "table 0x%llx", (uintptr_t)obj); break;
-        case LT_OBJECT_ARRAY: len = sprintf_s(scratch, 256, "array | %d", lt_array_length(val)); break;
-        case LT_OBJECT_NATIVEFN: len = sprintf_s(scratch, 256, "native 0x%llx", (uintptr_t)obj); break;
-        }
+        case LT_OBJECT_CHUNK: len = snprintf(scratch, sizeof(scratch), "chunk %p", (void*)obj); break;
+        case LT_OBJECT_CLOSURE: len = snprintf(scratch, sizeof(scratch), "closure %p | %u upvals", (void*)LT_GET_OBJECT(obj->closure.function), obj->closure.captures.length); break;
+        case LT_OBJECT_FN: len = snprintf(scratch, sizeof(scratch), "function %p", (void*)obj); break;
+        case LT_OBJECT_TABLE: len = snprintf(scratch, sizeof(scratch), "table %p", (void*)obj); break;
+        case LT_OBJECT_ARRAY: len = snprintf(scratch, sizeof(scratch), "array | %u", lt_array_length(val)); break;
+        case LT_OBJECT_NATIVEFN: len = snprintf(scratch, sizeof(scratch), "native %p", (void*)obj); break;
+        case LT_OBJECT_BOUND_NATIVE: len = snprintf(scratch, sizeof(scratch), "bound_native %p", (void*)obj); break;
+        case LT_OBJECT_PROMISE: len = snprintf(scratch, sizeof(scratch), "promise %p", (void*)obj); break;
+        case LT_OBJECT_CLASS: len = snprintf(scratch, sizeof(scratch), "%s", lt_get_string(vm, obj->class_def.name)); break;
+        case LT_OBJECT_INSTANCE: len = snprintf(scratch, sizeof(scratch), "instance %p", (void*)obj); break;
+        case LT_OBJECT_CELL: len = snprintf(scratch, sizeof(scratch), "cell %p", (void*)obj); break;
+        case LT_OBJECT_PTR: len = snprintf(scratch, sizeof(scratch), "ptr %p", (void*)obj); break;
+        case LT_OBJECT_SHARED_TABLE: len = snprintf(scratch, sizeof(scratch), "shared_table %p", (void*)obj->shared); break;
+        case LT_OBJECT_SHARED_ARRAY: len = snprintf(scratch, sizeof(scratch), "shared_array %p | %u", (void*)obj->shared, lt_array_length(val)); break;
+    }
     }
 
-    char* str = vm->alloc(len + 1);
-    memcpy(str, scratch, len);
-    str[len] = 0;
+    uint32_t out_len = 0;
+    if (len < 0)
+    {
+        while (out_len < sizeof(scratch) && scratch[out_len]) ++out_len;
+    }
+    else out_len = (uint32_t)len;
+    if (out_len >= sizeof(scratch)) out_len = sizeof(scratch) - 1;
+
+    char* str = vm->alloc(out_len + 1);
+    memcpy(str, scratch, out_len);
+    str[out_len] = 0;
 
     return str;
-}
-
-static uint8_t _lt_print(lt_VM* vm, uint8_t argc)
-{
-    for (int16_t i = argc - 1; i >= 0; --i)
-    {
-        char* str = ltstd_tostring(vm, vm->stack[vm->top - 1 - i]);
-        printf("%s", str);
-        vm->free(str);
-
-        if (i > 0) printf(" ");
-    }
-
-    for (int16_t i = argc - 1; i >= 0; --i) lt_pop(vm);
-
-    printf("\n");
-    return 0;
-}
-
-static uint8_t _lt_clock(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 0) lt_runtime_error(vm, "Expected no arguments to io.clock!");
-
-    clock_t time = clock();
-    double in_seconds = (double)time / (double)CLOCKS_PER_SEC;
-    lt_push(vm, lt_make_number(in_seconds));
-
-    return 1;
-}
-
-#define LT_SIMPLE_MATH_FN(name) \
-    static uint8_t _lt_##name(lt_VM* vm, uint8_t argc) \
-{ \
-    if (argc != 1) lt_runtime_error(vm, "Expected one argument to math." #name "!");                         \
-    lt_Value arg = lt_pop(vm);                                                                         \
-    if (!LT_IS_NUMBER(arg)) lt_runtime_error(vm, "Expected argument to math." #name " to be number!");       \
-                                                                                                       \
-    lt_push(vm, LT_VALUE_NUMBER(name(LT_GET_NUMBER(arg))));                                             \
-    return 1;                                                                                          \
-}
-
-LT_SIMPLE_MATH_FN(sin);
-LT_SIMPLE_MATH_FN(cos);
-LT_SIMPLE_MATH_FN(tan);
-
-LT_SIMPLE_MATH_FN(sinh);
-LT_SIMPLE_MATH_FN(cosh);
-LT_SIMPLE_MATH_FN(tanh);
-
-LT_SIMPLE_MATH_FN(asin);
-LT_SIMPLE_MATH_FN(acos);
-LT_SIMPLE_MATH_FN(atan);
-
-LT_SIMPLE_MATH_FN(round);
-LT_SIMPLE_MATH_FN(ceil);
-LT_SIMPLE_MATH_FN(floor);
-
-LT_SIMPLE_MATH_FN(exp);
-LT_SIMPLE_MATH_FN(log);
-LT_SIMPLE_MATH_FN(log10);
-LT_SIMPLE_MATH_FN(sqrt);
-LT_SIMPLE_MATH_FN(fabs);
-
-#define LT_BINARY_MATH_FN(name) \
-    static uint8_t _lt_##name(lt_VM* vm, uint8_t argc) \
-{ \
-    if (argc != 2) lt_runtime_error(vm, "Expected two arguments to math." #name "!");                         \
-    lt_Value arg1 = lt_pop(vm);                                                                         \
-    lt_Value arg2 = lt_pop(vm);                                                                         \
-    if (!LT_IS_NUMBER(arg1) || !LT_IS_NUMBER(arg2)) lt_runtime_error(vm, "Expected argument to math." #name " to be number!");       \
-                                                                                                       \
-    lt_push(vm, LT_VALUE_NUMBER(name(LT_GET_NUMBER(arg1), LT_GET_NUMBER(arg2))));                                             \
-    return 1;                                                                                          \
-}
-
-LT_BINARY_MATH_FN(fmin);
-LT_BINARY_MATH_FN(fmax);
-LT_BINARY_MATH_FN(pow);
-LT_BINARY_MATH_FN(fmod);
-
-static uint8_t _lt_array_next(lt_VM* vm, uint8_t argc)
-{
-    lt_Value current = lt_getupval(vm, 1);
-    lt_Value arr = lt_getupval(vm, 0);
-
-    uint32_t idx = lt_get_number(current);
-    lt_Value to_return = idx >= lt_array_length(arr) ? LT_VALUE_NULL : *lt_array_at(arr, idx);
-
-    lt_setupval(vm, 1, LT_VALUE_NUMBER(idx + 1));
-    lt_push(vm, to_return);
-
-    return 1;
-}
-
-static uint8_t _lt_array_each(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 1) lt_runtime_error(vm, "Expected one argument to array.each!");
-
-    lt_Value arr = lt_pop(vm);
-
-    if (!LT_IS_ARRAY(arr)) lt_runtime_error(vm, "Expected argument to array.each to be array!");
-
-    uint32_t len = lt_array_length(arr);
-
-    lt_push(vm, lt_make_native(vm, _lt_array_next));
-    lt_push(vm, LT_VALUE_NUMBER(0));
-    lt_push(vm, arr);
-    lt_close(vm, 2);
-
-    return 1;
-}
-
-static uint8_t _lt_range_iter(lt_VM* vm, uint8_t argc)
-{
-    lt_Value start = lt_getupval(vm, 2);
-    lt_Value end = lt_getupval(vm, 1);
-    lt_Value step = lt_getupval(vm, 0);
-
-    if (lt_get_number(start) >= lt_get_number(end)) { lt_push(vm, LT_VALUE_NULL); return 1; }
-
-    lt_setupval(vm, 2, lt_make_number(lt_get_number(start) + lt_get_number(step)));
-
-    lt_push(vm, start);
-    return 1;
-}
-
-static uint8_t _lt_range(lt_VM* vm, uint8_t argc)
-{
-    lt_Value start = LT_VALUE_NUMBER(0);
-    lt_Value end = LT_VALUE_NUMBER(0);
-    lt_Value step = LT_VALUE_NUMBER(1);
-
-    if (argc == 1)
-    {
-        end = lt_pop(vm);
-    }
-    else if (argc == 2)
-    {
-        end = lt_pop(vm);
-        start = lt_pop(vm);
-    }
-    else if (argc == 3)
-    {
-        step = lt_pop(vm);
-        end = lt_pop(vm);
-        start = lt_pop(vm);
-    }
-    else lt_runtime_error(vm, "Expected 1-3 args for array.range([start,] end [, step]!");
-
-    if (!LT_IS_NUMBER(start) || !LT_IS_NUMBER(end) || !LT_IS_NUMBER(step))
-        lt_runtime_error(vm, "Expected all arguments to array.range to be numbers!");
-
-    lt_push(vm, lt_make_native(vm, _lt_range_iter));
-    lt_push(vm, start);
-    lt_push(vm, end);
-    lt_push(vm, step);
-    lt_close(vm, 3);
-
-    return 1;
-}
-
-static uint8_t _lt_array_len(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 1) lt_runtime_error(vm, "Expected one argument to array.len!");
-    lt_Value arr = lt_pop(vm);
-    if (!LT_IS_ARRAY(arr)) lt_runtime_error(vm, "Expected argument to array.len to be array!");
-
-    lt_push(vm, lt_make_number(lt_array_length(arr)));
-    return 1;
-}
-
-static uint8_t _lt_array_pop(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 1) lt_runtime_error(vm, "Expected one argument to array.pop!");
-    lt_Value arr = lt_pop(vm);
-    if (!LT_IS_ARRAY(arr)) lt_runtime_error(vm, "Expected argument to array.pop to be array!");
-
-    lt_push(vm, lt_array_remove(vm, arr, lt_array_length(arr) - 1));
-    return 1;
-}
-
-static uint8_t _lt_array_last(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 1) lt_runtime_error(vm, "Expected one argument to array.last!");
-    lt_Value arr = lt_pop(vm);
-    if (!LT_IS_ARRAY(arr)) lt_runtime_error(vm, "Expected argument to array.last to be array!");
-
-    lt_push(vm, lt_array_at(arr, lt_array_length(arr) - 1));
-    return 1;
-}
-
-static uint8_t _lt_array_push(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 2) lt_runtime_error(vm, "Expected two arguments to array.push!");
-    lt_Value arr = lt_pop(vm);
-    lt_Value val = lt_pop(vm);
-    if (!LT_IS_ARRAY(arr)) lt_runtime_error(vm, "Expected first argument to array.push to be array!");
-
-    lt_array_push(vm, arr, val);
-    return 0;
-}
-
-static uint8_t _lt_array_remove(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 2) lt_runtime_error(vm, "Expected two arguments to array.remove!");
-    lt_Value arr = lt_pop(vm);
-    lt_Value idx = lt_pop(vm);
-    if (!LT_IS_ARRAY(arr)) lt_runtime_error(vm, "Expected first argument to array.remove to be array!");
-    if (!LT_IS_NUMBER(idx)) lt_runtime_error(vm, "Expected second argument to array.remove to be number!");
-
-    lt_array_remove(vm, arr, (uint32_t)lt_get_number(idx));
-    return 0;
-}
-
-static uint8_t _lt_gc_collect(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 0) lt_runtime_error(vm, "Expected no arguments to gc.collect!");
-    uint32_t num_collected = lt_collect(vm);
-    lt_push(vm, LT_VALUE_NUMBER((double)num_collected));
-    return 1;
-}
-
-static uint8_t _lt_gc_addroot(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 1) lt_runtime_error(vm, "Expected one argument to gc.addroot!");
-    lt_Value val = lt_pop(vm);
-    if (!LT_IS_OBJECT(val)) lt_runtime_error(vm, "Expected argument to gc.addroot to be object!");
-    lt_Object* obj = LT_GET_OBJECT(val);
-    lt_nocollect(vm, obj);
-    return 0;
-}
-
-static uint8_t _lt_gc_removeroot(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 1) lt_runtime_error(vm, "Expected one argument to gc.removeroot!");
-    lt_Value val = lt_pop(vm);
-    if (!LT_IS_OBJECT(val)) lt_runtime_error(vm, "Expected argument to gc.removeroot to be object!");
-    lt_Object* obj = LT_GET_OBJECT(val);
-    lt_resumecollect(vm, obj);
-    return 0;
-}
-
-static uint8_t _lt_string_from(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 1) lt_runtime_error(vm, "Expected one argument to string.from!");
-    lt_Value val = lt_pop(vm);
-    char* temp = ltstd_tostring(vm, val);
-    lt_Value str = lt_make_string(vm, temp);
-    vm->free(temp);
-    lt_push(vm, str);
-    return 1;
-}
-
-static uint8_t _lt_string_concat(lt_VM* vm, uint8_t argc)
-{
-    if (argc < 2) lt_runtime_error(vm, "Expected at least two arguments to string.concat!");
-
-    char* accum = 0; uint32_t len = 0;
-
-    for (int32_t i = argc - 1; i >= 0; --i)
-    {
-        lt_Value val = vm->stack[vm->top - 1 - i];
-        if (!LT_IS_STRING(val)) lt_runtime_error(vm, "Non-string argument to string.concat!");
-        uint32_t oldlen = len;
-        const char* str = lt_get_string(vm, val);
-
-        char* oldaccum = accum;
-        len += strlen(str);
-
-        accum = vm->alloc(len + 1);
-        if (oldaccum)
-        {
-            memcpy(accum, oldaccum, oldlen);
-            vm->free(oldaccum);
-        }
-
-        memcpy(accum + oldlen, str, len - oldlen);
-        accum[len] = 0;
-    }
-
-    lt_push(vm, lt_make_string(vm, accum));
-    vm->free(accum);
-
-    return 1;
-}
-
-static uint8_t _lt_string_len(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 1) lt_runtime_error(vm, "Expected one argument to string.len!");
-    lt_Value val = lt_pop(vm);
-    if (!LT_IS_STRING(val)) lt_runtime_error(vm, "Non-string argument to string.len!");
-    lt_push(vm, LT_VALUE_NUMBER(strlen(lt_get_string(vm, val))));
-    return 1;
-}
-
-static uint8_t _lt_string_sub(lt_VM* vm, uint8_t argc)
-{
-    if (argc < 2) lt_runtime_error(vm, "Expected at least two arguments to string.sub!");
-    
-    lt_Value len = LT_VALUE_NULL;
-    if (argc == 3) len = lt_pop(vm);
-
-    lt_Value start = lt_pop(vm);
-    lt_Value str = lt_pop(vm);
-
-    if (!LT_IS_STRING(str)) lt_runtime_error(vm, "Non-string argument to string.sub!");
-    if (!LT_IS_NUMBER(start)) lt_runtime_error(vm, "Non-number starting point to string.sub!");
-    
-    const char* cstr = lt_get_string(vm, str);
-
-    if (!LT_IS_NUMBER(len))
-    {
-        len = LT_VALUE_NUMBER(strlen(cstr) - start);
-    }
-
-    char* newstr = vm->alloc(LT_GET_NUMBER(len) + 1);
-    memcpy(newstr, cstr + start, len);
-
-    lt_push(vm, lt_make_string(vm, newstr));
-    vm->free(newstr);
-    return 1;
-}
-
-static uint8_t _lt_string_format(lt_VM* vm, uint8_t argc)
-{
-    if (argc < 1) lt_runtime_error(vm, "Expected at least a template string to string.format!");
-    lt_Value val = vm->stack[vm->top - argc];
-    if (!LT_IS_STRING(val)) lt_runtime_error(vm, "Non-string argument to string.format!");
-
-    char output[1024];
-    char fmtbuf[32];
-    uint16_t o_idx = 0;
-
-    const char* format = lt_get_string(vm, val);
-    uint8_t current_arg = 1;
-
-    while (*format)
-    {
-        if (*format == '%')
-        {
-            if (*(format + 1) == '%')
-            {
-                output[o_idx++] = '%';
-                format += 2;
-            }
-            else
-            {
-                uint8_t fmtloc = 0;
-                fmtbuf[fmtloc++] = *format++;
-                scan_format: switch (*format)
-                {
-                case 'd': case 'i': {
-                    fmtbuf[fmtloc++] = *format++; fmtbuf[fmtloc] = 0;
-                    o_idx += sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, (int32_t)LT_GET_NUMBER(vm->stack[vm->top - argc + current_arg++]));
-                } break;
-                case 'o': case 'u': case 'x': case 'X': {
-                    fmtbuf[fmtloc++] = *format++; fmtbuf[fmtloc] = 0;
-                    o_idx += sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, (uint32_t)LT_GET_NUMBER(vm->stack[vm->top - argc + current_arg++]));
-                } break;
-                case 'e': case 'E': case 'f': case 'g': case 'G': {
-                    fmtbuf[fmtloc++] = *format++; fmtbuf[fmtloc] = 0;
-                    o_idx += sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, LT_GET_NUMBER(vm->stack[vm->top - argc + current_arg++]));
-                } break;
-                case 's': {
-                    fmtbuf[fmtloc++] = *format++; fmtbuf[fmtloc] = 0;
-                    o_idx += sprintf_s(output + o_idx, 1024 - o_idx, fmtbuf, lt_get_string(vm, vm->stack[vm->top - argc + current_arg++]));
-                } break;
-                default:
-                    fmtbuf[fmtloc++] = *format++;
-                    goto scan_format;
-                    break;
-                }
-            }
-        }
-        else
-        {
-            output[o_idx++] = *format++;
-        }
-    }
-
-    output[o_idx] = 0;
-    lt_push(vm, lt_make_string(vm, output));
-    return 1;
-}
-
-static uint8_t _lt_string_typeof(lt_VM* vm, uint8_t argc)
-{
-    if (argc != 1) lt_runtime_error(vm, "Expected one argument to string.typeof!");
-    lt_Value val = lt_pop(vm);
-    if (LT_IS_NULL(val)) lt_push(vm, lt_make_string(vm, "null"));
-    else if (LT_IS_NUMBER(val)) lt_push(vm, lt_make_string(vm, "number"));
-    else if (LT_IS_BOOL(val)) lt_push(vm, lt_make_string(vm, "boolean"));
-    else if (LT_IS_STRING(val)) lt_push(vm, lt_make_string(vm, "string"));
-    else if (LT_IS_FUNCTION(val)) lt_push(vm, lt_make_string(vm, "function"));
-    else if (LT_IS_CLOSURE(val)) lt_push(vm, lt_make_string(vm, "closure"));
-    else if (LT_IS_ARRAY(val)) lt_push(vm, lt_make_string(vm, "array"));
-    else if (LT_IS_TABLE(val)) lt_push(vm, lt_make_string(vm, "table"));
-    else if (LT_IS_NATIVE(val)) lt_push(vm, lt_make_string(vm, "native"));
-    else if (LT_IS_PTR(val)) lt_push(vm, lt_make_string(vm, "ptr"));
-    return 1;
-}
-
-void ltstd_open_io(lt_VM* vm)
-{
-	lt_Value t = lt_make_table(vm);
-    lt_table_set(vm, t, lt_make_string(vm, "print"), lt_make_native(vm, _lt_print));
-    lt_table_set(vm, t, lt_make_string(vm, "clock"), lt_make_native(vm, _lt_clock));
-
-    lt_table_set(vm, vm->global, lt_make_string(vm, "io"), t);
-}
-
-void ltstd_open_math(lt_VM* vm)
-{
-    lt_Value t = lt_make_table(vm);
-    lt_table_set(vm, t, lt_make_string(vm, "sin"), lt_make_native(vm, _lt_sin));
-    lt_table_set(vm, t, lt_make_string(vm, "cos"), lt_make_native(vm, _lt_cos));
-    lt_table_set(vm, t, lt_make_string(vm, "tan"), lt_make_native(vm, _lt_tan));
-
-    lt_table_set(vm, t, lt_make_string(vm, "asin"), lt_make_native(vm, _lt_asin));
-    lt_table_set(vm, t, lt_make_string(vm, "acos"), lt_make_native(vm, _lt_acos));
-    lt_table_set(vm, t, lt_make_string(vm, "atan"), lt_make_native(vm, _lt_atan));
-
-    lt_table_set(vm, t, lt_make_string(vm, "sinh"), lt_make_native(vm, _lt_sinh));
-    lt_table_set(vm, t, lt_make_string(vm, "cosh"), lt_make_native(vm, _lt_cosh));
-    lt_table_set(vm, t, lt_make_string(vm, "tanh"), lt_make_native(vm, _lt_tanh));
-    
-    lt_table_set(vm, t, lt_make_string(vm, "floor"), lt_make_native(vm, _lt_floor));
-    lt_table_set(vm, t, lt_make_string(vm, "ceil"),  lt_make_native(vm, _lt_ceil));
-    lt_table_set(vm, t, lt_make_string(vm, "round"), lt_make_native(vm, _lt_round));
-    
-    lt_table_set(vm, t, lt_make_string(vm, "exp"),   lt_make_native(vm, _lt_exp));
-    lt_table_set(vm, t, lt_make_string(vm, "log"),   lt_make_native(vm, _lt_log));
-    lt_table_set(vm, t, lt_make_string(vm, "log10"), lt_make_native(vm, _lt_log10));
-    lt_table_set(vm, t, lt_make_string(vm, "sqrt"),  lt_make_native(vm, _lt_sqrt));
-    lt_table_set(vm, t, lt_make_string(vm, "abs"),   lt_make_native(vm, _lt_fabs));
-
-    lt_table_set(vm, t, lt_make_string(vm, "min"), lt_make_native(vm, _lt_fmin));
-    lt_table_set(vm, t, lt_make_string(vm, "max"), lt_make_native(vm, _lt_fmax));
-    lt_table_set(vm, t, lt_make_string(vm, "pow"), lt_make_native(vm, _lt_pow));
-    lt_table_set(vm, t, lt_make_string(vm, "mod"), lt_make_native(vm, _lt_fmod));
-
-    lt_table_set(vm, t, lt_make_string(vm, "pi"), LT_VALUE_NUMBER(3.14159265358979323846));
-    lt_table_set(vm, t, lt_make_string(vm, "e"), LT_VALUE_NUMBER(2.71828182845904523536));
-
-    lt_table_set(vm, vm->global, lt_make_string(vm, "math"), t);
-}
-
-void ltstd_open_array(lt_VM* vm)
-{
-    lt_Value t = lt_make_table(vm);
-    lt_table_set(vm, t, lt_make_string(vm, "each"), lt_make_native(vm, _lt_array_each));
-    lt_table_set(vm, t, lt_make_string(vm, "range"), lt_make_native(vm, _lt_range));
-
-    lt_table_set(vm, t, lt_make_string(vm, "len"), lt_make_native(vm, _lt_array_len));
-    lt_table_set(vm, t, lt_make_string(vm, "last"), lt_make_native(vm, _lt_array_last));
-    lt_table_set(vm, t, lt_make_string(vm, "pop"), lt_make_native(vm, _lt_array_pop));
-    lt_table_set(vm, t, lt_make_string(vm, "push"), lt_make_native(vm, _lt_array_push));
-    lt_table_set(vm, t, lt_make_string(vm, "remove"), lt_make_native(vm, _lt_array_remove));
-
-    lt_table_set(vm, vm->global, lt_make_string(vm, "array"), t);
-}
-
-void ltstd_open_string(lt_VM* vm)
-{
-    lt_Value t = lt_make_table(vm);
-
-    lt_table_set(vm, t, lt_make_string(vm, "from"), lt_make_native(vm, _lt_string_from));
-    lt_table_set(vm, t, lt_make_string(vm, "concat"), lt_make_native(vm, _lt_string_concat));
-    lt_table_set(vm, t, lt_make_string(vm, "len"), lt_make_native(vm, _lt_string_len));
-    lt_table_set(vm, t, lt_make_string(vm, "sub"), lt_make_native(vm, _lt_string_sub));
-    lt_table_set(vm, t, lt_make_string(vm, "format"), lt_make_native(vm, _lt_string_format));
-
-    lt_table_set(vm, vm->global, lt_make_string(vm, "string"), t);
-}
-
-void ltstd_open_gc(lt_VM* vm)
-{
-    lt_Value t = lt_make_table(vm);
-
-    lt_table_set(vm, t, lt_make_string(vm, "collect"), lt_make_native(vm, _lt_gc_collect));
-    lt_table_set(vm, t, lt_make_string(vm, "addroot"), lt_make_native(vm, _lt_gc_addroot));
-    lt_table_set(vm, t, lt_make_string(vm, "removeroot"), lt_make_native(vm, _lt_gc_removeroot));
-
-    lt_table_set(vm, vm->global, lt_make_string(vm, "gc"), t);
 }

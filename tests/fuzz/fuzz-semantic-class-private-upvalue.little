@@ -1,0 +1,14 @@
+var step = 2
+
+class Counter {
+    private value = 1
+
+    add() {
+        this.value = this.value + step
+        return this.value
+    }
+}
+
+var counter = Counter()
+io.print(counter:add())
+io.print(counter:add())

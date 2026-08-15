@@ -1,0 +1,7 @@
+var state = { values: [ "a", "b", "c" ] }
+
+task.run(fn(state) {
+    state.values[1] = "worker"
+}, state).next(fn(value) {
+    io.print(string.expand("$1/$2/$3", state.values))
+})

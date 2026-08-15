@@ -1,0 +1,12 @@
+pow 8.000000
+mod 1.000000
+range-down 3.000000,2.000000,1.000000
+zero-step false
+empty-pop false true
+remove-bad false
+remove-negative false
+sub-extra false
+repeat-negative false
+repeat-fraction false
+format id:7
+format-missing false

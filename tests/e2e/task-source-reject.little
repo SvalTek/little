@@ -1,0 +1,6 @@
+var result = pcall(fn() {
+    task.run("return 1", {})
+})
+
+io.print(result.ok)
+io.print(string.contains(result.error, "Expected task.run callable"))

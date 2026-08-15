@@ -1,0 +1,8 @@
+var calls = [0]
+var make = fn() {
+    calls[0] = calls[0] + 1
+    return [10, 20, 30]
+}
+
+var [a, b] = make()
+io.print(calls[0], a, b)

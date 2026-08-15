@@ -1,0 +1,7 @@
+class A {
+    f() {
+        return 1
+    }
+}
+
+io.print("gc-class-cycle", gc.collect() >= 0)

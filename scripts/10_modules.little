@@ -1,0 +1,39 @@
+io.print("modules")
+
+; Modules export by returning a value. The common pattern is a table of named
+; functions or constants.
+var greeter = import "scripts/tutorial_modules/greeter"
+io.print(greeter.greet("Ada"))
+
+; Named imports destructure the returned table into locals.
+import { greet, shout } from "scripts/tutorial_modules/greeter"
+io.print(greet("Grace"))
+io.print(shout("Grace"))
+
+; Importing the same resolved file again returns the cached value. The module
+; body does not run a second time.
+var again = import "scripts/tutorial_modules/greeter"
+io.print("cached", again.loads)
+
+; A directory module is resolved through init.little after name.little fails.
+import { describe } from "scripts/tutorial_modules/tools"
+io.print(describe("toolkit"))
+
+; Search paths let scripts import from roots without spelling the full path.
+module.addPath("scripts/tutorial_modules")
+import { trimTitle } from "formatters/text"
+io.print(trimTitle("  little modules  "))
+
+; Search paths can also include `?` as a package-name placeholder. For
+; import "toolkit/math", `?` receives "toolkit" and "math" is appended after
+; the template.
+module.addPath("scripts/tutorial_packages/?/src")
+var mathTools = import "toolkit/math"
+io.print(mathTools.add(2, 5))
+
+; For import "toolkit", the same template resolves to
+; scripts/tutorial_packages/toolkit/src/init.little.
+var toolkit = import "toolkit"
+io.print(toolkit.name, toolkit.version)
+
+module.clearPaths()

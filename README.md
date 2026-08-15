@@ -30,6 +30,7 @@ for animal in array.each(animals) {
 ```c
 #include "little.h"
 #include "little_std.h"
+#include "little_async.h"
 
 // this is called if the vm encounters an error, letting us react
 void my_error_callback(lt_VM* vm, const char* msg)
@@ -41,7 +42,8 @@ int main(char** argv, int argc)
 {
     lt_VM* vm = lt_open(malloc, free, my_error_callback);                    // open new VM
     ltstd_open_all(vm);                                                      // register stdlib
-                   
+    ltasync_open_all(vm);                                                    // optional Promise, timer, and task libs
+
     const char* my_source_code = ...                                         // read source from file/stream/string
 
     uint16_t n_return = lt_dostring(vm, my_source_code, "my_module")         // run code as "my_module" 
@@ -51,24 +53,63 @@ int main(char** argv, int argc)
 ---
 ## Compiling
 
+The included Taskfile is the supported development workflow:
+
+```powershell
+task build
+build/little.exe --help
+build/little.exe scripts/hello.little
+build/little.exe -e 'io.print("hello")'
+build/little.exe -I lib scripts/main.little
+```
+
+The CLI accepts one script path, or `-e SOURCE` for a short inline program. It
+returns a non-zero exit code for command-line, file, parse, or runtime errors.
+Use `--help` to see its options and `--version` to see the linked API version.
+Use `-I DIRECTORY` (more than once if needed) to add source-module search paths
+without baking those local launch details into the script.
+
+For a local Windows compiler, copy `.env.example` to `.env` and set `GCC_PATH`
+to the w64devkit root; the Taskfile loads that file without committing it.
+
+### CI and release packages
+
+GitHub Actions builds and tests on Windows and Linux. It downloads the
+pinned WebUI submodule and compiles WebUI without launching a GUI. Pull requests
+targeting `develop` produce per-PR development packages. Pushes to `develop`
+produce development packages after merges; pushes to `main` produce optimized
+release packages after merges from `develop`. The workflow can also be manually
+run for any ref, defaulting to `develop`, with either package type.
+
+Each run uploads one self-contained package for every target:
+
+* `little-windows-x64.zip` contains `little.exe`, `libs/json/json.dll`, and
+  `libs/webui/webui.dll`.
+* `little-linux-x64.zip` contains `little`, `libs/json/json.so`, and
+  `libs/webui/webui.so`.
+
 #### Linux
 ```
-gcc -std=c11 main.c src/little.c src/little_std.c -lm -o little
+gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_common.c src/little_std.c src/little_loadlib.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -lm -pthread -rdynamic -ldl -o little
 ```
 
 #### Windows
 you need [msys2](https://www.msys2.org) _just follow the installation instructions_ 
-```
+```powershell
 pacman -S mingw-w64-ucrt-x86_64-gcc
 
-gcc main.c src/little.c src/little_std.c -o little
+gcc main.c src/little_buffer.c src/little.c src/little_common.c src/little_std.c src/little_loadlib.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -Wl,--export-all-symbols -o little
 ```
 ---
 ## Links
 * **[Language overview](doc/lt.md)**
+* **[Syntax rules](doc/syntax.md)**
+* **[Runtime and compiler limits](doc/limits.md)**
 * **[Standard library](doc/ltstd.md)**
+* **[Task API](doc/std/task.md)**
 * **[C API reference](doc/api.md)**
 * **[C API examples](doc/example.md)**
+* **[Runnable scripts](scripts/README.md)**
 ---
 ## Contribution
 Feel free to open an issue or pull request if you feel you have something meaninfgul to add, but keep in mind the language is minimalist by design, so any merging will be very carefully picked

@@ -1,0 +1,5 @@
+var collect = fn(a, b, c) {
+    io.print(a, b, c)
+}
+
+collect("start", unpack(["middle", "end"]))

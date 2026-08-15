@@ -1,0 +1,4 @@
+var result = pcall(fn() {
+    return unpack([1], 0, 0, 0)
+})
+io.print(result.ok, string.contains(result.error, "Expected 1-3 arguments to unpack!"))

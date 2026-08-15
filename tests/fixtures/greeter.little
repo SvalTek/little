@@ -1,0 +1,14 @@
+io.print("greeter loaded")
+
+fn greet(name) {
+    return string.format("hello %s", name)
+}
+
+fn shout(name) {
+    return string.upper(greet(name))
+}
+
+return {
+    greet
+    shout
+}

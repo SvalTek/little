@@ -1,0 +1,13 @@
+class Point {
+    x = 4
+    public y = 5
+
+    sum() {
+        return this.x + this.y
+    }
+}
+
+var p = Point()
+io.print(p.x)
+io.print(p.y)
+io.print(p:sum())

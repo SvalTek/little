@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 typedef uint64_t lt_Value;
 
@@ -24,20 +25,59 @@ typedef uint64_t lt_Value;
 #define LT_VALUE_NUMBER(x)  ((lt_Value)(lt_make_number((double)x)))
 #define LT_VALUE_OBJECT(x)  ((lt_Value)(LT_NAN_MASK | (LT_TYPE_OBJECT | (uint64_t)x)))
 
+#ifndef LT_STACK_SIZE
+#define LT_STACK_SIZE 256
+#endif
+
+#ifndef LT_CALLSTACK_SIZE
+#define LT_CALLSTACK_SIZE 32
+#endif
+
+#ifndef LT_DEDUP_TABLE_SIZE
+#define LT_DEDUP_TABLE_SIZE 64
+#endif
+
+#ifndef LT_MAX_FUNCTION_PARAMS
+#define LT_MAX_FUNCTION_PARAMS 16
+#endif
+
+#ifndef LT_MAX_CALL_ARGS
+#define LT_MAX_CALL_ARGS 16
+#endif
+
+#ifndef LT_MAX_BRANCHES
+#define LT_MAX_BRANCHES 32
+#endif
+
+#ifndef LT_MAX_RETURNS
+#define LT_MAX_RETURNS 255
+#endif
+
+#ifndef LT_MAX_CONSTANTS
+#define LT_MAX_CONSTANTS 32767
+#endif
+
+#ifndef LT_MAX_LOCALS
+#define LT_MAX_LOCALS (LT_STACK_SIZE - 1)
+#endif
+
 #define LT_IS_NUMBER(x)  (((x) & LT_NAN_MASK) != LT_NAN_MASK)
-#define LT_IS_NULL(x)    ((x) == LT_TYPE_NULL)
+#define LT_IS_NULL(x)    ((x) == LT_VALUE_NULL)
 #define LT_IS_BOOL(x)    (x == LT_VALUE_TRUE || x == LT_VALUE_FALSE)
 #define LT_IS_TRUE(x)    (x == LT_VALUE_TRUE)
 #define LT_IS_FALSE(x)   (x == LT_VALUE_FALSE)
 #define LT_IS_TRUTHY(x) (!(x == LT_VALUE_FALSE || x == LT_VALUE_NULL))
 #define LT_IS_STRING(x)  (!LT_IS_NUMBER(x) && (x & LT_TYPE_MASK) == LT_TYPE_STRING)
 #define LT_IS_OBJECT(x)  (!LT_IS_NUMBER(x) && (x & LT_TYPE_MASK) == LT_TYPE_OBJECT)
-#define LT_IS_TABLE(x)    (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_TABLE)
-#define LT_IS_ARRAY(x)    (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_ARRAY)
+#define LT_IS_TABLE(x)    (LT_IS_OBJECT(x) && (LT_GET_OBJECT(x)->type == LT_OBJECT_TABLE || LT_GET_OBJECT(x)->type == LT_OBJECT_SHARED_TABLE))
+#define LT_IS_ARRAY(x)    (LT_IS_OBJECT(x) && (LT_GET_OBJECT(x)->type == LT_OBJECT_ARRAY || LT_GET_OBJECT(x)->type == LT_OBJECT_SHARED_ARRAY))
 #define LT_IS_FUNCTION(x) (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_FN)
 #define LT_IS_CLOSURE(x)  (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_CLOSURE)
 #define LT_IS_NATIVE(x)   (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_NATIVEFN)
+#define LT_IS_CLASS(x)    (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_CLASS)
+#define LT_IS_INSTANCE(x) (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_INSTANCE)
 #define LT_IS_PTR(x)      (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_PTR)
+#define LT_IS_CELL(x)     (LT_IS_OBJECT(x) && LT_GET_OBJECT(x)->type == LT_OBJECT_CELL)
 
 #define LT_GET_NUMBER(x) lt_get_number(x)
 #define LT_GET_STRING(vm, x) lt_get_string(vm, x)
@@ -55,6 +95,7 @@ typedef enum {
 	LT_TOKEN_PERIOD,
 	LT_TOKEN_COMMA,
 	LT_TOKEN_COLON,
+	LT_TOKEN_AT,
 
 	LT_TOKEN_OPENPAREN,
 	LT_TOKEN_CLOSEPAREN,
@@ -66,14 +107,29 @@ typedef enum {
 	LT_TOKEN_CLOSEBRACE,
 
 	LT_TOKEN_FN,
+	LT_TOKEN_ASYNC,
+	LT_TOKEN_AWAIT,
+	LT_TOKEN_CLASS,
+	LT_TOKEN_EXTENDS,
+	LT_TOKEN_OVERRIDE,
+	LT_TOKEN_SUPER,
+	LT_TOKEN_PUBLIC,
+	LT_TOKEN_PRIVATE,
+	LT_TOKEN_CONSTRUCTOR,
+	LT_TOKEN_GET,
+	LT_TOKEN_SET,
 	LT_TOKEN_BREAK,
 	LT_TOKEN_VAR,
+	LT_TOKEN_GLOBAL,
 	LT_TOKEN_IF,
 	LT_TOKEN_ELSE,
 	LT_TOKEN_ELSEIF,
 	LT_TOKEN_FOR,
 	LT_TOKEN_IN,
 	LT_TOKEN_WHILE,
+	LT_TOKEN_WITH,
+	LT_TOKEN_IMPORT,
+	LT_TOKEN_FROM,
 	LT_TOKEN_RETURN,
 
 	LT_TOKEN_PLUS,
@@ -91,6 +147,8 @@ typedef enum {
 	LT_TOKEN_AND,
 	LT_TOKEN_OR,
 	LT_TOKEN_NOT,
+	LT_TOKEN_TYPE,
+	LT_TOKEN_TYPEOF,
 
 	LT_TOKEN_END,
 } lt_TokenType;
@@ -142,15 +200,19 @@ typedef enum {
 	LT_AST_NODE_BINARYOP,
 	LT_AST_NODE_UNARYOP,
 	LT_AST_NODE_DECLARE,
+	LT_AST_NODE_CLASS,
+	LT_AST_NODE_SUPER,
 	LT_AST_NODE_ASSIGN,
 	LT_AST_NODE_FN,
 	LT_AST_NODE_CALL,
+	LT_AST_NODE_AWAIT,
 	LT_AST_NODE_RETURN,
 	LT_AST_NODE_IF,
 	LT_AST_NODE_ELSE,
 	LT_AST_NODE_ELSEIF,
 	LT_AST_NODE_FOR,
 	LT_AST_NODE_WHILE,
+	LT_AST_NODE_WITH,
 	LT_AST_NODE_BREAK,
 } lt_AstNodeType;
 
@@ -167,6 +229,38 @@ typedef struct
 	const char* module_name;
 	lt_Buffer locations;
 } lt_DebugInfo;
+
+typedef enum {
+	LT_VIS_PUBLIC,
+	LT_VIS_PRIVATE,
+} lt_Visibility;
+
+typedef enum {
+	LT_CLASS_FIELD,
+	LT_CLASS_METHOD,
+	LT_CLASS_CONSTRUCTOR,
+	LT_CLASS_GETTER,
+	LT_CLASS_SETTER,
+} lt_ClassMemberType;
+
+typedef struct {
+	lt_ClassMemberType type;
+	lt_Visibility visibility;
+	lt_Token* name;
+	struct lt_AstNode* value;
+	uint8_t is_override;
+} lt_ClassMember;
+
+typedef enum {
+	LT_DESTRUCT_NONE,
+	LT_DESTRUCT_ARRAY,
+	LT_DESTRUCT_TABLE,
+} lt_DestructureType;
+
+typedef struct {
+	lt_Token* key;
+	lt_Token* local;
+} lt_DestructureEntry;
 
 typedef struct lt_AstNode {
 	lt_AstNodeType type;
@@ -215,7 +309,20 @@ typedef struct lt_AstNode {
 		struct {
 			lt_Token* identifier;
 			struct lt_AstNode* expr;
+			lt_DestructureType destructure;
+			lt_Buffer entries;
+			uint8_t is_global;
 		} declare;
+
+		struct {
+			lt_Token* identifier;
+			lt_Token* superclass;
+			lt_Buffer members;
+		} class_decl;
+
+		struct {
+			lt_Token* method;
+		} super_expr;
 
 		struct {
 			struct lt_AstNode* left;
@@ -223,15 +330,20 @@ typedef struct lt_AstNode {
 		} assign;
 
 		struct {
-			lt_Token* args[16];
+			lt_Token* args[LT_MAX_FUNCTION_PARAMS + 1];
 			struct lt_Scope* scope;
 			lt_Buffer body;
+			uint8_t is_async;
 		} fn;
 
 		struct {
 			struct lt_AstNode* callee;
-			struct lt_AstNode* args[16];
+			struct lt_AstNode* args[LT_MAX_CALL_ARGS + 2];
 		} call;
+
+		struct {
+			struct lt_AstNode* expr;
+		} await;
 
 		struct {
 			struct lt_AstNode* expr;
@@ -248,6 +360,12 @@ typedef struct lt_AstNode {
 			struct lt_AstNode* iterator;
 			lt_Buffer body;
 		} loop;
+
+		struct {
+			lt_Token* receiver;
+			struct lt_AstNode* expr;
+			lt_Buffer body;
+		} with_stmt;
 	};
 } lt_AstNode;
 
@@ -257,6 +375,7 @@ typedef struct lt_Scope {
 	lt_Token* start;
 	lt_Buffer locals;
 	lt_Buffer upvals;
+	lt_Buffer captured;
 	lt_Token* end;
 } lt_Scope;
 
@@ -268,6 +387,12 @@ typedef struct {
 	lt_Scope* current;
 
 	uint8_t is_valid;
+	uint8_t in_async;
+	uint8_t in_constructor;
+	uint8_t allow_table_call;
+	uint8_t had_error;
+	uint32_t next_with_id;
+	lt_Token* self_token;
 } lt_Parser;
 
 typedef struct {
@@ -279,20 +404,35 @@ typedef struct {
 } lt_Table;
 
 typedef enum {
+	LT_PROMISE_PENDING,
+	LT_PROMISE_FULFILLED,
+	LT_PROMISE_REJECTED,
+} lt_PromiseState;
+
+typedef enum {
 	LT_OBJECT_CHUNK,
 	LT_OBJECT_FN,
 	LT_OBJECT_CLOSURE,
 	LT_OBJECT_TABLE,
 	LT_OBJECT_ARRAY,
 	LT_OBJECT_NATIVEFN,
+	LT_OBJECT_BOUND_NATIVE,
+	LT_OBJECT_PROMISE,
+	LT_OBJECT_CLASS,
+	LT_OBJECT_INSTANCE,
+	LT_OBJECT_CELL,
 	LT_OBJECT_PTR,
+	LT_OBJECT_SHARED_TABLE,
+	LT_OBJECT_SHARED_ARRAY,
 } lt_ObjectType;
 
-struct lt_VM;
+typedef struct lt_VM lt_VM;
+typedef struct lt_SharedObject lt_SharedObject;
+typedef struct lt_Api lt_Api;
 
-typedef uint8_t(*lt_NativeFn)(struct lt_VM* vm, uint8_t argc);
+typedef uint8_t(*lt_NativeFn)(lt_VM* vm, uint8_t argc);
 
-typedef struct {
+typedef struct lt_Object {
 	lt_ObjectType type;
 
 	union
@@ -308,6 +448,8 @@ typedef struct {
 		struct
 		{
 			uint8_t arity;
+			uint8_t is_async;
+			struct lt_Object* owner_class;
 			lt_Buffer code;
 			lt_Buffer constants;
 			lt_DebugInfo* debug;
@@ -323,13 +465,48 @@ typedef struct {
 		{
 			lt_Value function;
 			lt_Buffer captures;
+			struct lt_Object* owner_class;
 		} closure;
 
+		struct
+		{
+			lt_NativeFn native;
+			lt_Value receiver;
+		} bound_native;
 
 		lt_Table table;
 		lt_Buffer array;
 		lt_NativeFn native;
+		struct
+		{
+			lt_PromiseState state;
+			lt_Value result;
+			lt_Buffer reactions;
+			uint8_t handled;
+		} promise;
+		struct
+		{
+			lt_Value name;
+			lt_Table public_fields;
+			lt_Table private_fields;
+			lt_Table public_methods;
+			lt_Table private_methods;
+			lt_Table public_getters;
+			lt_Table private_getters;
+			lt_Table public_setters;
+			lt_Table private_setters;
+			lt_Value constructor;
+			struct lt_Object* superclass;
+		} class_def;
+		struct
+		{
+			struct lt_Object* klass;
+			lt_Table public_fields;
+			lt_Table private_fields;
+		} instance;
+		lt_Value cell;
 		void* ptr;
+		lt_SharedObject* shared;
 	};
 
 	uint8_t markbit : 1;
@@ -340,27 +517,22 @@ typedef struct lt_Frame {
 	lt_Buffer* code;
 	lt_Buffer* constants;
 	lt_Buffer* upvals;
+	lt_Object* class_context;
 	uint32_t pc;
 	uint16_t start;
 } lt_Frame;
 
 typedef void* (*lt_AllocFn)(size_t);
 typedef void (*lt_FreeFn)(void*);
-typedef void (*lt_ErrorFn)(struct lt_VM* vm, const char*);
+typedef void (*lt_ErrorFn)(lt_VM* vm, const char*);
+typedef void (*lt_NativeLibraryCloseFn)(void*);
 
-#ifndef LT_STACK_SIZE
-#define LT_STACK_SIZE 256
-#endif
+typedef struct lt_NativeLibrary {
+	void* handle;
+	lt_NativeLibraryCloseFn close;
+} lt_NativeLibrary;
 
-#ifndef LT_CALLSTACK_SIZE
-#define LT_CALLSTACK_SIZE 32
-#endif
-
-#ifndef LT_DEDUP_TABLE_SIZE
-#define LT_DEDUP_TABLE_SIZE 64
-#endif
-
-typedef struct {
+struct lt_VM {
 	lt_Buffer heap;
 	lt_Buffer keepalive;
 
@@ -374,14 +546,25 @@ typedef struct {
 	lt_Buffer strings[LT_DEDUP_TABLE_SIZE];
 
 	lt_Value global;
+	lt_Buffer microtasks;
+	lt_Buffer async_calls;
+	lt_Buffer timers;
+	lt_Buffer workers;
+	lt_Buffer native_libraries;
+	uint32_t next_timer_id;
+	uint8_t runloop_stop;
+	uint8_t last_call_returns;
 
 	lt_AllocFn alloc;
 	lt_FreeFn free;
 	lt_ErrorFn error;
 
 	void* error_buf;
+	void* error_context;
+	char* error_trap;
+	uint8_t trap_errors;
 	uint8_t generate_debug;
-} lt_VM;
+};
 
 lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error);
 void lt_destroy(lt_VM* vm);
@@ -405,6 +588,8 @@ lt_Value lt_getupval(lt_VM* vm, uint8_t idx);
 void lt_setupval(lt_VM* vm, uint8_t idx, lt_Value val);
 
 uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc);
+uint8_t lt_poll(lt_VM* vm);
+void lt_runloop(lt_VM* vm);
 void lt_error(lt_VM* vm, const char* msg);
 void lt_runtime_error(lt_VM* vm, const char* message);
 
@@ -427,12 +612,15 @@ const char* lt_get_string(lt_VM* vm, lt_Value value);
 uint8_t lt_equals(lt_Value a, lt_Value b);
 
 lt_Value lt_make_table(lt_VM* vm);
-lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val); 
+lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val);
 lt_Value lt_table_get(lt_VM* vm, lt_Value table, lt_Value key);
+uint8_t  lt_table_next(lt_VM* vm, lt_Value table, uint64_t* cursor, lt_Value* key, lt_Value* val);
 uint8_t  lt_table_pop(lt_VM* vm, lt_Value table, lt_Value key);
 
 lt_Value  lt_make_array(lt_VM* vm);
 lt_Value  lt_array_push(lt_VM* vm, lt_Value array, lt_Value val);
+lt_Value  lt_array_get(lt_VM* vm, lt_Value array, uint32_t idx);
+lt_Value  lt_array_set(lt_VM* vm, lt_Value array, uint32_t idx, lt_Value val);
 lt_Value* lt_array_at(lt_Value array, uint32_t idx);
 lt_Value  lt_array_remove(lt_VM* vm, lt_Value array, uint32_t idx);
 uint32_t  lt_array_length(lt_Value array);
@@ -440,3 +628,45 @@ uint32_t  lt_array_length(lt_Value array);
 lt_Value lt_make_native(lt_VM* vm, lt_NativeFn fn);
 lt_Value lt_make_ptr(lt_VM* vm, void* ptr);
 void* lt_get_ptr(lt_Value ptr);
+
+#define LT_API_VERSION 2
+
+struct lt_Api {
+	uint32_t version;
+	uint32_t size;
+
+	void* (*alloc)(lt_VM* vm, size_t size);
+	void (*free)(lt_VM* vm, void* ptr);
+
+	void (*runtime_error)(lt_VM* vm, const char* message);
+
+	void (*push)(lt_VM* vm, lt_Value val);
+	lt_Value (*pop)(lt_VM* vm);
+	uint16_t (*exec)(lt_VM* vm, lt_Value callable, uint8_t argc);
+
+	lt_Value (*make_number)(double n);
+	double (*get_number)(lt_Value v);
+	lt_Value (*make_string)(lt_VM* vm, const char* string);
+	const char* (*get_string)(lt_VM* vm, lt_Value value);
+	lt_Value (*make_table)(lt_VM* vm);
+	lt_Value (*make_array)(lt_VM* vm);
+	lt_Value (*make_native)(lt_VM* vm, lt_NativeFn fn);
+	lt_Value (*make_ptr)(lt_VM* vm, void* ptr);
+	void* (*get_ptr)(lt_Value ptr);
+
+	lt_Value (*table_set)(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val);
+	lt_Value (*table_get)(lt_VM* vm, lt_Value table, lt_Value key);
+	uint8_t (*table_next)(lt_VM* vm, lt_Value table, uint64_t* cursor, lt_Value* key, lt_Value* val);
+	uint8_t (*table_pop)(lt_VM* vm, lt_Value table, lt_Value key);
+
+	lt_Value (*array_push)(lt_VM* vm, lt_Value array, lt_Value val);
+	lt_Value (*array_get)(lt_VM* vm, lt_Value array, uint32_t idx);
+	lt_Value (*array_set)(lt_VM* vm, lt_Value array, uint32_t idx, lt_Value val);
+	lt_Value (*array_remove)(lt_VM* vm, lt_Value array, uint32_t idx);
+	uint32_t (*array_length)(lt_Value array);
+
+	uint8_t (*poll)(lt_VM* vm);
+	uint8_t (*is_promise)(lt_Value value);
+	lt_PromiseState (*promise_state)(lt_Value value);
+	lt_Value (*promise_result)(lt_Value value);
+};

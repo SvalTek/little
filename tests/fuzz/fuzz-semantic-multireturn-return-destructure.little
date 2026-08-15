@@ -1,0 +1,6 @@
+var values = fn() {
+    return unpack(["first", "second"])
+}
+
+var [a, b, c] = values()
+io.print(a, b, c)

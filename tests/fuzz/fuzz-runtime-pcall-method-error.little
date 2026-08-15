@@ -1,0 +1,12 @@
+class Broken {
+    public fail() {
+        return "x" + 1
+    }
+}
+
+var broken = Broken()
+var result = pcall(fn() {
+    return broken:fail()
+})
+io.print(result.ok, string.contains(result.error, "Expected arithmetic operands to be numbers!"))
+io.print("after")

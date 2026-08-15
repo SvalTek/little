@@ -1,0 +1,8 @@
+io.write("alpha\n")
+io.writeLine("beta")
+io.print("tab\tend")
+io.print("quote \"Little\"")
+io.print("slash \\")
+io.writeFile("build/escape-test.txt", "one\ntwo\n")
+io.appendLine("build/escape-test.txt", "three")
+io.print(io.readFile("build/escape-test.txt"))

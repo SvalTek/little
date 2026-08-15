@@ -1,0 +1,16 @@
+var make = fn(seed) {
+    class Counter {
+        private hidden = seed
+
+        value() {
+            return this.hidden
+        }
+    }
+
+    return Counter
+}
+
+var A = make(1)
+var B = make(2)
+io.print(A():value())
+io.print(B():value())

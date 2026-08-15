@@ -1,0 +1,21 @@
+class Secret {
+    private _value = "a"
+
+    private get value() {
+        return this._value
+    }
+
+    private set value(v) {
+        this._value = v
+    }
+
+    public update(v) {
+        this.value = v
+        return this.value
+    }
+}
+
+var secret = Secret()
+io.print(secret.value)
+io.print(secret:update("b"))
+io.print(secret.value)

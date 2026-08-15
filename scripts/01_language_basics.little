@@ -1,0 +1,95 @@
+io.print("language basics")
+
+; A named function declaration is the compact form for:
+; `var describe = fn(value) { ... }`
+fn describe(value) {
+    if value > 10 {
+        return "large"
+    }
+    elseif value is 10 {
+        return "ten"
+    }
+    else {
+        return "small"
+    }
+}
+
+; Function literals are still useful when a function is just data.
+var double = fn(value) {
+    return value * 2
+}
+
+; Functions close over surrounding locals.
+fn makeAdder(amount) {
+    return fn(value) {
+        return value + amount
+    }
+}
+
+var addFive = makeAdder(5)
+io.print("closure", addFive(10))
+
+; Globals are explicit. Plain top-level `var` is local to this module/script.
+global appName = "Little Basics"
+global fn announce(name) {
+    return string.expand("{{appName}} welcomes {{name}}", {
+        appName: appName
+        name
+    })
+}
+
+io.print(announce("Ada"))
+
+; Arrays are zero-indexed. `array.each` is the usual iterator for `for`.
+var numbers = [ 1, 2, 3, 4 ]
+var total = 0
+
+for n in array.each(numbers) {
+    total = total + n
+}
+
+; Tables can use literal fields and later property assignment.
+; Shorthand `{ total, status }` means `{ total: total status: status }`.
+var status = describe(total)
+var profile = { name: "Ada" total status doubled: double(total) }
+profile.note = "first pass"
+
+io.print("sum", total, profile.status, profile.doubled)
+io.print(string.expand("{{name}} scored {{total}} which is {{status}}", profile))
+
+; Receiver-style table functions take the receiver as their first parameter.
+; The colon call `profile:tag("reviewed")` passes `profile` as `this`.
+profile.tag = fn(this, label) {
+    @note = string.expand("{{note}} / {{label}}", {
+        note: @note
+        label
+    })
+    return @note
+}
+
+io.print(profile:tag("reviewed"))
+
+; Table-call sugar lets a table literal act as a single argument.
+fn renderBadge(options) {
+    return string.expand("[{{status}}] {{name}}", options)
+}
+
+io.print(renderBadge {
+    name: profile.name
+    status: string.upper(profile.status)
+})
+
+; `with` evaluates its receiver once and makes @name refer to fields on it.
+with profile {
+    @scoreText = string.expand("{{total}} points", profile)
+    @ready = true
+}
+
+io.print(profile.ready, profile.scoreText)
+
+; `while` is useful when the loop state is not just an array element.
+var countdown = 3
+while countdown > 0 {
+    io.print("countdown", countdown)
+    countdown = countdown - 1
+}

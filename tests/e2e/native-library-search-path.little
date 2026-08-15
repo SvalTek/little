@@ -1,0 +1,7 @@
+module.addPath("nativelib/native_math/build")
+
+var add = loadLibrary("native_math")
+var again = loadLibrary("native_math")
+
+io.print(add(10, 5))
+io.print(add is again)

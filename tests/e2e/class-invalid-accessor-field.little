@@ -1,0 +1,6 @@
+class Bad {
+    public name = ""
+    public get name() {
+        return "x"
+    }
+}

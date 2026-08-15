@@ -1,0 +1,7 @@
+Promise(fn(resolve, reject) {
+    resolve(2)
+}).next(fn(value) {
+    return value + 3
+}).next(fn(value) {
+    io.print(value)
+})

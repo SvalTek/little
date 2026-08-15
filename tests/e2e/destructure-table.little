@@ -1,0 +1,9 @@
+var user = { id: 42 name: "Ada" email: "ada@example.test" }
+var { id, name } = user
+io.print(id, name)
+
+var { id: userId, email: address, missing } = user
+io.print(userId, address, missing)
+
+var payload = { id, name }
+io.print(payload.id, payload.name)

@@ -1,0 +1,21 @@
+module.clearPaths()
+module.addPath("missing", "tests/fixtures/modules")
+
+var common = import "utils/common"
+var mathish = import "tools/mathish"
+var collision = import "collision"
+
+module.clearPaths()
+module.addPath("tests/fixtures/pattern/?/src")
+var patterned = import "pkg"
+var package_submodule = import "toolkit/math"
+var extensionless = pcall(fn() {
+    return import "tools/extensionless"
+})
+
+io.print(common.name)
+io.print(mathish.name)
+io.print(collision.name)
+io.print(patterned.name)
+io.print(package_submodule.name)
+io.print(not extensionless.ok, string.contains(extensionless.error, "Failed to import module"))

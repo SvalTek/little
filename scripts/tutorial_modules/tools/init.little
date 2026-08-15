@@ -1,0 +1,7 @@
+fn describe(name) {
+    return string.expand("directory module: {{name}}", { name })
+}
+
+return {
+    describe
+}

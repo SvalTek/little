@@ -1,0 +1,10 @@
+var count = 0
+var box = { id: null }
+
+box.id = setInterval(fn() {
+    count = count + 1
+    io.print(count)
+    if count >= 3 {
+        clearInterval(box.id)
+    }
+}, 1)

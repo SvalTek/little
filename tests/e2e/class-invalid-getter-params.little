@@ -1,0 +1,5 @@
+class Bad {
+    get name(value) {
+        return value
+    }
+}

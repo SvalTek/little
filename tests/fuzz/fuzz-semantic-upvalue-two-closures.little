@@ -1,0 +1,19 @@
+var makeCounter = fn() {
+    var count = 0
+
+    return {
+        inc: fn() {
+            count = count + 1
+            return count
+        },
+        read: fn() {
+            return count
+        }
+    }
+}
+
+var counter = makeCounter()
+io.print(counter.read())
+io.print(counter.inc())
+io.print(counter.inc())
+io.print(counter.read())

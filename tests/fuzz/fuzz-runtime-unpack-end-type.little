@@ -1,0 +1,9 @@
+var result = pcall(fn() {
+    return unpack([1, 2], 0, "1")
+})
+var failed = not result.ok
+var has_expected_error = false
+if failed {
+    has_expected_error = string.contains(result.error, "Expected end argument to unpack to be number!")
+}
+io.print(failed, has_expected_error)
