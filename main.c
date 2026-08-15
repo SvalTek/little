@@ -18,6 +18,8 @@
 
 static int had_error = 0;
 
+#define LT_REPL_DRAIN_LIMIT 1000
+
 static char* copy_string(const char* value);
 
 /**
@@ -185,6 +187,13 @@ static int run_repl_source(lt_VM* vm, const char* source)
         had_error = 0;
         return 1;
     }
+    /* Drain immediately-runnable async work (promises, timers, hooks) so
+       deferred callbacks progress between REPL entries without blocking
+       the prompt. The bound stops a repeating immediate timer from
+       hanging the session. */
+    for (uint32_t steps = 0; steps < LT_REPL_DRAIN_LIMIT && !had_error && lt_poll_now(vm); ++steps) {}
+    if (had_error)
+        had_error = 0; /* drain errors were already reported; keep the session alive */
     while (nreturn-- > 0)
     {
         char* returned = ltstd_tostring(vm, lt_pop(vm));
@@ -415,11 +424,11 @@ static int load_config(lt_VM* vm, const char* path, int required, int* repl_echo
     }
 
     char* directory = parent_path(path);
+    char* resolved = 0;
     if (!directory)
     {
-        fclose(file);
         fprintf(stderr, "ERROR: Failed to allocate configuration path\n");
-        return 0;
+        goto fail;
     }
 
     char line[4096];
@@ -434,9 +443,7 @@ static int load_config(lt_VM* vm, const char* path, int required, int* repl_echo
         if (!equals)
         {
             fprintf(stderr, "ERROR: %s:%u: Expected KEY = PATH\n", path, line_number);
-            free(directory);
-            fclose(file);
-            return 0;
+            goto fail;
         }
         *equals = 0;
         char* key = trim(entry);
@@ -444,9 +451,7 @@ static int load_config(lt_VM* vm, const char* path, int required, int* repl_echo
         if (!*value)
         {
             fprintf(stderr, "ERROR: %s:%u: Path cannot be empty\n", path, line_number);
-            free(directory);
-            fclose(file);
-            return 0;
+            goto fail;
         }
 
         if (strcmp(key, "repl_echo") == 0)
@@ -456,56 +461,49 @@ static int load_config(lt_VM* vm, const char* path, int required, int* repl_echo
             else
             {
                 fprintf(stderr, "ERROR: %s:%u: repl_echo must be true or false\n", path, line_number);
-                free(directory);
-                fclose(file);
-                return 0;
+                goto fail;
             }
             continue;
         }
 
-        char* resolved = path_from_directory(directory, value);
+        resolved = path_from_directory(directory, value);
         if (!resolved)
         {
             fprintf(stderr, "ERROR: Failed to allocate configuration path\n");
-            free(directory);
-            fclose(file);
-            return 0;
+            goto fail;
         }
 
         if (strcmp(key, "module_path") == 0)
         {
             if (!add_module_path(vm, resolved))
-            {
-                free(resolved);
-                free(directory);
-                fclose(file);
-                return 0;
-            }
+                goto fail;
         }
         else if (strcmp(key, "library_path") == 0)
             ltstd_add_library_path(vm, resolved);
         else
         {
             fprintf(stderr, "ERROR: %s:%u: Unknown setting '%s'\n", path, line_number, key);
-            free(resolved);
-            free(directory);
-            fclose(file);
-            return 0;
+            goto fail;
         }
         free(resolved);
+        resolved = 0;
     }
 
     if (ferror(file))
     {
         fprintf(stderr, "ERROR: Failed to read configuration '%s'\n", path);
-        free(directory);
-        fclose(file);
-        return 0;
+        goto fail;
     }
 
     free(directory);
     fclose(file);
     return 1;
+
+fail:
+    free(resolved);
+    free(directory);
+    fclose(file);
+    return 0;
 }
 
 /**
@@ -829,6 +827,8 @@ int main(int argc, char** argv)
             char* user_config = join_path(home, ".config/little.conf");
             if (!user_config || !load_config(vm, user_config, 0, &repl_echo))
             {
+                if (!user_config)
+                    fprintf(stderr, "ERROR: Failed to allocate configuration path\n");
                 free(user_config);
                 free(executable);
                 destroy_vm(vm);
@@ -844,6 +844,8 @@ int main(int argc, char** argv)
         free(executable_directory);
         if (!local_config || !load_config(vm, local_config, 0, &repl_echo))
         {
+            if (!local_config)
+                fprintf(stderr, "ERROR: Failed to allocate configuration path\n");
             free(local_config);
             free(executable);
             destroy_vm(vm);

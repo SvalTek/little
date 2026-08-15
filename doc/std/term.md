@@ -36,7 +36,9 @@ most one terminal event each turn, alongside timers and other async work.
 
 `term.readLine(prompt)` is the blocking convenience API. It provides basic line
 editing, cursor movement, delete/backspace, and in-process history. It returns
-the entered string, or `null` for Ctrl-C, Ctrl-D, or end-of-input.
+the entered string, or `null` for Ctrl-C, Ctrl-D, or end-of-input. Input is
+limited to 4095 characters; further printable characters are rejected with a
+terminal bell (`beep()`).
 
 Terminal drawing and `readLine` are intended for an interactive terminal. Do
 not call `readLine` from an event callback: it blocks the main loop until the

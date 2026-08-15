@@ -50,7 +50,7 @@ Pops the top value from the VM's stack to the caller
 
 ---
 ```c
-lt_Value lt_at(lt_VM*, uint16_t);
+lt_Value lt_at(lt_VM*, uint32_t);
 ```
 Returns the N'th element of the current stack frame, useful for arg handling in C.
 
@@ -96,6 +96,15 @@ Polls or drains asynchronous work owned by the VM, including promise callbacks, 
 ---
 
 ```c
+uint8_t lt_poll_now(lt_VM* vm);
+```
+Identical to `lt_poll` except it never sleeps: it performs one round of immediately-runnable work (promises, timers, poll hooks, task completions) and returns non-zero if work was performed or remains pending (future timers, unfinished workers), zero when the VM is fully idle. It is intended for interactive or non-blocking host loops.
+
+`lt_poll_now` is reachable from native libraries through the `lt_Api` table (`poll_now` member) when the table size includes it. Native libraries should check both `lt_Api.version` and `lt_Api.size` before use, consistent with the existing `lt_poll` wording.
+
+---
+
+```c
 uint32_t lt_add_poll_hook(lt_VM* vm, lt_PollHook hook, void* context);
 void lt_remove_poll_hook(lt_VM* vm, uint32_t hook_id);
 ```
@@ -130,6 +139,11 @@ The VM starts without standard libraries. Use `ltstd_open_all` for the tradition
 `ltstd_open_term(vm)` exposes the built-in `term` module. It is separate from
 `ltstd_open_all` because it owns an interactive terminal session; call
 `ltstd_close_term()` before destroying the VM when it may have been opened.
+
+```c
+void ltstd_close_term(void);
+```
+Shuts down the terminal integration and clears the output writer.
 
 `loadLibrary(path)` loads a platform-native library and calls its exported
 `ltopen(lt_VM* vm, const lt_Api* lt)` function. The `ltopen` function returns

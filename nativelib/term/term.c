@@ -2,6 +2,7 @@
 #include "../../vendor/pdcursesmod/curses.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* This keeps the loadLibrary ABI even when linked into little.exe. */
@@ -14,6 +15,7 @@
 
 #define TERM_MAX_LINE 4096
 #define TERM_HISTORY_CAPACITY 64
+#define TERM_MAX_MODULES 8
 
 typedef struct
 {
@@ -34,6 +36,19 @@ typedef struct
 
 static const lt_Api* lt = 0;
 static TermState state;
+
+/* Per-VM module association.  Each VM that loads the module gets its own
+   table; the table is recorded here and bound into `state.module` only when
+   that VM acquires the terminal, so callbacks are rooted in the owning VM's
+   table even when several VMs load the module. */
+typedef struct
+{
+    lt_VM* vm;
+    lt_Value module;
+} TermModule;
+
+static TermModule term_modules[TERM_MAX_MODULES];
+static uint8_t term_module_count;
 
 /**
  * Requires an exact number of arguments for the current call.
@@ -64,6 +79,37 @@ static void require_active(lt_VM* vm)
 static uint8_t is_callable(lt_Value value)
 {
     return LT_IS_FUNCTION(value) || LT_IS_CLOSURE(value) || LT_IS_NATIVE(value) || LT_IS_CLASS(value);
+}
+
+/**
+ * Duplicates a string using the C allocator.
+ * @param text String to duplicate.
+ * @return A newly allocated copy, or a null pointer when the text is null or allocation fails.
+ */
+static char* term_strdup(const char* text)
+{
+    size_t len;
+    char* copy;
+    if (!text) return 0;
+    len = strlen(text);
+    copy = (char*)malloc(len + 1);
+    if (!copy) return 0;
+    memcpy(copy, text, len + 1);
+    return copy;
+}
+
+/**
+ * Returns the module table registered for the specified VM.
+ * @param vm VM whose module table is requested.
+ * @return The VM's module table, or null when the VM has not loaded the module.
+ */
+static lt_Value term_module_for(lt_VM* vm)
+{
+    for (uint8_t i = 0; i < term_module_count; ++i)
+    {
+        if (term_modules[i].vm == vm) return term_modules[i].module;
+    }
+    return LT_VALUE_NULL;
 }
 
 /**
@@ -206,7 +252,8 @@ uint8_t lt_term_write_output(const char* text)
  */
 void lt_term_begin_composer(void)
 {
-    state.composer = "";
+    if (state.composer) free((void*)state.composer);
+    state.composer = term_strdup("");
     state.composer_active = 1;
 }
 
@@ -216,7 +263,20 @@ void lt_term_begin_composer(void)
  */
 void lt_term_update_composer(const char* text)
 {
-    state.composer = text ? text : "";
+    if (text)
+    {
+        char* copy = term_strdup(text);
+        if (copy)
+        {
+            if (state.composer) free((void*)state.composer);
+            state.composer = copy;
+        }
+    }
+    else
+    {
+        if (state.composer) free((void*)state.composer);
+        state.composer = 0;
+    }
 }
 
 /**
@@ -235,6 +295,7 @@ void lt_term_commit_composer(void)
             clrtoeol();
         }
     }
+    if (state.composer) free((void*)state.composer);
     state.composer = 0;
     state.composer_active = 0;
     refresh();
@@ -255,9 +316,25 @@ static lt_PollResult term_poll_hook(lt_VM* vm, void* context)
     if (key == ERR) return terminal->callback_set ? LT_POLL_PENDING : LT_POLL_IDLE;
     if (terminal->callback_set)
     {
+        uint8_t saved_trap = vm->trap_errors;
+        char* saved_trap_msg = vm->error_trap;
+        vm->trap_errors = 1;
+        vm->error_trap = 0;
         lt->push(vm, make_event(vm, key));
         uint16_t returns = lt->exec(vm, terminal->callback, 1);
         while (returns--) lt->pop(vm);
+        char* error = vm->error_trap;
+        vm->trap_errors = saved_trap;
+        vm->error_trap = saved_trap_msg;
+        if (error)
+        {
+            if (!saved_trap && vm->error) vm->error(vm, error);
+            lt->free(vm, error);
+            terminal->callback = LT_VALUE_NULL;
+            terminal->callback_set = 0;
+            if (state.module != LT_VALUE_NULL)
+                lt->table_set(vm, state.module, lt->make_string(vm, "_callback"), LT_VALUE_NULL);
+        }
     }
     return LT_POLL_WORK;
 }
@@ -296,6 +373,7 @@ static uint8_t term_open(lt_VM* vm, uint8_t argc)
         }
         state.vm = vm;
         state.active = 1;
+        state.module = term_module_for(vm);
         erase();
         configure_output_region();
         state.output_x = 0;
@@ -321,8 +399,11 @@ static uint8_t term_close(lt_VM* vm, uint8_t argc)
         scrollok(stdscr, FALSE);
         endwin();
     }
-    if (state.module && state.vm == vm)
+    if (state.module != LT_VALUE_NULL && state.vm == vm)
         lt->table_set(vm, state.module, lt->make_string(vm, "_callback"), LT_VALUE_NULL);
+    if (state.composer) free((void*)state.composer);
+    state.composer = 0;
+    state.module = LT_VALUE_NULL;
     state.active = 0;
     state.callback_set = 0;
     state.callback = LT_VALUE_NULL;
@@ -525,9 +606,18 @@ static void draw_input(const char* prompt, const char* line, uint32_t cursor)
     const char* source;
     const char* end;
     int rows, columns;
+    int available;
     int y;
+    size_t prompt_len;
+    size_t line_len;
+    size_t offset;
     getmaxyx(stdscr, rows, columns);
-    (void)columns;
+    prompt_len = strlen(prompt);
+    line_len = strlen(line);
+    available = columns - (int)prompt_len;
+    if (available < 1) available = 1;
+    offset = 0;
+    if (cursor >= (size_t)available) offset = cursor - (size_t)available + 1;
     y = rows - 1;
     if (state.composer_active)
     {
@@ -567,8 +657,8 @@ static void draw_input(const char* prompt, const char* line, uint32_t cursor)
     }
     move(rows - 1, 0);
     addstr(prompt);
-    addstr(line);
-    move(rows - 1, (int)(strlen(prompt) + cursor));
+    mvaddnstr(rows - 1, (int)prompt_len, line + offset, available);
+    move(rows - 1, (int)(prompt_len + (cursor - offset)));
     refresh();
 }
 
@@ -655,10 +745,14 @@ static uint8_t term_read_line(lt_VM* vm, uint8_t argc)
             else { strncpy(line, state.history[history_index], TERM_MAX_LINE); line[TERM_MAX_LINE - 1] = 0; }
             length = cursor = (uint32_t)strlen(line);
         }
-        else if (key >= 32 && key <= 255 && length + 1 < TERM_MAX_LINE)
+        else if (key >= 32 && key <= 255)
         {
-            memmove(line + cursor + 1, line + cursor, length - cursor + 1);
-            line[cursor++] = (char)key; length++; history_index = -1;
+            if (length + 1 < TERM_MAX_LINE)
+            {
+                memmove(line + cursor + 1, line + cursor, length - cursor + 1);
+                line[cursor++] = (char)key; length++; history_index = -1;
+            }
+            else beep();
         }
         draw_input(prompt, line, cursor);
     }
@@ -670,6 +764,8 @@ static uint8_t term_read_line(lt_VM* vm, uint8_t argc)
 void lt_term_shutdown(void)
 {
     if (state.active) endwin();
+    if (state.composer) free((void*)state.composer);
+    state.composer = 0;
     memset(&state, 0, sizeof(state));
 }
 
@@ -686,7 +782,25 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     if (!api || api->version != LT_API_VERSION || api->size < sizeof(lt_Api)) return LT_VALUE_NULL;
     lt = api;
     term = lt->make_table(vm);
-    state.module = term;
+    if (term_module_count < TERM_MAX_MODULES)
+    {
+        uint8_t found = 0;
+        for (uint8_t i = 0; i < term_module_count; ++i)
+        {
+            if (term_modules[i].vm == vm)
+            {
+                term_modules[i].module = term;
+                found = 1;
+                break;
+            }
+        }
+        if (!found)
+        {
+            term_modules[term_module_count].vm = vm;
+            term_modules[term_module_count].module = term;
+            term_module_count++;
+        }
+    }
 #define TERM_FN(name, function) lt->table_set(vm, term, lt->make_string(vm, name), lt->make_native(vm, function))
     TERM_FN("open", term_open); TERM_FN("close", term_close); TERM_FN("isOpen", term_is_open);
     TERM_FN("size", term_size); TERM_FN("clear", term_clear); TERM_FN("clearLine", term_clear_line);

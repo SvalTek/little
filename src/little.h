@@ -601,6 +601,7 @@ void lt_setupval(lt_VM* vm, uint8_t idx, lt_Value val);
 
 uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc);
 uint8_t lt_poll(lt_VM* vm);
+uint8_t lt_poll_now(lt_VM* vm);
 void lt_runloop(lt_VM* vm);
 uint32_t lt_add_poll_hook(lt_VM* vm, lt_PollHook hook, void* context);
 void lt_remove_poll_hook(lt_VM* vm, uint32_t hook_id);
@@ -685,4 +686,5 @@ struct lt_Api {
 	uint8_t (*is_promise)(lt_Value value);
 	lt_PromiseState (*promise_state)(lt_Value value);
 	lt_Value (*promise_result)(lt_Value value);
+	uint8_t (*poll_now)(lt_VM* vm);
 };

@@ -1301,7 +1301,7 @@ void ltasync_mark_roots(lt_VM* vm)
  *
  * @returns `1` if work was performed or pending activity remains, `0` otherwise.
  */
-uint8_t lt_poll(lt_VM* vm)
+static uint8_t lt_poll_internal(lt_VM* vm, int allow_sleep)
 {
 	uint8_t did_work = 0;
 	uint8_t has_pending = 0;
@@ -1483,9 +1483,19 @@ uint8_t lt_poll(lt_VM* vm)
 			sleep_ms = (uint32_t)until_due;
 		}
 		if (sleep_ms == 0) sleep_ms = 1;
-		_lt_sleep_ms(sleep_ms);
+		if (allow_sleep) _lt_sleep_ms(sleep_ms);
 	}
 	return did_work || has_pending || vm->async_calls.length > 0 || vm->microtasks.length > 0 || vm->workers.length > 0;
+}
+
+uint8_t lt_poll(lt_VM* vm)
+{
+	return lt_poll_internal(vm, 1);
+}
+
+uint8_t lt_poll_now(lt_VM* vm)
+{
+	return lt_poll_internal(vm, 0);
 }
 
 void lt_runloop(lt_VM* vm)

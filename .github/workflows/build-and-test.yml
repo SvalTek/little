@@ -64,6 +64,7 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
           submodules: recursive
+          persist-credentials: false
       - uses: go-task/setup-task@v2
       - uses: actions/download-artifact@v4
         with:
@@ -158,6 +159,7 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
           submodules: recursive
+          persist-credentials: false
       - uses: go-task/setup-task@v2
       - uses: actions/download-artifact@v4
         with:

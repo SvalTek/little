@@ -25,7 +25,8 @@ function Assert-Fails([string]$Name, [int]$ExpectedExit, [string]$ExpectedText, 
 
 $repo = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $repo "build"
-$nativeMath = Join-Path $repo "nativelib/native_math/build/native_math.dll"
+$nativeExt = if ($env:OS -eq "Windows_NT") { ".dll" } elseif ($IsMacOS) { ".dylib" } else { ".so" }
+$nativeMath = Join-Path $repo "nativelib/native_math/build/native_math$nativeExt"
 if (!(Test-Path $nativeMath)) {
     throw "Expected native test library at $nativeMath"
 }
@@ -57,7 +58,7 @@ $portable = Join-Path $build "cli-portable"
 $portableLibraries = Join-Path $portable "libs/native_math"
 New-Item -ItemType Directory -Force -Path $portableLibraries | Out-Null
 Copy-Item -LiteralPath $Exe -Destination (Join-Path $portable "little.exe") -Force
-Copy-Item -LiteralPath $nativeMath -Destination (Join-Path $portableLibraries "native_math.dll") -Force
+Copy-Item -LiteralPath $nativeMath -Destination (Join-Path $portableLibraries "native_math$nativeExt") -Force
 $portableScript = Join-Path $build "cli-portable-native.little"
 Set-Content -LiteralPath $portableScript -NoNewline -Value @'
 var add = loadLibrary("native_math")
@@ -70,7 +71,7 @@ $prefixBin = Join-Path $prefix "bin"
 $prefixLibraries = Join-Path $prefix "lib/little/native_math"
 New-Item -ItemType Directory -Force -Path $prefixBin, $prefixLibraries | Out-Null
 Copy-Item -LiteralPath $Exe -Destination (Join-Path $prefixBin "little.exe") -Force
-Copy-Item -LiteralPath $nativeMath -Destination (Join-Path $prefixLibraries "native_math.dll") -Force
+Copy-Item -LiteralPath $nativeMath -Destination (Join-Path $prefixLibraries "native_math$nativeExt") -Force
 Assert-Run "installed native library path" "5.000000" { & (Join-Path $prefixBin "little.exe") --no-config $portableScript }
 
 Write-Host "All CLI tests passed."

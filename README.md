@@ -132,6 +132,7 @@ The supported build entry point is `build.ps1` (normally through `task build`).
 It builds the vendored PDCursesMod backend and links it statically into the
 CLI: WinCon on Windows and the VT backend on Linux. This keeps the interactive
 CLI self-contained and avoids a terminal-library DLL beside `little.exe`.
+
 ---
 ## Links
 * **[Language overview](doc/lt.md)**
