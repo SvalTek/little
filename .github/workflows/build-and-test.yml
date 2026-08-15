@@ -219,14 +219,23 @@ jobs:
         id: release
         shell: pwsh
         env:
+          GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           REF_NAME: ${{ github.ref_name }}
           REQUESTED_REF: ${{ inputs.ref }}
         run: |
-          if ($env:EVENT_NAME -eq 'pull_request') {
-            $tag = "pr-$env:PULL_REQUEST_NUMBER"
-            $title = "PR #$env:PULL_REQUEST_NUMBER development build"
+          $prNumber = $env:PULL_REQUEST_NUMBER
+          if (!$prNumber -and $env:EVENT_NAME -eq 'workflow_dispatch') {
+            $branch = $env:REQUESTED_REF -replace '^refs/heads/', ''
+            if ($branch -ne 'main' -and $branch -ne 'develop') {
+              $prNumber = gh pr list --repo $env:GITHUB_REPOSITORY --head $branch --state open --json number --jq '.[0].number'
+            }
+          }
+
+          if ($prNumber) {
+            $tag = "pr-$prNumber"
+            $title = "PR #$prNumber development build"
             $prerelease = 'true'
           }
           elseif ($env:REF_NAME -eq 'main' -or $env:REQUESTED_REF -match '(^|/)main$') {
@@ -251,13 +260,13 @@ jobs:
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           $files = @('release/little-linux-x64.zip', 'release/little-windows-x64.zip')
-          gh release view $env:TAG 2>$null
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $files --clobber
+            gh release upload $env:TAG $files --repo $env:GITHUB_REPOSITORY --clobber
           }
           elseif ($env:PRERELEASE -eq 'true') {
-            gh release create $env:TAG $files --title $env:TITLE --notes 'Automated development build.' --prerelease
+            gh release create $env:TAG $files --repo $env:GITHUB_REPOSITORY --title $env:TITLE --notes 'Automated development build.' --prerelease
           }
           else {
-            gh release create $env:TAG $files --title $env:TITLE --notes 'Automated main build.'
+            gh release create $env:TAG $files --repo $env:GITHUB_REPOSITORY --title $env:TITLE --notes 'Automated main build.'
           }
