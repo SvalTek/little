@@ -126,7 +126,6 @@ static int run_repl(lt_VM* vm)
     size_t captured_length = 0;
     size_t captured_capacity = 0;
     int capturing = 0;
-    int ready_to_run = 0;
     int success = 0;
 
     if (!call_term(vm, "open", 0, 0)) goto done;
@@ -146,27 +145,15 @@ static int run_repl(lt_VM* vm)
             if (strcmp(text, "\"\"\"") == 0)
             {
                 capturing = 0;
-                ready_to_run = 1;
-                ltstd_write_output("Capture complete. Press Enter to run it.\n");
+                if (!run_repl_source(vm, captured ? captured : "")) goto done;
+                captured_length = 0;
+                if (captured) captured[0] = 0;
             }
             else if (!append_repl_line(&captured, &captured_length, &captured_capacity, text))
             {
                 ltstd_write_output("ERROR: Failed to allocate multiline input.\n");
                 goto done;
             }
-            continue;
-        }
-
-        if (ready_to_run)
-        {
-            if (*text) {
-                ltstd_write_output("Press Enter to run the captured input.\n");
-                continue;
-            }
-            if (!run_repl_source(vm, captured ? captured : "")) goto done;
-            captured_length = 0;
-            if (captured) captured[0] = 0;
-            ready_to_run = 0;
             continue;
         }
 
