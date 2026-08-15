@@ -1,0 +1,7 @@
+global moduleAliasLoads = 0
+
+var direct = import "tests/fixtures/module-alias-counter"
+var dotted = import "./tests/fixtures/module-alias-counter"
+var directAgain = import "tests/fixtures/module-alias-counter"
+
+io.print(direct.loads, dotted.loads, directAgain.loads, moduleAliasLoads)

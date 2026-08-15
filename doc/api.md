@@ -98,9 +98,29 @@ Polls or drains asynchronous work owned by the VM, including promise callbacks, 
 
 ```c
 void ltstd_open_all(lt_VM* vm);
+void ltstd_open_loadlib(lt_VM* vm);
 void ltasync_open_all(lt_VM* vm);
 ```
-The VM starts without standard libraries. Use `ltstd_open_all` for the traditional stdlib modules (`io`, `math`, `array`, `table`, `string`, `gc`, and core globals such as `pcall`, `unpack`, and `import`) and `ltasync_open_all` for optional Promise, timer, and task globals. The CLI opens both because it is designed to run full Little scripts.
+The VM starts without standard libraries. Use `ltstd_open_all` for the traditional stdlib modules (`io`, `math`, `array`, `table`, `string`, `gc`, and core globals such as `pcall`, `unpack`, and `import`) and `ltasync_open_all` for optional Promise, timer, and task globals.
+
+`loadLibrary` is deliberately opt-in. Embedders that want scripts to load native code can call `ltstd_open_loadlib(vm)`. Embedders that do not call it will not expose the `loadLibrary` global. The CLI opens it because it is designed to run full local scripts.
+
+`loadLibrary(path)` loads a platform-native library and calls its exported
+`ltopen(lt_VM* vm, const lt_Api* lt)` function. The `ltopen` function returns
+the Little value that `loadLibrary` returns, normally a table of native
+functions. Native libraries call Little through the passed `lt_Api` table, so
+they do not need to link against `little.exe`. Loaded library handles stay alive
+until `lt_destroy(vm)`.
+
+The `lt_Api` table is the native-library ABI boundary. A native library should
+check that the pointer is not `NULL`, `lt->version == LT_API_VERSION`, and
+`lt->size >= sizeof(lt_Api)` before using any function pointers. Returning
+`null` from `ltopen` rejects the library load.
+
+The table includes value constructors/accessors, table and array helpers,
+`exec`, `poll`, and promise inspection helpers. Native libraries that integrate
+with asynchronous host APIs should use those function pointers rather than
+linking against VM symbols or reading VM stack/frame internals.
 
 ---
 ```c
@@ -176,10 +196,15 @@ void* lt_get_ptr(lt_Value ptr);
 ---
 Tables can be manipulated with:
 ```c
-lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val); 
+lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val);
 lt_Value lt_table_get(lt_VM* vm, lt_Value table, lt_Value key);
+uint8_t  lt_table_next(lt_VM* vm, lt_Value table, uint64_t* cursor, lt_Value* key, lt_Value* val);
 uint8_t  lt_table_pop(lt_VM* vm, lt_Value table, lt_Value key);
 ```
+
+Initialize `cursor` to `0` before calling `lt_table_next`. Each successful call
+fills `key` and `val`, advances `cursor`, and returns non-zero. It returns `0`
+when iteration is finished.
 
 ---
 Arrays can be manipulated with:

@@ -81,9 +81,7 @@ produce development packages after merges; pushes to `main` produce optimized
 release packages after merges from `develop`. The workflow can also be manually
 run for any ref, defaulting to `develop`, with either package type.
 
-Each successful run attaches one self-contained package for every target to a
-rolling GitHub Release: `pr-<number>` for pull requests, `develop` for develop
-builds, and `main` for main builds.
+Each run uploads one self-contained package for every target:
 
 * `little-windows-x64.zip` contains `little.exe`, `libs/json/json.dll`, and
   `libs/webui/webui.dll`.
@@ -92,7 +90,7 @@ builds, and `main` for main builds.
 
 #### Linux
 ```
-gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_std.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -lm -pthread -o little
+gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_common.c src/little_std.c src/little_loadlib.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -lm -pthread -rdynamic -ldl -o little
 ```
 
 #### Windows
@@ -100,7 +98,7 @@ you need [msys2](https://www.msys2.org) _just follow the installation instructio
 ```powershell
 pacman -S mingw-w64-ucrt-x86_64-gcc
 
-gcc main.c src/little_buffer.c src/little.c src/little_std.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -o little
+gcc main.c src/little_buffer.c src/little.c src/little_common.c src/little_std.c src/little_loadlib.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -Wl,--export-all-symbols -o little
 ```
 ---
 ## Links

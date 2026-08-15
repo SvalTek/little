@@ -1,0 +1,31 @@
+var json = loadLibrary("nativelib/json/build/json")
+var data = json.parse("{\"name\":\"Ada\",\"count\":2,\"ok\":true,\"items\":[1,\"two\",null]}")
+
+io.print(data.name)
+io.print(data.count)
+io.print(data.ok)
+io.print(array.len(data.items))
+io.print(data.items[1])
+io.print(data.items[2] is null)
+io.print(json.stringify([ "Ada", 2, true, null ]))
+io.print(json.parse("{ nope") is null)
+
+; \uXXXX escape decoding: basic, surrogate pair, lone surrogates -> U+FFFD
+io.print(json.parse("\"\\u0041\""))
+io.print(json.parse("\"\\uD83D\\uDE00\""))
+io.print(string.len(json.parse("\"\\uD800\"")))
+io.print(string.len(json.parse("\"\\uDC00\"")))
+io.print(string.len(json.parse("\"\\uD800x\"")))
+
+; Non-finite numbers serialize as null (JSON has no inf/nan)
+io.print(json.stringify(1 / 0))
+io.print(json.stringify([1 / 0, 2, -1 / 0]))
+io.print(json.stringify({ "inf": 1 / 0 }))
+
+; U+0000 cannot be represented by Little's NUL-terminated strings.
+io.print(json.parse("\"a\\u0000b\"") is null)
+
+; task.run promotes state tables; native serializers must still iterate them.
+var shared = { "answer": 42 }
+task.run(fn(state) { return null }, { "shared": shared })
+io.print(json.stringify(shared))

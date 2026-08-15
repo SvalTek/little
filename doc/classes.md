@@ -98,8 +98,8 @@ class SecretBox {
 }
 
 var box = SecretBox()
-io.print(box.secret) -- null
-io.print(box:read()) -- hidden
+io.print(box.secret) ; null
+io.print(box:read()) ; hidden
 ```
 
 This is runtime-enforced privacy for Little code. It is not intended as a security boundary against native C API code.

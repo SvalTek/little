@@ -82,6 +82,21 @@ User-facing behavior changes should update docs in the same change.
 
 Markdown tables should be surrounded by blank lines.
 
+## Little Syntax Rule (Mandatory)
+
+Before writing or editing any `.little` code, first inspect the relevant syntax
+and API in `doc/` or in an existing test in this same working session. Do not
+rely on memory, prior-language conventions, or earlier Little usage — the
+language is custom and small, and guesses are usually wrong.
+
+- Language syntax and semantics: `doc/lt.md` and `doc/syntax.md`.
+- Stdlib functions and modules: `doc/ltstd.md` and `doc/std/*.md`.
+- Existing usage patterns: `tests/e2e/`, `tests/fuzz/`, and `scripts/`.
+
+If the needed syntax is not found in `doc/` or an existing test, ask before
+writing it. Never assume a construct works because it looks like another
+language.
+
 ## Test Rules
 
 Every `.little` test must have one assertion companion:
@@ -109,6 +124,7 @@ git diff --check
 ```
 
 Use `task test` when Task is available. Build output belongs in `build/`.
+Use Taskfile.yml tasks for build/test workflows. If you edit nativelib/, run `task build:nativelibs` before testing.
 
 ## Change Discipline
 

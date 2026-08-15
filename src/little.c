@@ -8,13 +8,12 @@
 
 static lt_Value LT_NULL = LT_VALUE_NULL;
 
-/* if running on linux */
-#if defined(__linux__) || defined(__linux) || defined(linux) || defined(__gnu_linux__)
+/* Microsoft provides these bounds-checked functions; provide the small subset
+ * Little uses on other C runtimes. */
+#if !defined(_WIN32)
 #include <stdarg.h>
 
-typedef unsigned long rsize_t;
-
-int sprintf_s(char *restrict buffer, rsize_t bufsz, const char *restrict format, ... )
+static int sprintf_s(char *restrict buffer, size_t bufsz, const char *restrict format, ...)
 {
 	va_list args;
     va_start(args, format);
@@ -23,9 +22,17 @@ int sprintf_s(char *restrict buffer, rsize_t bufsz, const char *restrict format,
 	return r;
 }
 
-int strncpy_s( char *restrict dest, rsize_t destsz, const char *restrict src, rsize_t count )
+static int strncpy_s(char *restrict dest, size_t destsz, const char *restrict src, size_t count)
 {
-	strncpy(dest, src, count);
+	if (!destsz) return 1;
+	if (!src) {
+		dest[0] = 0;
+		return 1;
+	}
+
+	if (count >= destsz) count = destsz - 1;
+	memcpy(dest, src, count);
+	dest[count] = 0;
 	return 0;
 }
 #endif
@@ -47,7 +54,7 @@ typedef enum {
 
 	LT_OP_ADD, LT_OP_SUB, LT_OP_MUL, LT_OP_DIV, LT_OP_NEG,
 	LT_OP_EQ, LT_OP_NEQ, LT_OP_GT, LT_OP_GTE,
-	LT_OP_AND, LT_OP_OR, LT_OP_NOT,
+	LT_OP_AND, LT_OP_OR, LT_OP_NOT, LT_OP_TYPE, LT_OP_TYPEOF,
 
 	LT_OP_LOAD, LT_OP_STORE, LT_OP_LOADCELL, LT_OP_STORECELL,
 	LT_OP_LOADUP, LT_OP_STOREUP, LT_OP_LOADUPCELL, LT_OP_CAPTURE,
@@ -489,7 +496,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 					if (*current == '0' && (*(current + 1) == 'x' || *(current + 1) == 'X'))
 					{
 						current += 2;
-						uint8_t has_digits = isxdigit(*current);
+						uint8_t has_digits = isxdigit(*current) != 0;
 						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, "Expected hex digits after 0x!");
 						while (isxdigit(*current)) current++;
 						if (*current == '.' || isalnum(*current) || *current == '_')
@@ -584,10 +591,12 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 				else PUSH_STR_TOKEN("set", LT_TOKEN_SET)
 				else PUSH_STR_TOKEN("is", LT_TOKEN_EQUALS)
 				else PUSH_STR_TOKEN("isnt", LT_TOKEN_NOTEQUALS)
-				else PUSH_STR_TOKEN("and", LT_TOKEN_AND)
-				else PUSH_STR_TOKEN("or", LT_TOKEN_OR)
-				else PUSH_STR_TOKEN("not", LT_TOKEN_NOT)
-				else PUSH_STR_TOKEN("true", LT_TOKEN_TRUE_LITERAL)
+		else PUSH_STR_TOKEN("and", LT_TOKEN_AND)
+		else PUSH_STR_TOKEN("or", LT_TOKEN_OR)
+		else PUSH_STR_TOKEN("not", LT_TOKEN_NOT)
+		else PUSH_STR_TOKEN("type", LT_TOKEN_TYPE)
+		else PUSH_STR_TOKEN("typeof", LT_TOKEN_TYPEOF)
+		else PUSH_STR_TOKEN("true", LT_TOKEN_TRUE_LITERAL)
 				else PUSH_STR_TOKEN("false", LT_TOKEN_FALSE_LITERAL)
 				else PUSH_STR_TOKEN("null", LT_TOKEN_NULL_LITERAL)
 
@@ -1604,7 +1613,7 @@ uint8_t _lt_get_prec(lt_TokenType op)
 {
 	switch (op)
 	{
-	case LT_TOKEN_NOT: case LT_TOKEN_NEGATE: return 5;
+	case LT_TOKEN_NOT: case LT_TOKEN_NEGATE: case LT_TOKEN_TYPE: case LT_TOKEN_TYPEOF: return 5;
 	case LT_TOKEN_MULTIPLY: case LT_TOKEN_DIVIDE: return 4;
 	case LT_TOKEN_PLUS: case LT_TOKEN_MINUS: return 3;
 	case LT_TOKEN_GT: case LT_TOKEN_GTE: case LT_TOKEN_LT: case LT_TOKEN_LTE: case LT_TOKEN_EQUALS: case LT_TOKEN_NOTEQUALS: return 2;
@@ -1616,7 +1625,7 @@ uint8_t _lt_get_prec(lt_TokenType op)
 
 static uint8_t _lt_is_unary_operator(lt_TokenType op)
 {
-	return op == LT_TOKEN_NOT || op == LT_TOKEN_NEGATE;
+	return op == LT_TOKEN_NOT || op == LT_TOKEN_NEGATE || op == LT_TOKEN_TYPE || op == LT_TOKEN_TYPEOF;
 }
 
 static uint8_t _lt_should_pop_operator(lt_TokenType top, lt_TokenType current)
@@ -1684,7 +1693,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 	lt_Buffer operator_stack = lt_buffer_new(sizeof(lt_TokenType));
 
 #define PUSH_EXPR_FROM_OP(op) \
-	if (op == LT_TOKEN_NOT || op == LT_TOKEN_NEGATE)                      \
+	if (op == LT_TOKEN_NOT || op == LT_TOKEN_NEGATE || op == LT_TOKEN_TYPE || op == LT_TOKEN_TYPEOF) \
 	{																				\
 		lt_AstNode* unaryop = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_UNARYOP);			\
 		unaryop->unary_op.type = op;											    \
@@ -1890,7 +1899,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 		case LT_TOKEN_MULTIPLY: case LT_TOKEN_DIVIDE:
 		case LT_TOKEN_EQUALS: case LT_TOKEN_NOTEQUALS:
 		case LT_TOKEN_GT: case LT_TOKEN_GTE: case LT_TOKEN_LT: case LT_TOKEN_LTE:
-		case LT_TOKEN_AND: case LT_TOKEN_OR: case LT_TOKEN_NOT: {
+		case LT_TOKEN_AND: case LT_TOKEN_OR: case LT_TOKEN_NOT: case LT_TOKEN_TYPE: case LT_TOKEN_TYPEOF: {
 			lt_TokenType optype = current->type;
 
 			if (optype == LT_TOKEN_MINUS)
@@ -2193,6 +2202,7 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 	
 	vm->heap = lt_buffer_new(sizeof(lt_Object*));
 	vm->keepalive = lt_buffer_new(sizeof(lt_Object*));
+	vm->native_libraries = lt_buffer_new(sizeof(lt_NativeLibrary));
 	ltasync_init_state(vm);
 
 	vm->generate_debug = 1;
@@ -2206,6 +2216,12 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 void lt_destroy(lt_VM* vm)
 {
 	ltasync_destroy_state(vm);
+	for (uint32_t i = 0; i < vm->native_libraries.length; ++i)
+	{
+		lt_NativeLibrary* library = lt_buffer_at(&vm->native_libraries, i);
+		if (library->handle && library->close) library->close(library->handle);
+	}
+	lt_buffer_destroy(vm, &vm->native_libraries);
 	lt_buffer_destroy(vm, &vm->keepalive);
 	lt_collect(vm);
 	if (vm->error_trap) vm->free(vm->error_trap);
@@ -2818,6 +2834,9 @@ static void _lt_instance_set(lt_VM* vm, lt_Value instance_value, lt_Value key, l
 
 uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 {
+	uint16_t base = vm->top - argc;
+	uint16_t saved_depth = vm->depth;
+	lt_Frame* saved_current = vm->current;
 	void* saved_error_buf = vm->error_buf;
 	jmp_buf error_buf;
 	vm->error_buf = &error_buf;
@@ -2830,9 +2849,12 @@ uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 	}
 	else
 	{
-		vm->depth = 0;
-		vm->top = 0;
-		vm->current = 0;
+		/* Unwind the failed execution back to our own frame so reentrant
+		   callers (e.g. natives that re-enter the VM) keep their frame,
+		   argument stack and current pointer intact. */
+		vm->top = base;
+		vm->depth = saved_depth;
+		vm->current = saved_current;
 		vm->error_buf = saved_error_buf;
 		return 0;
 	}
@@ -2854,7 +2876,11 @@ void lt_error(lt_VM* vm, const char* msg)
 
 uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc)
 {
-	if (!LT_IS_OBJECT(callable)) return 0;
+	if (!LT_IS_OBJECT(callable))
+	{
+		lt_runtime_error(vm, "Value is not callable!");
+		return 0;
+	}
 	if (LT_IS_CLASS(callable))
 	{
 		lt_push(vm, _lt_class_call(vm, callable, argc));
@@ -2921,6 +2947,9 @@ uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc)
 		vm->current = vm->depth > 0 ? &vm->callstack[vm->depth - 1] : 0;
 		return n_return;
 	} break;
+	default:
+		lt_runtime_error(vm, "Value is not callable!");
+		return 0;
 	}
 
 	lt_Op current = *(lt_Op*)lt_buffer_at(frame->code, frame->pc++);
@@ -3130,6 +3159,44 @@ inst_loop:
 	case LT_OP_NOT: {
 		lt_Value right = POP();
 		PUSH(LT_IS_TRUTHY(right) ? LT_VALUE_FALSE : LT_VALUE_TRUE);
+	} NEXT;
+
+	case LT_OP_TYPE: {
+		lt_Value value = POP();
+		const char* type = "unknown";
+		if (LT_IS_NULL(value)) type = "null";
+		else if (LT_IS_BOOL(value)) type = "boolean";
+		else if (LT_IS_NUMBER(value)) type = "number";
+		else if (LT_IS_STRING(value)) type = "string";
+		else if (LT_IS_OBJECT(value)) {
+			switch (LT_GET_OBJECT(value)->type) {
+			case LT_OBJECT_CHUNK:
+			case LT_OBJECT_FN:
+			case LT_OBJECT_CLOSURE:
+			case LT_OBJECT_NATIVEFN:
+			case LT_OBJECT_BOUND_NATIVE: type = "function"; break;
+			case LT_OBJECT_TABLE:
+			case LT_OBJECT_SHARED_TABLE: type = "table"; break;
+			case LT_OBJECT_ARRAY:
+			case LT_OBJECT_SHARED_ARRAY: type = "array"; break;
+			case LT_OBJECT_PROMISE: type = "promise"; break;
+			case LT_OBJECT_CLASS: type = "class"; break;
+			case LT_OBJECT_INSTANCE: type = "instance"; break;
+			case LT_OBJECT_PTR: type = "pointer"; break;
+			case LT_OBJECT_CELL: type = "cell"; break;
+			}
+		}
+		PUSH(lt_make_string(vm, type));
+	} NEXT;
+
+	case LT_OP_TYPEOF: {
+		lt_Value value = POP();
+		if (LT_IS_INSTANCE(value))
+			PUSH(LT_VALUE_OBJECT(LT_GET_OBJECT(value)->instance.klass));
+		else if (LT_IS_CLASS(value))
+			PUSH(value);
+		else
+			PUSH(LT_VALUE_NULL);
 	} NEXT;
 
 	case LT_OP_LOAD: PUSH(vm->stack[frame->start + current.arg]); NEXT;
@@ -3540,6 +3607,8 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		{
 		case LT_TOKEN_NEGATE: OP(NEG); break;
 		case LT_TOKEN_NOT: OP(NOT); break;
+		case LT_TOKEN_TYPE: OP(TYPE); break;
+		case LT_TOKEN_TYPEOF: OP(TYPEOF); break;
 		}
 	} break;
 
@@ -3954,7 +4023,19 @@ lt_Value lt_loadstring(lt_VM* vm, const char* source, const char* mod_name)
 		return LT_VALUE_NULL;
 	}
 
+	void* saved_error_buf = vm->error_buf;
+	jmp_buf error_buf;
+	vm->error_buf = &error_buf;
+	if (setjmp(error_buf))
+	{
+		lt_free_parser(vm, &p);
+		lt_free_tokenizer(vm, &tok);
+		vm->error_buf = saved_error_buf;
+		return LT_VALUE_NULL;
+	}
+
 	lt_Value c = lt_compile(vm, &p);
+	vm->error_buf = saved_error_buf;
 
 	lt_free_parser(vm, &p);
 	lt_free_tokenizer(vm, &tok);
@@ -4021,6 +4102,42 @@ lt_Value lt_table_get(lt_VM* vm, lt_Value table, lt_Value key)
 	lt_TablePair* p = _lt_table_index(vm, table, key, 0);
 	if (p) return p->value;
 	return LT_VALUE_NULL;
+}
+
+uint8_t lt_table_next(lt_VM* vm, lt_Value table, uint64_t* cursor, lt_Value* key, lt_Value* val)
+{
+	/* Four bits select one of 16 buckets; the remaining 60 bits hold the pair index. */
+	enum {
+		LT_TABLE_CURSOR_BUCKET_BITS = 4,
+		LT_TABLE_CURSOR_INDEX_BITS = 64 - LT_TABLE_CURSOR_BUCKET_BITS,
+		LT_TABLE_CURSOR_BUCKET_COUNT = 1 << LT_TABLE_CURSOR_BUCKET_BITS
+	};
+	const uint64_t table_cursor_index_mask = (UINT64_C(1) << LT_TABLE_CURSOR_INDEX_BITS) - 1;
+
+	if (!LT_IS_TABLE(table)) return 0;
+	lt_Object* obj = LT_GET_OBJECT(table);
+	if (obj->type == LT_OBJECT_SHARED_TABLE)
+		return ltshared_table_next(vm, obj->shared, cursor, key, val);
+	if (obj->type != LT_OBJECT_TABLE) return 0;
+
+	uint64_t bucket = *cursor >> LT_TABLE_CURSOR_INDEX_BITS;
+	uint64_t index = *cursor & table_cursor_index_mask;
+
+	for (; bucket < LT_TABLE_CURSOR_BUCKET_COUNT; ++bucket)
+	{
+		lt_Buffer* buf = obj->table.buckets + bucket;
+		if (index < buf->length)
+		{
+			lt_TablePair* pair = lt_buffer_at(buf, index);
+			*key = pair->key;
+			*val = pair->value;
+			*cursor = (bucket << LT_TABLE_CURSOR_INDEX_BITS) | (index + 1);
+			return 1;
+		}
+		index = 0;
+	}
+
+	return 0;
 }
 
 uint8_t lt_table_pop(lt_VM* vm, lt_Value table, lt_Value key)

@@ -1,0 +1,14 @@
+; A native function re-enters the VM through lt->exec with a callable that
+; raises a runtime error. The outer native frame must survive the unwind so
+; the interpreter loop can pop it afterwards. Previously lt_exec zeroed
+; vm->depth/vm->top/vm->current on error, which made the interpreter's
+; --vm->depth wrap to 65535 and read callstack[65534] (webui callback
+; dispatch segfault). Regression test for the fix.
+var reenter = loadLibrary("tests/native/reenter")
+io.print(reenter.run(
+    fn() {
+        var t = {}
+        t()
+    }
+))
+io.print("after")
