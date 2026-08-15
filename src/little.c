@@ -496,7 +496,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 					if (*current == '0' && (*(current + 1) == 'x' || *(current + 1) == 'X'))
 					{
 						current += 2;
-						uint8_t has_digits = isxdigit(*current);
+						uint8_t has_digits = isxdigit(*current) != 0;
 						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, "Expected hex digits after 0x!");
 						while (isxdigit(*current)) current++;
 						if (*current == '.' || isalnum(*current) || *current == '_')
@@ -4023,7 +4023,19 @@ lt_Value lt_loadstring(lt_VM* vm, const char* source, const char* mod_name)
 		return LT_VALUE_NULL;
 	}
 
+	void* saved_error_buf = vm->error_buf;
+	jmp_buf error_buf;
+	vm->error_buf = &error_buf;
+	if (setjmp(error_buf))
+	{
+		lt_free_parser(vm, &p);
+		lt_free_tokenizer(vm, &tok);
+		vm->error_buf = saved_error_buf;
+		return LT_VALUE_NULL;
+	}
+
 	lt_Value c = lt_compile(vm, &p);
+	vm->error_buf = saved_error_buf;
 
 	lt_free_parser(vm, &p);
 	lt_free_tokenizer(vm, &tok);
