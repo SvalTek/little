@@ -81,7 +81,5 @@ jobs:
         if: hashFiles('nativelib/json/json.c') != ''
         with:
           name: little-${{ matrix.target }}
-          path: |
-            dist/little-${{ matrix.target }}*
-            dist/nativelibs-${{ matrix.target }}.zip
+          path: dist/little-${{ matrix.target }}.zip
           if-no-files-found: error
