@@ -28,11 +28,11 @@ foreach ($library in @("json", "webui")) {
 if (Test-Path $packageStage) {
     Remove-Item -Recurse -Force -LiteralPath $packageStage
 }
-New-Item -ItemType Directory -Force -Path $packageStage, $dist | Out-Null
-Copy-Item -LiteralPath $binarySource -Destination (Join-Path $packageStage "little$binaryExt")
+New-Item -ItemType Directory -Force -Path $packageStage, $dist, (Join-Path $packageStage "bin") | Out-Null
+Copy-Item -LiteralPath $binarySource -Destination (Join-Path $packageStage "bin/little$binaryExt")
 
 foreach ($library in @("json", "webui")) {
-    $libraryStage = Join-Path $packageStage "libs/$library"
+    $libraryStage = Join-Path $packageStage "lib/little/$library"
     New-Item -ItemType Directory -Force -Path $libraryStage | Out-Null
     Copy-Item -LiteralPath (Join-Path $repo "nativelib/$library/build/$library$nativeExt") -Destination (Join-Path $libraryStage "$library$nativeExt")
 }

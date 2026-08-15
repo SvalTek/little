@@ -13,6 +13,18 @@
 
 typedef lt_Value (*lt_NativeLibraryOpenFn)(lt_VM* vm, const lt_Api* api);
 
+static lt_Value _lt_native_library_paths(lt_VM* vm, uint8_t create)
+{
+    lt_Value key = lt_make_string(vm, "__native_library_paths");
+    lt_Value paths = lt_table_get(vm, vm->global, key);
+    if (!LT_IS_ARRAY(paths) && create)
+    {
+        paths = lt_make_array(vm);
+        lt_table_set(vm, vm->global, key, paths);
+    }
+    return paths;
+}
+
 static void* _lt_api_alloc(lt_VM* vm, size_t size)
 {
     return vm->alloc(size);
@@ -119,13 +131,29 @@ static char* _lt_resolve_native_library_base(lt_VM* vm, const char* base)
         return candidate;
     vm->free(candidate);
 
+    /* Native packages in an installed library root are laid out as
+       <name>/<name>.<platform-extension>. Try that form after the flat
+       <name>.<platform-extension> and <name>/init forms. */
+    const char* slash = strrchr(base, '/');
+    const char* backslash = strrchr(base, '\\');
+    const char* separator = slash;
+    if (!separator || (backslash && backslash > separator)) separator = backslash;
+    const char* name = separator ? separator + 1 : base;
+    char* package_base = lt_common_join_path(vm, base, name);
+    candidate = lt_common_make_suffixed_path(vm, package_base, suffix);
+    vm->free(package_base);
+
+    if (lt_common_file_exists(candidate))
+        return candidate;
+    vm->free(candidate);
+
     return 0;
 }
 
 static char* _lt_resolve_native_library(lt_VM* vm, const char* requested)
 {
     char* resolved = _lt_resolve_native_library_base(vm, requested);
-    lt_Value paths = lt_common_module_paths(vm, 0);
+    lt_Value paths = _lt_native_library_paths(vm, 0);
 
     if (!resolved && LT_IS_ARRAY(paths))
     {
@@ -140,7 +168,30 @@ static char* _lt_resolve_native_library(lt_VM* vm, const char* requested)
         }
     }
 
+    /* Keep module.addPath backwards-compatible for embedders and existing
+       scripts. CLI -L/config paths simply take precedence over those shared
+       search roots. */
+    paths = lt_common_module_paths(vm, 0);
+    if (!resolved && LT_IS_ARRAY(paths))
+    {
+        for (uint32_t i = 0; i < lt_array_length(paths); ++i)
+        {
+            lt_Value entry = lt_array_get(vm, paths, i);
+            if (!LT_IS_STRING(entry)) continue;
+            char* base = lt_common_expand_path_pattern(vm, lt_get_string(vm, entry), requested);
+            resolved = _lt_resolve_native_library_base(vm, base);
+            vm->free(base);
+            if (resolved) break;
+        }
+    }
+
     return resolved;
+}
+
+void ltstd_add_library_path(lt_VM* vm, const char* path)
+{
+    lt_Value paths = _lt_native_library_paths(vm, 1);
+    lt_array_push(vm, paths, lt_make_string(vm, path));
 }
 
 static void* _lt_open_native_library(const char* path, char* error, size_t error_size)

@@ -12,3 +12,4 @@ if (!(Test-Path $exePath)) {
 }
 
 & (Join-Path $repo "tests/run-e2e.ps1") -Exe $exePath
+& (Join-Path $repo "tests/run-cli.ps1") -Exe $exePath

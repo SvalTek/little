@@ -82,11 +82,15 @@ io.print(nativeMath.add(2, 3))
 ```
 
 Native libraries are separate from source modules: use `import` for `.little`
-files and `loadLibrary` for compiled native code. The loader uses the same
-registered search paths as `import`, but tries the platform native-library
-extension instead of `.little`: `.dll` on Windows, `.so` on Linux, and `.dylib`
-on macOS. For each direct path or search-path candidate, Little tries `path`
-with the platform extension, then `path/init` with the platform extension.
+files and `loadLibrary` for compiled native code. By default, the loader also
+uses paths registered with `module.addPath(...)` for compatibility with embedded
+hosts. The CLI can additionally register native-only paths with `-L` or
+`library_path` config entries. It tries the platform native-library extension
+instead of `.little`: `.dll` on Windows, `.so` on Linux, and `.dylib` on macOS.
+For each direct path or search-path candidate, Little tries `path` with the
+platform extension, then `path/init`, then `path/path-name` with the platform
+extension. The final form lets `loadLibrary("json")` find a packaged library at
+`json/json.dll` (or its platform equivalent).
 
 Loaded native library handles stay alive until the VM is destroyed.
 Native libraries use the passed `lt_Api` function table to create and inspect

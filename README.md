@@ -58,9 +58,10 @@ The included Taskfile is the supported development workflow:
 ```powershell
 task build
 build/little.exe --help
-build/little.exe scripts/hello.little
+build/little.exe scripts/hello.little first-argument
 build/little.exe -e 'io.print("hello")'
 build/little.exe -I lib scripts/main.little
+build/little.exe -L native scripts/main.little
 ```
 
 The CLI accepts one script path, or `-e SOURCE` for a short inline program. It
@@ -68,6 +69,25 @@ returns a non-zero exit code for command-line, file, parse, or runtime errors.
 Use `--help` to see its options and `--version` to see the linked API version.
 Use `-I DIRECTORY` (more than once if needed) to add source-module search paths
 without baking those local launch details into the script.
+
+Use `-L DIRECTORY` (or `--library-path DIRECTORY`) to add a native-library
+search path for `loadLibrary(...)`. The script name and its following command
+line arguments are available as the global `arg` array: `arg[0]` is the script
+path and `arg[1...]` are the supplied arguments.
+
+For persistent local paths, Little reads `~/.config/little.conf` and
+`little.conf` next to the executable. Use `--config FILE` to select one file or
+`--no-config` to ignore both defaults. The format is one setting per line:
+
+```ini
+# Relative paths are resolved from this config file.
+module_path = projects/little-modules
+library_path = ../lib/little
+```
+
+Only `module_path` and `library_path` are currently supported; repeat either
+setting to register more paths. Unknown settings are errors, so a misspelled
+path setting cannot silently change program behavior.
 
 For a local Windows compiler, copy `.env.example` to `.env` and set `GCC_PATH`
 to the w64devkit root; the Taskfile loads that file without committing it.
@@ -85,10 +105,17 @@ Each successful run attaches one self-contained package for every target to a
 rolling GitHub Release: `pr-<number>` for pull requests, `develop` for develop
 builds, and `main` for main builds.
 
-* `little-windows-x64.zip` contains `little.exe`, `libs/json/json.dll`, and
-  `libs/webui/webui.dll`.
-* `little-linux-x64.zip` contains `little`, `libs/json/json.so`, and
-  `libs/webui/webui.so`.
+* `little-windows-x64.zip` contains `bin/little.exe`, `lib/little/json/json.dll`,
+  and `lib/little/webui/webui.dll`.
+* `little-linux-x64.zip` contains `bin/little`, `lib/little/json/json.so`, and
+  `lib/little/webui/webui.so`.
+
+Extract a package into an install prefix (for example `~/.local`) so the
+executable lives in `bin` and its libraries live in `lib/little`. The CLI
+searches that installed native-library directory automatically. It also
+recognizes the older portable `libs/` directory beside the executable. A
+packaged library can be loaded by name, for example `loadLibrary("json")` or
+`loadLibrary("webui")`: the loader tries both `name.*` and `name/name.*`.
 
 #### Linux
 ```
