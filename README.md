@@ -90,11 +90,15 @@ For persistent local paths, Little reads `~/.config/little.conf` and
 # Relative paths are resolved from this config file.
 module_path = projects/little-modules
 library_path = ../lib/little
+# Echo submitted input above its result in `little -i`.
+repl_echo = true
 ```
 
-Only `module_path` and `library_path` are currently supported; repeat either
-setting to register more paths. Unknown settings are errors, so a misspelled
-path setting cannot silently change program behavior.
+Repeat `module_path` or `library_path` to register more paths. `repl_echo` is a
+boolean and defaults to `false`; when enabled, both one-line and multiline REPL
+entries are echoed into the output transcript before their result. Unknown
+settings are errors, so a misspelled setting cannot silently change program
+behavior.
 
 For a local Windows compiler, copy `.env.example` to `.env` and set `GCC_PATH`
 to the w64devkit root; the Taskfile loads that file without committing it.

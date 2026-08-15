@@ -51,3 +51,7 @@ Enter that submits that closing line is the explicit run action. While capture
 is active, its submitted lines remain visible and grow upward from the bottom;
 the output area above remains intact. On submission, the composer clears and
 only the chunk's resulting output is shown, just as for a single-line entry.
+
+Set `repl_echo = true` in `little.conf` to echo submitted input into the output
+transcript. It applies equally to one-line entries and multiline captures; the
+default is `false`.

@@ -50,7 +50,7 @@ io.print(add(2, 3))
 Assert-Run "native library path" "5.000000" { & $Exe --no-config -L (Split-Path -Parent $nativeMath) $nativeScript }
 
 $config = Join-Path $build "little-cli-test.conf"
-Set-Content -LiteralPath $config -NoNewline -Value "library_path = $(Split-Path -Parent $nativeMath)"
+Set-Content -LiteralPath $config -NoNewline -Value "library_path = $(Split-Path -Parent $nativeMath)`nrepl_echo = true"
 Assert-Run "configured native library path" "5.000000" { & $Exe --config $config $nativeScript }
 
 $portable = Join-Path $build "cli-portable"

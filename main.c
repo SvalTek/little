@@ -100,6 +100,33 @@ static int append_repl_line(char** source, size_t* length, size_t* capacity, con
     return 1;
 }
 
+static void echo_repl_line(const char* line, size_t length)
+{
+    char character[2] = { 0, 0 };
+    ltstd_write_output(">> ");
+    for (size_t i = 0; i < length; ++i)
+    {
+        character[0] = line[i];
+        ltstd_write_output(character);
+    }
+    ltstd_write_output("\n");
+}
+
+static void echo_repl_source(const char* source, int multiline)
+{
+    const char* line = source;
+    if (multiline) echo_repl_line("\"\"\"", 3);
+    while (*line)
+    {
+        const char* end = strchr(line, '\n');
+        size_t length = end ? (size_t)(end - line) : strlen(line);
+        echo_repl_line(line, length);
+        if (!end) break;
+        line = end + 1;
+    }
+    if (multiline) echo_repl_line("\"\"\"", 3);
+}
+
 static int run_repl_source(lt_VM* vm, const char* source)
 {
     uint32_t nreturn = lt_dostring(vm, source, "<interactive>");
@@ -119,7 +146,7 @@ static int run_repl_source(lt_VM* vm, const char* source)
     return 1;
 }
 
-static int run_repl(lt_VM* vm)
+static int run_repl(lt_VM* vm, int repl_echo)
 {
     char banner[128];
     char* captured = 0;
@@ -146,6 +173,7 @@ static int run_repl(lt_VM* vm)
             {
                 capturing = 0;
                 ltstd_term_commit_composer();
+                if (repl_echo) echo_repl_source(captured ? captured : "", 1);
                 if (!run_repl_source(vm, captured ? captured : "")) goto done;
                 captured_length = 0;
                 if (captured) captured[0] = 0;
@@ -167,7 +195,11 @@ static int run_repl(lt_VM* vm)
             ltstd_term_begin_composer();
             continue;
         }
-        if (*text && !run_repl_source(vm, text)) goto done;
+        if (*text)
+        {
+            if (repl_echo) echo_repl_source(text, 0);
+            if (!run_repl_source(vm, text)) goto done;
+        }
     }
 
 done:
@@ -262,7 +294,7 @@ static int add_module_path(lt_VM* vm, const char* path)
     return !had_error;
 }
 
-static int load_config(lt_VM* vm, const char* path, int required)
+static int load_config(lt_VM* vm, const char* path, int required, int* repl_echo)
 {
     FILE* file = fopen(path, "rb");
     if (!file)
@@ -305,6 +337,20 @@ static int load_config(lt_VM* vm, const char* path, int required)
             free(directory);
             fclose(file);
             return 0;
+        }
+
+        if (strcmp(key, "repl_echo") == 0)
+        {
+            if (strcmp(value, "true") == 0) *repl_echo = 1;
+            else if (strcmp(value, "false") == 0) *repl_echo = 0;
+            else
+            {
+                fprintf(stderr, "ERROR: %s:%u: repl_echo must be true or false\n", path, line_number);
+                free(directory);
+                fclose(file);
+                return 0;
+            }
+            continue;
         }
 
         char* resolved = path_from_directory(directory, value);
@@ -445,6 +491,7 @@ int main(int argc, char** argv)
     const char* config_path = NULL;
     int no_config = 0;
     int interactive = 0;
+    int repl_echo = 0;
     int script_arg_count = 0;
     char** script_args = NULL;
 
@@ -628,7 +675,7 @@ int main(int argc, char** argv)
 
     if (config_path)
     {
-        if (!load_config(vm, config_path, 1))
+        if (!load_config(vm, config_path, 1, &repl_echo))
         {
             free(executable);
             destroy_vm(vm);
@@ -644,7 +691,7 @@ int main(int argc, char** argv)
         if (home)
         {
             char* user_config = join_path(home, ".config/little.conf");
-            if (!user_config || !load_config(vm, user_config, 0))
+            if (!user_config || !load_config(vm, user_config, 0, &repl_echo))
             {
                 free(user_config);
                 free(executable);
@@ -659,7 +706,7 @@ int main(int argc, char** argv)
         char* executable_directory = parent_path(executable);
         char* local_config = executable_directory ? join_path(executable_directory, "little.conf") : NULL;
         free(executable_directory);
-        if (!local_config || !load_config(vm, local_config, 0))
+        if (!local_config || !load_config(vm, local_config, 0, &repl_echo))
         {
             free(local_config);
             free(executable);
@@ -691,7 +738,7 @@ int main(int argc, char** argv)
 
     if (interactive)
     {
-        if (!run_repl(vm)) had_error = 1;
+        if (!run_repl(vm, repl_echo)) had_error = 1;
     }
     else
     {
