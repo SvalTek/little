@@ -70,7 +70,7 @@ if (Test-Path $webuiVendor) {
         if ($LASTEXITCODE -ne 0) { throw "Native WebUI library link failed with exit code $LASTEXITCODE" }
     }
     else {
-        $webuiFlags = @("-std=c11", $sharedLibraryFlag, "-fPIC") + $includeFlags + @("-I", (Join-Path $repo "src"), "-I", $webuiInclude) + $webuiDefines
+        $webuiFlags = @("-std=c11", "-D_DEFAULT_SOURCE", $sharedLibraryFlag, "-fPIC") + $includeFlags + @("-I", (Join-Path $repo "src"), "-I", $webuiInclude) + $webuiDefines
         $webuiLibs = @("-lpthread", "-lm", "-ldl")
         if ($IsMacOS) {
             $webuiLibs = @("-lpthread", "-lm", "-framework", "Cocoa", "-framework", "WebKit")
