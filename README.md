@@ -72,6 +72,22 @@ without baking those local launch details into the script.
 For a local Windows compiler, copy `.env.example` to `.env` and set `GCC_PATH`
 to the w64devkit root; the Taskfile loads that file without committing it.
 
+### CI and release packages
+
+GitHub Actions builds and tests on Windows, Linux, and macOS. It downloads the
+pinned WebUI submodule and compiles WebUI without launching a GUI. Pull requests
+targeting `develop` produce development packages; pushes to `main` produce
+release packages. The workflow can also be manually run for any ref, defaulting
+to `develop`.
+
+Each run uploads these packages for every target:
+
+* `little-<target>.*` is the target CLI (`.exe` on Windows, no extension
+  elsewhere).
+* `nativelibs-<target>.zip` contains `json/json.<extension>` and
+  `webui/webui.<extension>`. Extract its contents into the directory where
+  native libraries are kept, then load them by path with `loadLibrary(...)`.
+
 #### Linux
 ```
 gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_common.c src/little_std.c src/little_loadlib.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -lm -pthread -rdynamic -ldl -o little
