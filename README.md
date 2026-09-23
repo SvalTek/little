@@ -113,9 +113,9 @@ Each run uploads one self-contained package for every target:
 * `little-linux-x64.zip` contains `little`, `libs/json/json.so`, and
   `libs/webui/webui.so`.
 
-Installed packages place the executable in `bin` and native libraries in
-`lib/little`; the CLI searches that directory automatically. It also supports
-the portable `libs/` directory beside the executable. Native packages may use
+The produced packages are portable: the executable is at the archive root and
+native libraries are below `./libs`. The CLI also recognizes an installed
+`bin` plus `lib/little` layout for manual deployments. Native packages may use
 either `name/name.<platform-extension>` or the flat `name.<platform-extension>`
 layout.
 
@@ -123,19 +123,6 @@ The supported build entry point is `build.ps1` (normally through `task build`).
 It builds the vendored PDCursesMod backend and links it statically into the
 CLI: WinCon on Windows and VT on Linux. This keeps the interactive CLI
 self-contained.
-
-#### Linux
-```
-gcc -std=c11 main.c src/little_buffer.c src/little.c src/little_common.c src/little_std.c src/little_loadlib.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -lm -pthread -rdynamic -ldl -o little
-```
-
-#### Windows
-you need [msys2](https://www.msys2.org) _just follow the installation instructions_ 
-```powershell
-pacman -S mingw-w64-ucrt-x86_64-gcc
-
-gcc main.c src/little_buffer.c src/little.c src/little_common.c src/little_std.c src/little_loadlib.c src/little_std_io.c src/little_std_math.c src/little_std_array.c src/little_std_table.c src/little_std_string.c src/little_std_gc.c src/little_async.c -Wl,--export-all-symbols -o little
-```
 ---
 ## Links
 * **[Language overview](doc/lt.md)**

@@ -1,0 +1,11 @@
+class KeywordReceiver {
+    constructor() {
+        this["if"] = 7
+    }
+
+    read() {
+        return @if
+    }
+}
+
+io.print(KeywordReceiver():read())
