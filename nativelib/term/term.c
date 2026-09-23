@@ -402,7 +402,10 @@ static uint8_t term_close(lt_VM* vm, uint8_t argc)
 {
     require_args(vm, argc, 0, "Expected no arguments to term.close!");
     if (state.active && state.vm != vm)
+    {
         lt->runtime_error(vm, "The terminal is owned by another Little VM!");
+        return 0;
+    }
     if (state.active && state.vm == vm)
     {
         lt->remove_poll_hook(vm, state.poll_hook);

@@ -1604,11 +1604,12 @@ static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* cur
 		{
 			should_auto_assign = 1;
 			current++;
-			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier after '@' constructor parameter!");
+			if (current->type != LT_TOKEN_IDENTIFIER && !_lt_token_is_keyword(current)) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier after '@' constructor parameter!");
 		}
 		if (nargs >= LT_MAX_FUNCTION_PARAMS) _lt_parse_error(vm, p->tkn->module, current, "Too many function parameters!");
 		auto_assign[nargs] = should_auto_assign;
-		fn->fn.args[nargs++] = current++;
+		fn->fn.args[nargs++] = _lt_token_is_keyword(current) ? _lt_keyword_as_identifier(vm, p, current) : current;
+		current++;
 		if (current->type == LT_TOKEN_COMMA) current++;
 	}
 
