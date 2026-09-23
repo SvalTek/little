@@ -348,20 +348,6 @@ class Person {
 }
 ```
 
-The field name may also be a reserved word. The `@` parameter is still a normal
-constructor parameter, with the additional behavior of assigning it to the
-same-named field:
-
-```js
-class Result {
-    constructor(@return) {}
-
-    value() {
-        return @return
-    }
-}
-```
-
 ## Class Inheritance
 
 Classes may extend one named superclass:

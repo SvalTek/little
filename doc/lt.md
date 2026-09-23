@@ -282,10 +282,6 @@ Inside a function whose first parameter is named `this`, `@name` is shorthand fo
 
 The `@name` receiver shorthand also accepts reserved words as field names.
 
-This includes constructor field parameters. For example, `constructor(@return)`
-automatically assigns its argument to the receiver's `return` field, just as
-`constructor(@name)` assigns to the `name` field.
-
 For example:
 
 ```little
