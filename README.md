@@ -58,16 +58,41 @@ The included Taskfile is the supported development workflow:
 ```powershell
 task build
 build/little.exe --help
+build/little.exe -i
 build/little.exe scripts/hello.little
 build/little.exe -e 'io.print("hello")'
 build/little.exe -I lib scripts/main.little
+build/little.exe -L native scripts/main.little
 ```
 
-The CLI accepts one script path, or `-e SOURCE` for a short inline program. It
-returns a non-zero exit code for command-line, file, parse, or runtime errors.
-Use `--help` to see its options and `--version` to see the linked API version.
+The CLI accepts one script path, `-e SOURCE` for a short inline program, or
+`-i` / `--interactive` for an editable terminal prompt. The prompt keeps its
+in-process command history, reserves its `>> ` bottom line while output scrolls
+above it, and supports `"""` to begin and end multiline input. Press Ctrl-C or
+Ctrl-D to leave it. Use `--help` to see all options and `--version` to see the
+linked API version. The process returns a non-zero exit code for command-line,
+file, parse, or runtime errors.
+
 Use `-I DIRECTORY` (more than once if needed) to add source-module search paths
-without baking those local launch details into the script.
+and `-L DIRECTORY` (or `--library-path`) to add native-library search paths.
+The script name and its following command-line arguments are available as the
+global `arg` array: `arg[0]` is the script path and `arg[1...]` are supplied
+arguments.
+
+For persistent local paths, Little reads `~/.config/little.conf` and
+`little.conf` next to the executable. Use `--config FILE` to select one file or
+`--no-config` to ignore both defaults. The format is one setting per line:
+
+```ini
+# Relative paths are resolved from this config file.
+module_path = projects/little-modules
+library_path = ../lib/little
+# Echo submitted input above its result in `little -i`.
+repl_echo = true
+```
+
+Repeat `module_path` or `library_path` to register more paths. `repl_echo`
+defaults to `false`.
 
 For a local Windows compiler, copy `.env.example` to `.env` and set `GCC_PATH`
 to the w64devkit root; the Taskfile loads that file without committing it.
@@ -87,6 +112,17 @@ Each run uploads one self-contained package for every target:
   `libs/webui/webui.dll`.
 * `little-linux-x64.zip` contains `little`, `libs/json/json.so`, and
   `libs/webui/webui.so`.
+
+Installed packages place the executable in `bin` and native libraries in
+`lib/little`; the CLI searches that directory automatically. It also supports
+the portable `libs/` directory beside the executable. Native packages may use
+either `name/name.<platform-extension>` or the flat `name.<platform-extension>`
+layout.
+
+The supported build entry point is `build.ps1` (normally through `task build`).
+It builds the vendored PDCursesMod backend and links it statically into the
+CLI: WinCon on Windows and VT on Linux. This keeps the interactive CLI
+self-contained.
 
 #### Linux
 ```

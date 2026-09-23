@@ -61,6 +61,13 @@ typedef struct {
 	uint8_t cancelled;
 } lt_Timer;
 
+typedef struct {
+	uint32_t id;
+	lt_PollHook hook;
+	void* context;
+	uint8_t removed;
+} lt_PollHookEntry;
+
 typedef enum {
 	LT_SHARED_TABLE,
 	LT_SHARED_ARRAY,
@@ -1112,13 +1119,20 @@ static void _lt_release_value(lt_VM* vm, lt_Value value)
 	if (LT_IS_OBJECT(value)) lt_resumecollect(vm, LT_GET_OBJECT(value));
 }
 
+/**
+ * Initializes the asynchronous runtime state for a virtual machine.
+ *
+ * @param vm Virtual machine whose asynchronous state is initialized.
+ */
 void ltasync_init_state(lt_VM* vm)
 {
 	vm->microtasks = lt_buffer_new(sizeof(lt_Microtask));
 	vm->async_calls = lt_buffer_new(sizeof(lt_AsyncCall));
 	vm->timers = lt_buffer_new(sizeof(lt_Timer));
 	vm->workers = lt_buffer_new(sizeof(lt_Worker*));
+	vm->poll_hooks = lt_buffer_new(sizeof(lt_PollHookEntry));
 	vm->next_timer_id = 1;
+	vm->next_poll_hook_id = 1;
 	vm->runloop_stop = 0;
 }
 
@@ -1144,6 +1158,11 @@ static void _lt_worker_destroy(lt_VM* vm, lt_Worker* worker, uint8_t join)
 	vm->free(worker);
 }
 
+/**
+ * Destroys the asynchronous runtime state associated with a VM.
+ *
+ * @param vm VM whose workers and asynchronous runtime buffers are destroyed.
+ */
 void ltasync_destroy_state(lt_VM* vm)
 {
 	for (uint32_t i = 0; i < vm->workers.length; ++i)
@@ -1155,8 +1174,79 @@ void ltasync_destroy_state(lt_VM* vm)
 	lt_buffer_destroy(vm, &vm->async_calls);
 	lt_buffer_destroy(vm, &vm->timers);
 	lt_buffer_destroy(vm, &vm->workers);
+	lt_buffer_destroy(vm, &vm->poll_hooks);
 }
 
+/**
+ * Registers a callback to be invoked during event-loop polling.
+ * @param vm VM that owns the poll hook.
+ * @param hook Callback to invoke.
+ * @param context User-defined context passed to the callback.
+ * @returns A nonzero hook identifier, or 0 if hook is NULL.
+ */
+uint32_t lt_add_poll_hook(lt_VM* vm, lt_PollHook hook, void* context)
+{
+	if (!hook) return 0;
+	uint32_t id = vm->next_poll_hook_id++;
+	if (id == 0) id = vm->next_poll_hook_id++;
+	lt_PollHookEntry entry = { id, hook, context, 0 };
+	lt_buffer_push(vm, &vm->poll_hooks, &entry);
+	return id;
+}
+
+/**
+ * Marks a registered poll hook for removal.
+ * @param vm Virtual machine containing the poll hook.
+ * @param hook_id Identifier of the poll hook to remove.
+ */
+void lt_remove_poll_hook(lt_VM* vm, uint32_t hook_id)
+{
+	if (hook_id == 0) return;
+	for (uint32_t i = 0; i < vm->poll_hooks.length; ++i)
+	{
+		lt_PollHookEntry* entry = lt_buffer_at(&vm->poll_hooks, i);
+		if (entry->id == hook_id)
+		{
+			entry->removed = 1;
+			return;
+		}
+	}
+}
+
+/**
+ * Dispatches the poll hooks that were registered at the start of the poll cycle.
+ * @param vm Virtual machine whose poll hooks are dispatched.
+ * @param pending Set to 1 when a hook reports work or pending activity.
+ * @returns 1 if any hook reports work, 0 otherwise.
+ */
+uint8_t ltasync_poll_hooks(lt_VM* vm, uint8_t* pending)
+{
+	uint8_t did_work = 0;
+	/* Hooks added by a callback begin on the next poll. This also prevents a
+	   callback which registers another hook from extending this dispatch. */
+	uint32_t hook_count = vm->poll_hooks.length;
+	for (uint32_t i = 0; i < hook_count; ++i)
+	{
+		lt_PollHookEntry entry = *(lt_PollHookEntry*)lt_buffer_at(&vm->poll_hooks, i);
+		if (entry.removed) continue;
+		lt_PollResult result = entry.hook(vm, entry.context);
+		if (result == LT_POLL_WORK) did_work = 1;
+		if (result == LT_POLL_WORK || result == LT_POLL_PENDING) *pending = 1;
+	}
+
+	for (uint32_t i = 0; i < vm->poll_hooks.length; ++i)
+	{
+		lt_PollHookEntry* entry = lt_buffer_at(&vm->poll_hooks, i);
+		if (entry->removed) lt_buffer_cycle(&vm->poll_hooks, i--);
+	}
+	return did_work;
+}
+
+/**
+ * Releases the reaction storage associated with a promise.
+ * @param vm VM that owns the promise.
+ * @param promise Promise whose reactions are being released.
+ */
 void ltasync_free_promise(lt_VM* vm, lt_Object* promise)
 {
 	lt_buffer_destroy(vm, &promise->promise.reactions);
@@ -1206,12 +1296,18 @@ void ltasync_mark_roots(lt_VM* vm)
 	}
 }
 
-uint8_t lt_poll(lt_VM* vm)
+/**
+ * Processes one pending asynchronous runtime task or timer and updates the event-loop state.
+ *
+ * @returns `1` if work was performed or pending activity remains, `0` otherwise.
+ */
+static uint8_t lt_poll_internal(lt_VM* vm, int allow_sleep)
 {
 	uint8_t did_work = 0;
 	uint8_t has_pending = 0;
 	uint8_t has_next_timer = 0;
 	uint64_t next_timer_due = 0;
+	did_work = ltasync_poll_hooks(vm, &has_pending);
 
 	if (vm->async_calls.length > 0)
 	{
@@ -1387,9 +1483,19 @@ uint8_t lt_poll(lt_VM* vm)
 			sleep_ms = (uint32_t)until_due;
 		}
 		if (sleep_ms == 0) sleep_ms = 1;
-		_lt_sleep_ms(sleep_ms);
+		if (allow_sleep) _lt_sleep_ms(sleep_ms);
 	}
 	return did_work || has_pending || vm->async_calls.length > 0 || vm->microtasks.length > 0 || vm->workers.length > 0;
+}
+
+uint8_t lt_poll(lt_VM* vm)
+{
+	return lt_poll_internal(vm, 1);
+}
+
+uint8_t lt_poll_now(lt_VM* vm)
+{
+	return lt_poll_internal(vm, 0);
 }
 
 void lt_runloop(lt_VM* vm)

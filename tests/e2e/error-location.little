@@ -1,0 +1,12 @@
+fn mid() {
+	var a = 1
+	return a + "bad"
+}
+var r = pcall(mid)
+io.print(r.error)
+
+fn tail() {
+	return 1 + "bad"
+}
+var r2 = pcall(tail)
+io.print(r2.error)

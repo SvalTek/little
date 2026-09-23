@@ -1,0 +1,3 @@
+LT ERROR: module|1:2: Expected arithmetic operands to be numbers!
+traceback:
+(module|1:0)

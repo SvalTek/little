@@ -1,0 +1,11 @@
+from42: 42.000000
+fromnull: null
+fromtrue: true
+fromsum: 3.000000
+var from: 9.000000
+from(from): 9.000000
+t.from: 7.000000
+t[from]: 7.000000
+eq: true
+shorthand: 9.000000
+done

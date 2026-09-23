@@ -13,6 +13,18 @@
 
 typedef lt_Value (*lt_NativeLibraryOpenFn)(lt_VM* vm, const lt_Api* api);
 
+static lt_Value _lt_native_library_paths(lt_VM* vm, uint8_t create)
+{
+    lt_Value key = lt_make_string(vm, "__native_library_paths");
+    lt_Value paths = lt_table_get(vm, vm->global, key);
+    if (!LT_IS_ARRAY(paths) && create)
+    {
+        paths = lt_make_array(vm);
+        lt_table_set(vm, vm->global, key, paths);
+    }
+    return paths;
+}
+
 static void* _lt_api_alloc(lt_VM* vm, size_t size)
 {
     return vm->alloc(size);
@@ -41,37 +53,45 @@ static lt_Value _lt_api_promise_result(lt_Value value)
 }
 
 static const lt_Api _lt_native_api = {
-    LT_API_VERSION,
-    sizeof(lt_Api),
-    _lt_api_alloc,
-    _lt_api_free,
-    lt_runtime_error,
-    lt_push,
-    lt_pop,
-    lt_exec,
-    lt_make_number,
-    lt_get_number,
-    lt_make_string,
-    lt_get_string,
-    lt_make_table,
-    lt_make_array,
-    lt_make_native,
-    lt_make_ptr,
-    lt_get_ptr,
-    lt_table_set,
-    lt_table_get,
-    lt_table_next,
-    lt_table_pop,
-    lt_array_push,
-    lt_array_get,
-    lt_array_set,
-    lt_array_remove,
-    lt_array_length,
-    lt_poll,
-    _lt_api_is_promise,
-    _lt_api_promise_state,
-    _lt_api_promise_result,
+    .version = LT_API_VERSION,
+    .size = sizeof(lt_Api),
+    .alloc = _lt_api_alloc,
+    .free = _lt_api_free,
+    .runtime_error = lt_runtime_error,
+    .push = lt_push,
+    .pop = lt_pop,
+    .exec = lt_exec,
+    .make_number = lt_make_number,
+    .get_number = lt_get_number,
+    .make_string = lt_make_string,
+    .get_string = lt_get_string,
+    .make_table = lt_make_table,
+    .make_array = lt_make_array,
+    .make_native = lt_make_native,
+    .make_ptr = lt_make_ptr,
+    .get_ptr = lt_get_ptr,
+    .table_set = lt_table_set,
+    .table_get = lt_table_get,
+    .table_next = lt_table_next,
+    .table_pop = lt_table_pop,
+    .array_push = lt_array_push,
+    .array_get = lt_array_get,
+    .array_set = lt_array_set,
+    .array_remove = lt_array_remove,
+    .array_length = lt_array_length,
+    .poll = lt_poll,
+    .add_poll_hook = lt_add_poll_hook,
+    .remove_poll_hook = lt_remove_poll_hook,
+    .is_promise = _lt_api_is_promise,
+    .promise_state = _lt_api_promise_state,
+    .promise_result = _lt_api_promise_result,
+    .poll_now = lt_poll_now,
 };
+
+const lt_Api* ltstd_native_api(void)
+{
+    return &_lt_native_api;
+}
 
 static const char* _lt_native_library_suffix(void)
 {
@@ -119,14 +139,41 @@ static char* _lt_resolve_native_library_base(lt_VM* vm, const char* base)
         return candidate;
     vm->free(candidate);
 
+    const char* slash = strrchr(base, '/');
+    const char* backslash = strrchr(base, '\\');
+    const char* separator = slash;
+    if (!separator || (backslash && backslash > separator)) separator = backslash;
+    const char* name = separator ? separator + 1 : base;
+    char* package_base = lt_common_join_path(vm, base, name);
+    candidate = lt_common_make_suffixed_path(vm, package_base, suffix);
+    vm->free(package_base);
+
+    if (lt_common_file_exists(candidate))
+        return candidate;
+    vm->free(candidate);
+
     return 0;
 }
 
 static char* _lt_resolve_native_library(lt_VM* vm, const char* requested)
 {
     char* resolved = _lt_resolve_native_library_base(vm, requested);
-    lt_Value paths = lt_common_module_paths(vm, 0);
+    lt_Value paths = _lt_native_library_paths(vm, 0);
 
+    if (!resolved && LT_IS_ARRAY(paths))
+    {
+        for (uint32_t i = 0; i < lt_array_length(paths); ++i)
+        {
+            lt_Value entry = lt_array_get(vm, paths, i);
+            if (!LT_IS_STRING(entry)) continue;
+            char* base = lt_common_expand_path_pattern(vm, lt_get_string(vm, entry), requested);
+            resolved = _lt_resolve_native_library_base(vm, base);
+            vm->free(base);
+            if (resolved) break;
+        }
+    }
+
+    paths = lt_common_module_paths(vm, 0);
     if (!resolved && LT_IS_ARRAY(paths))
     {
         for (uint32_t i = 0; i < lt_array_length(paths); ++i)
@@ -279,4 +326,10 @@ static uint8_t _lt_load_library(lt_VM* vm, uint8_t argc)
 void ltstd_open_loadlib(lt_VM* vm)
 {
     lt_table_set(vm, vm->global, lt_make_string(vm, "loadLibrary"), lt_make_native(vm, _lt_load_library));
+}
+
+void ltstd_add_library_path(lt_VM* vm, const char* path)
+{
+    lt_Value paths = _lt_native_library_paths(vm, 1);
+    lt_array_push(vm, paths, lt_make_string(vm, path));
 }

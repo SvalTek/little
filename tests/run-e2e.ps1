@@ -10,6 +10,11 @@ $repo = Split-Path -Parent $PSScriptRoot
 $toolchainBin = if ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin" } else { "" }
 if ($toolchainBin -and (Test-Path $toolchainBin)) {
     $env:PATH = "$toolchainBin$([IO.Path]::PathSeparator)$env:PATH"
+    $msysRoot = Split-Path (Split-Path $toolchainBin -Parent) -Parent
+    $msysBin = Join-Path $msysRoot "usr/bin"
+    if (Test-Path (Join-Path $msysBin "cp.exe")) {
+        $env:PATH = "$env:PATH$([IO.Path]::PathSeparator)$msysBin"
+    }
 }
 $Compiler = if ($Compiler) { $Compiler } elseif ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin/gcc.exe" } else { "gcc" }
 $includeFlags = if ($env:INCLUDES_PATH) { @("-I", $env:INCLUDES_PATH) } else { @() }
@@ -18,41 +23,8 @@ $exe = if ($Exe) { $Exe } else { Join-Path $buildDir "little-e2e.exe" }
 
 if (!$SkipBuild) {
     New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
-    $threadFlags = @()
-    $dynamicFlags = @()
-    if ($env:OS -ne "Windows_NT") {
-        $threadFlags += "-pthread"
-        if (-not $IsMacOS) {
-            $dynamicFlags += "-rdynamic"
-            $dynamicFlags += "-ldl"
-        }
-    }
-    else {
-        $dynamicFlags += "-Wl,--export-all-symbols"
-    }
-
-    & $Compiler -std=c11 `
-        $includeFlags `
-        (Join-Path $repo "main.c") `
-        (Join-Path $repo "src/little_buffer.c") `
-        (Join-Path $repo "src/little.c") `
-        (Join-Path $repo "src/little_common.c") `
-        (Join-Path $repo "src/little_std.c") `
-        (Join-Path $repo "src/little_loadlib.c") `
-        (Join-Path $repo "src/little_std_io.c") `
-        (Join-Path $repo "src/little_std_math.c") `
-        (Join-Path $repo "src/little_std_array.c") `
-        (Join-Path $repo "src/little_std_table.c") `
-        (Join-Path $repo "src/little_std_string.c") `
-        (Join-Path $repo "src/little_std_gc.c") `
-        (Join-Path $repo "src/little_async.c") `
-        $threadFlags `
-        $dynamicFlags `
-        -lm -o $exe
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Build failed with exit code $LASTEXITCODE"
-    }
+    & (Join-Path $repo "build.ps1") -Output "build/little-e2e.exe"
+    if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
 
     $optInHarness = Join-Path $buildDir "loadlib-opt-in.exe"
     & $Compiler -std=c11 `
