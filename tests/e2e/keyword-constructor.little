@@ -1,0 +1,9 @@
+class KeywordConstructor {
+    constructor(@return) {}
+
+    read() {
+        return @return
+    }
+}
+
+io.print(KeywordConstructor(7):read())
