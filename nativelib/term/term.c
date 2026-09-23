@@ -2,6 +2,7 @@
 #include "../../vendor/pdcursesmod/curses.h"
 
 #include <stdint.h>
+#include <setjmp.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -328,12 +329,19 @@ static lt_PollResult term_poll_hook(lt_VM* vm, void* context)
         vm->error_trap = saved_trap_msg;
         if (error)
         {
-            if (!saved_trap && vm->error) vm->error(vm, error);
-            lt->free(vm, error);
             terminal->callback = LT_VALUE_NULL;
             terminal->callback_set = 0;
             if (state.module != LT_VALUE_NULL)
                 lt->table_set(vm, state.module, lt->make_string(vm, "_callback"), LT_VALUE_NULL);
+            if (saved_trap)
+            {
+                if (vm->error_trap) lt->free(vm, vm->error_trap);
+                vm->error_trap = error;
+                if (vm->error_buf) longjmp(*(jmp_buf*)vm->error_buf, 1);
+                abort();
+            }
+            if (vm->error) vm->error(vm, error);
+            lt->free(vm, error);
         }
     }
     return LT_POLL_WORK;
@@ -393,6 +401,8 @@ static uint8_t term_open(lt_VM* vm, uint8_t argc)
 static uint8_t term_close(lt_VM* vm, uint8_t argc)
 {
     require_args(vm, argc, 0, "Expected no arguments to term.close!");
+    if (state.active && state.vm != vm)
+        lt->runtime_error(vm, "The terminal is owned by another Little VM!");
     if (state.active && state.vm == vm)
     {
         lt->remove_poll_hook(vm, state.poll_hook);
@@ -779,26 +789,34 @@ void lt_term_shutdown(void)
 LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
 {
     lt_Value term;
+    uint8_t found = 0;
     if (!api || api->version != LT_API_VERSION || api->size < sizeof(lt_Api)) return LT_VALUE_NULL;
+    for (uint8_t i = 0; i < term_module_count; ++i)
+    {
+        if (term_modules[i].vm == vm)
+        {
+            found = 1;
+            break;
+        }
+    }
+    if (!found && term_module_count >= TERM_MAX_MODULES) return LT_VALUE_NULL;
     lt = api;
     term = lt->make_table(vm);
-    if (term_module_count < TERM_MAX_MODULES)
+    if (!found)
     {
-        uint8_t found = 0;
+        term_modules[term_module_count].vm = vm;
+        term_modules[term_module_count].module = term;
+        term_module_count++;
+    }
+    else
+    {
         for (uint8_t i = 0; i < term_module_count; ++i)
         {
             if (term_modules[i].vm == vm)
             {
                 term_modules[i].module = term;
-                found = 1;
                 break;
             }
-        }
-        if (!found)
-        {
-            term_modules[term_module_count].vm = vm;
-            term_modules[term_module_count].module = term;
-            term_module_count++;
         }
     }
 #define TERM_FN(name, function) lt->table_set(vm, term, lt->make_string(vm, name), lt->make_native(vm, function))

@@ -806,6 +806,7 @@ static lt_Token* _lt_make_identifier_token(lt_VM* vm, lt_Parser* p, const char* 
 	tok->line = loc->line;
 	tok->col = loc->col;
 	tok->idx = idx;
+	lt_buffer_push(vm, &p->generated_tokens, &tok);
 	return tok;
 }
 
@@ -821,6 +822,7 @@ static lt_Token* _lt_make_number_token(lt_VM* vm, lt_Parser* p, double number, l
 	tok->line = loc->line;
 	tok->col = loc->col;
 	tok->idx = p->tkn->literal_buffer.length - 1;
+	lt_buffer_push(vm, &p->generated_tokens, &tok);
 	return tok;
 }
 
@@ -1010,11 +1012,12 @@ static uint8_t _lt_token_is_keyword(lt_Token* token)
 	return token->type >= LT_TOKEN_FN && token->type <= LT_TOKEN_RETURN;
 }
 
-static lt_Token* _lt_keyword_as_identifier(lt_VM* vm, lt_Token* keyword)
+static lt_Token* _lt_keyword_as_identifier(lt_VM* vm, lt_Parser* p, lt_Token* keyword)
 {
 	lt_Token* ident = vm->alloc(sizeof(lt_Token));
 	*ident = *keyword;
 	ident->type = LT_TOKEN_IDENTIFIER;
+	lt_buffer_push(vm, &p->generated_tokens, &ident);
 	return ident;
 }
 
@@ -1719,7 +1722,7 @@ static lt_Token* _lt_parse_table_literal(lt_VM* vm, lt_Parser* p, lt_Token* curr
 		lt_AstNode* value = 0;
 		if (current->type == LT_TOKEN_COLON)
 		{
-			if (_lt_token_is_keyword(key_token)) key->literal.token = _lt_keyword_as_identifier(vm, key_token);
+			if (_lt_token_is_keyword(key_token)) key->literal.token = _lt_keyword_as_identifier(vm, p, key_token);
 			current++; // eat colon
 			value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 			current = _lt_parse_expression(vm, p, current, value);
@@ -1795,7 +1798,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			NEXT();
 			if (_lt_token_is_keyword(current))
 			{
-				lt_AstNode* index = _lt_make_self_index_node(vm, p, loc, _lt_keyword_as_identifier(vm, current));
+				lt_AstNode* index = _lt_make_self_index_node(vm, p, loc, _lt_keyword_as_identifier(vm, p, current));
 				last = index->index.idx->literal.token;
 				current++;
 				lt_buffer_push(vm, &result, &index);
@@ -1816,7 +1819,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			if (current->type == LT_TOKEN_PERIOD)
 			{
 				current++;
-				if (_lt_token_is_keyword(current)) super->super_expr.method = _lt_keyword_as_identifier(vm, current++);
+				if (_lt_token_is_keyword(current)) super->super_expr.method = _lt_keyword_as_identifier(vm, p, current++);
 				else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected method name after 'super.'!");
 				else super->super_expr.method = current++;
 			}
@@ -1892,7 +1895,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
 			if (_lt_token_is_keyword(current))
 			{
-				idx_expr->literal.token = _lt_keyword_as_identifier(vm, current);
+				idx_expr->literal.token = _lt_keyword_as_identifier(vm, p, current);
 				last = idx_expr->literal.token;
 				current++;
 			}
@@ -1923,7 +1926,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
 			if (_lt_token_is_keyword(current))
 			{
-				idx_expr->literal.token = _lt_keyword_as_identifier(vm, current);
+				idx_expr->literal.token = _lt_keyword_as_identifier(vm, p, current);
 				last = idx_expr->literal.token;
 				current++;
 			}
@@ -2258,6 +2261,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 	p.is_valid = 0;
 	p.tkn = tkn;
 	p.ast_nodes = lt_buffer_new(sizeof(lt_AstNode*));
+	p.generated_tokens = lt_buffer_new(sizeof(lt_Token*));
 
 	void* saved_error_buf = vm->error_buf;
 	jmp_buf error_buf;
@@ -4094,6 +4098,9 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 		vm->free(entry);
 	}
 
+	for (uint32_t i = 0; i < p->generated_tokens.length; i++)
+		vm->free(*(lt_Token**)lt_buffer_at(&p->generated_tokens, i));
+	lt_buffer_destroy(vm, &p->generated_tokens);
 	lt_buffer_destroy(vm, &p->ast_nodes);
 }
 

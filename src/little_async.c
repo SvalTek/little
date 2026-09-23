@@ -1,3 +1,7 @@
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "little_async.h"
 #include "little_internal.h"
 #include "little_std.h"
@@ -1032,7 +1036,8 @@ static void _lt_sleep_ms(uint32_t ms)
 #if defined(_WIN32)
 	Sleep(ms);
 #else
-	usleep(ms * 1000);
+	struct timespec delay = { ms / 1000, (long)(ms % 1000) * 1000000L };
+	nanosleep(&delay, 0);
 #endif
 }
 

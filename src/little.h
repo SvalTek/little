@@ -380,6 +380,7 @@ typedef struct lt_Scope {
 
 typedef struct {
 	lt_Buffer ast_nodes;
+	lt_Buffer generated_tokens;
 	lt_AstNode* root;
 
 	lt_Tokenizer* tkn;
