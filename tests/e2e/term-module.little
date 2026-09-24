@@ -1,0 +1,4 @@
+io.print(type term)
+io.print(type (term.open))
+io.print(type (term.poll))
+io.print(type (term.readLine))

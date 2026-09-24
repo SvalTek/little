@@ -143,7 +143,7 @@ static lt_DebugInfo* _lt_get_debuginfo(lt_Object* obj)
 
 static lt_DebugLoc _lt_get_location(lt_DebugInfo* info, uint32_t pc)
 {
-	if (info)
+	if (info && pc < info->locations.length)
 	{
 		return *(lt_DebugLoc*)lt_buffer_at(&info->locations, pc);
 	}
@@ -157,7 +157,8 @@ void lt_runtime_error(lt_VM* vm, const char* message)
 
 	lt_Frame* topmost = &vm->callstack[vm->depth - 1];
 	lt_DebugInfo* info = _lt_get_debuginfo(topmost->callee);
-	lt_DebugLoc loc = _lt_get_location(info, topmost->pc);
+	uint32_t pc = topmost->pc > 0 ? topmost->pc - 1 : 0;
+	lt_DebugLoc loc = _lt_get_location(info, pc);
 
 	const char* name = "<unknown>";
 	if (info) name = info->module_name;
@@ -356,6 +357,28 @@ static lt_Value _lt_table_set_raw(lt_VM* vm, lt_Table* table, lt_Value key, lt_V
 	lt_TablePair newpair = { key, val };
 	lt_buffer_push(vm, bucket, &newpair);
 	return val;
+}
+
+static uint16_t _lt_register_identifier_name(lt_VM* vm, lt_Tokenizer* t, const char* name, uint16_t length)
+{
+	for (uint32_t i = 0; i < t->identifier_buffer.length; i++)
+	{
+		lt_Identifier* id = lt_buffer_at(&t->identifier_buffer, i);
+		if (faststrcmp(name, length, id->name, strlen(id->name)))
+		{
+			id->num_references++;
+			return (uint16_t)i;
+		}
+	}
+
+	lt_Identifier newid;
+	newid.num_references = 1;
+	newid.name = vm->alloc(length + 1);
+	strncpy_s(newid.name, length + 1, name, length);
+	newid.name[length] = 0;
+
+	lt_buffer_push(vm, &t->identifier_buffer, &newid);
+	return (uint16_t)(t->identifier_buffer.length - 1);
 }
 
 lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
@@ -561,7 +584,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 
 #define PUSH_STR_TOKEN(name, new_type) \
 	if(faststrcmp(name, sizeof(name) - 1, start, length)) { \
-		lt_Token _t; _t.type = new_type; _t.line = line; _t.col = col; col += length; _t.idx = 0; \
+		lt_Token _t; _t.type = new_type; _t.line = line; _t.col = col; col += length; _t.idx = _lt_register_identifier_name(vm, &t, start, length); \
 		lt_buffer_push(vm, &t.token_buffer, &_t); found = 1; }
 
 				PUSH_STR_TOKEN("fn", LT_TOKEN_FN)
@@ -575,7 +598,6 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 				else PUSH_STR_TOKEN("while", LT_TOKEN_WHILE)
 				else PUSH_STR_TOKEN("with", LT_TOKEN_WITH)
 				else PUSH_STR_TOKEN("import", LT_TOKEN_IMPORT)
-				else PUSH_STR_TOKEN("from", LT_TOKEN_FROM)
 				else PUSH_STR_TOKEN("break", LT_TOKEN_BREAK)
 				else PUSH_STR_TOKEN("return", LT_TOKEN_RETURN)
 				else PUSH_STR_TOKEN("async", LT_TOKEN_ASYNC)
@@ -784,6 +806,7 @@ static lt_Token* _lt_make_identifier_token(lt_VM* vm, lt_Parser* p, const char* 
 	tok->line = loc->line;
 	tok->col = loc->col;
 	tok->idx = idx;
+	lt_buffer_push(vm, &p->generated_tokens, &tok);
 	return tok;
 }
 
@@ -799,6 +822,7 @@ static lt_Token* _lt_make_number_token(lt_VM* vm, lt_Parser* p, double number, l
 	tok->line = loc->line;
 	tok->col = loc->col;
 	tok->idx = p->tkn->literal_buffer.length - 1;
+	lt_buffer_push(vm, &p->generated_tokens, &tok);
 	return tok;
 }
 
@@ -974,6 +998,27 @@ static lt_Token* _lt_parse_var_declaration(lt_VM* vm, lt_Parser* p, lt_Token* cu
 	declare->declare.expr = rhs;
 	declare->declare.is_global = is_global;
 	return current;
+}
+
+static uint8_t _lt_token_is_name(lt_Parser* p, lt_Token* token, const char* name)
+{
+	if (token->type != LT_TOKEN_IDENTIFIER) return 0;
+	lt_Identifier* id = lt_buffer_at(&p->tkn->identifier_buffer, token->idx);
+	return faststrcmp(name, strlen(name), id->name, strlen(id->name));
+}
+
+static uint8_t _lt_token_is_keyword(lt_Token* token)
+{
+	return token->type >= LT_TOKEN_FN && token->type <= LT_TOKEN_RETURN;
+}
+
+static lt_Token* _lt_keyword_as_identifier(lt_VM* vm, lt_Parser* p, lt_Token* keyword)
+{
+	lt_Token* ident = vm->alloc(sizeof(lt_Token));
+	*ident = *keyword;
+	ident->type = LT_TOKEN_IDENTIFIER;
+	lt_buffer_push(vm, &p->generated_tokens, &ident);
+	return ident;
 }
 
 static lt_Token* _lt_parse_named_function_declaration(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* declare, uint8_t is_global, uint8_t is_async)
@@ -1309,7 +1354,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 			lt_AstNode* declare = _lt_get_node_of_type(vm, import_token, p, LT_AST_NODE_DECLARE);
 			current = _lt_parse_destructure_pattern(vm, p, current, declare);
-			if (current->type != LT_TOKEN_FROM) _lt_parse_error(vm, p->tkn->module, current, "Expected 'from' after import destructuring pattern!");
+			if (!_lt_token_is_name(p, current, "from")) _lt_parse_error(vm, p->tkn->module, current, "Expected 'from' after import destructuring pattern!");
 			current++;
 
 			lt_AstNode* path_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
@@ -1559,11 +1604,12 @@ static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* cur
 		{
 			should_auto_assign = 1;
 			current++;
-			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier after '@' constructor parameter!");
+			if (current->type != LT_TOKEN_IDENTIFIER && !_lt_token_is_keyword(current)) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier after '@' constructor parameter!");
 		}
 		if (nargs >= LT_MAX_FUNCTION_PARAMS) _lt_parse_error(vm, p->tkn->module, current, "Too many function parameters!");
 		auto_assign[nargs] = should_auto_assign;
-		fn->fn.args[nargs++] = current++;
+		fn->fn.args[nargs++] = _lt_token_is_keyword(current) ? _lt_keyword_as_identifier(vm, p, current) : current;
+		current++;
 		if (current->type == LT_TOKEN_COMMA) current++;
 	}
 
@@ -1660,9 +1706,24 @@ static lt_Token* _lt_parse_table_literal(lt_VM* vm, lt_Parser* p, lt_Token* curr
 		lt_Token* key_token = current++;
 		key->literal.token = key_token;
 
+		switch (key_token->type)
+		{
+		case LT_TOKEN_NULL_LITERAL:
+		case LT_TOKEN_TRUE_LITERAL:
+		case LT_TOKEN_FALSE_LITERAL:
+		case LT_TOKEN_NUMBER_LITERAL:
+		case LT_TOKEN_STRING_LITERAL:
+		case LT_TOKEN_IDENTIFIER:
+			break;
+		default:
+			if (!_lt_token_is_keyword(key_token)) _lt_parse_error(vm, p->tkn->module, key_token, "Expected identifier, literal, or keyword as table key!");
+			break;
+		}
+
 		lt_AstNode* value = 0;
 		if (current->type == LT_TOKEN_COLON)
 		{
+			if (_lt_token_is_keyword(key_token)) key->literal.token = _lt_keyword_as_identifier(vm, p, key_token);
 			current++; // eat colon
 			value = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 			current = _lt_parse_expression(vm, p, current, value);
@@ -1691,17 +1752,18 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 	lt_Buffer result = lt_buffer_new(sizeof(lt_AstNode*));
 	lt_Buffer operator_stack = lt_buffer_new(sizeof(lt_TokenType));
+	lt_Buffer operator_tokens = lt_buffer_new(sizeof(lt_Token*));
 
-#define PUSH_EXPR_FROM_OP(op) \
+#define PUSH_EXPR_FROM_OP(op, op_tok) \
 	if (op == LT_TOKEN_NOT || op == LT_TOKEN_NEGATE || op == LT_TOKEN_TYPE || op == LT_TOKEN_TYPEOF) \
 	{																				\
-		lt_AstNode* unaryop = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_UNARYOP);			\
+		lt_AstNode* unaryop = _lt_get_node_of_type(vm, op_tok, p, LT_AST_NODE_UNARYOP);			\
 		unaryop->unary_op.type = op;											    \
 		lt_buffer_push(vm, &result, &unaryop);											\
 	}																				\
 	else																			\
 	{																				\
-		lt_AstNode* binaryop = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_BINARYOP);		\
+		lt_AstNode* binaryop = _lt_get_node_of_type(vm, op_tok, p, LT_AST_NODE_BINARYOP);		\
 		binaryop->binary_op.type = op;											    \
 		lt_buffer_push(vm, &result, &binaryop);											\
 	}
@@ -1735,9 +1797,19 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			BREAK_ON_EXPR_BOUNDRY
 			lt_Token* loc = current;
 			NEXT();
-			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier after '@'!");
-			lt_AstNode* index = _lt_make_self_index_node(vm, p, loc, NEXT());
-			lt_buffer_push(vm, &result, &index);
+			if (_lt_token_is_keyword(current))
+			{
+				lt_AstNode* index = _lt_make_self_index_node(vm, p, loc, _lt_keyword_as_identifier(vm, p, current));
+				last = index->index.idx->literal.token;
+				current++;
+				lt_buffer_push(vm, &result, &index);
+			}
+			else
+			{
+				if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier after '@'!");
+				lt_AstNode* index = _lt_make_self_index_node(vm, p, loc, NEXT());
+				lt_buffer_push(vm, &result, &index);
+			}
 			} break;
 		case LT_TOKEN_SUPER: {
 			BREAK_ON_EXPR_BOUNDRY
@@ -1748,8 +1820,9 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			if (current->type == LT_TOKEN_PERIOD)
 			{
 				current++;
-				if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected method name after 'super.'!");
-				super->super_expr.method = current++;
+				if (_lt_token_is_keyword(current)) super->super_expr.method = _lt_keyword_as_identifier(vm, p, current++);
+				else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected method name after 'super.'!");
+				else super->super_expr.method = current++;
 			}
 			else
 			{
@@ -1821,8 +1894,14 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 			NEXT(); // eat period
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
-			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow '.' operator!");
-			idx_expr->literal.token = NEXT();
+			if (_lt_token_is_keyword(current))
+			{
+				idx_expr->literal.token = _lt_keyword_as_identifier(vm, p, current);
+				last = idx_expr->literal.token;
+				current++;
+			}
+			else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow '.' operator!");
+			else idx_expr->literal.token = NEXT();
 
 			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
 			lt_AstNode* index = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_INDEX);
@@ -1846,8 +1925,14 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 			NEXT(); // eat colon
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
-			if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
-			idx_expr->literal.token = NEXT();
+			if (_lt_token_is_keyword(current))
+			{
+				idx_expr->literal.token = _lt_keyword_as_identifier(vm, p, current);
+				last = idx_expr->literal.token;
+				current++;
+			}
+			else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
+			else idx_expr->literal.token = NEXT();
 
 			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
 			lt_AstNode* index = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_INDEX);
@@ -1922,13 +2007,16 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 				{
 					lt_TokenType shunted = *(lt_TokenType*)lt_buffer_last(&operator_stack);
 					lt_buffer_pop(&operator_stack);
+					lt_Token* shunted_tok = *(lt_Token**)lt_buffer_last(&operator_tokens);
+					lt_buffer_pop(&operator_tokens);
 
-					PUSH_EXPR_FROM_OP(shunted);
+					PUSH_EXPR_FROM_OP(shunted, shunted_tok);
 				}
 				else break;
 			}
 
 			lt_buffer_push(vm, &operator_stack, &optype);
+			lt_buffer_push(vm, &operator_tokens, &current);
 			NEXT();
 		} break;
 
@@ -1971,7 +2059,9 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			else
 			{
 				n_open++;
-				lt_buffer_push(vm, &operator_stack, &current->type); NEXT();
+				lt_buffer_push(vm, &operator_stack, &current->type);
+				lt_buffer_push(vm, &operator_tokens, &current);
+				NEXT();
 			}
 		} break;
 
@@ -1985,13 +2075,16 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 				if (back == LT_TOKEN_OPENPAREN) break;
 
 				lt_buffer_pop(&operator_stack);
-				PUSH_EXPR_FROM_OP(back);
+				lt_Token* back_tok = *(lt_Token**)lt_buffer_last(&operator_tokens);
+				lt_buffer_pop(&operator_tokens);
+				PUSH_EXPR_FROM_OP(back, back_tok);
 			}
 
 			if (operator_stack.length == 0) _lt_parse_error(vm, p->tkn->module, current, "Malformed expression!");
 			else
 			{
 				lt_buffer_pop(&operator_stack);
+				lt_buffer_pop(&operator_tokens);
 				n_open--;
 			}
 		} break;
@@ -2109,7 +2202,9 @@ expr_end:
 	{
 		lt_TokenType back = *(lt_TokenType*)lt_buffer_last(&operator_stack);
 		lt_buffer_pop(&operator_stack);
-		PUSH_EXPR_FROM_OP(back);
+		lt_Token* back_tok = *(lt_Token**)lt_buffer_last(&operator_tokens);
+		lt_buffer_pop(&operator_tokens);
+		PUSH_EXPR_FROM_OP(back, back_tok);
 	}
 
 	lt_Buffer value_stack = lt_buffer_new(sizeof(lt_AstNode*));
@@ -2154,6 +2249,7 @@ expr_end:
 
 	lt_buffer_destroy(vm, &result);
 	lt_buffer_destroy(vm, &operator_stack);
+	lt_buffer_destroy(vm, &operator_tokens);
 	lt_buffer_destroy(vm, &value_stack);
 
 	return current;
@@ -2166,6 +2262,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 	p.is_valid = 0;
 	p.tkn = tkn;
 	p.ast_nodes = lt_buffer_new(sizeof(lt_AstNode*));
+	p.generated_tokens = lt_buffer_new(sizeof(lt_Token*));
 
 	void* saved_error_buf = vm->error_buf;
 	jmp_buf error_buf;
@@ -3431,13 +3528,18 @@ static lt_Value _lt_compile_function_value(lt_VM* vm, lt_Parser* p, const char* 
 		fn->fn.debug->module_name = name;
 	}
 
+	lt_Buffer* debug = vm->generate_debug ? &fn->fn.debug->locations : 0;
 	lt_Op op = { LT_OP_PUSH, 0 };
 	lt_buffer_push(vm, &fn->fn.code, &op);
+	if (debug) lt_buffer_push(vm, debug, &node->loc);
 
-	_lt_compile_body(vm, p, name, &fn->fn.debug->locations, &node->fn.body, node->fn.scope, &fn->fn.code, &fn->fn.constants);
+	_lt_compile_body(vm, p, name, debug, &node->fn.body, node->fn.scope, &fn->fn.code, &fn->fn.constants);
 
+	lt_DebugLoc ret_loc = { 0, 0 };
+	if (debug && debug->length > 0) ret_loc = *(lt_DebugLoc*)lt_buffer_at(debug, debug->length - 1);
 	lt_Op op2 = { LT_OP_RET, 0 };
 	lt_buffer_push(vm, &fn->fn.code, &op2);
+	if (debug) lt_buffer_push(vm, debug, &ret_loc);
 
 	((lt_Op*)lt_buffer_at(&fn->fn.code, 0))->arg = node->fn.scope->locals.length;
 	return LT_VALUE_OBJECT(fn);
@@ -3520,6 +3622,15 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 			lt_Identifier* i = lt_buffer_at(&p->tkn->identifier_buffer, t->idx);
 			lt_Value val = lt_make_string(vm, i->name);
 			OPARG(PUSHC, _lt_push_constant(vm, constants, val));
+		} break;
+		default: {
+			if (_lt_token_is_keyword(t))
+			{
+				lt_Identifier* i = lt_buffer_at(&p->tkn->identifier_buffer, t->idx);
+				lt_Value val = lt_make_string(vm, i->name);
+				OPARG(PUSHC, _lt_push_constant(vm, constants, val));
+			}
+			else lt_error(vm, "Invalid token in literal expression!");
 		} break;
 		}
 	} break;
@@ -3932,13 +4043,18 @@ lt_Value lt_compile(lt_VM* vm, lt_Parser* p)
 		chunk->chunk.debug->module_name = chunk->chunk.name;
 	}
 
+	lt_Buffer* debug = vm->generate_debug ? &chunk->chunk.debug->locations : 0;
 	lt_Op op = { LT_OP_PUSH, 0 };
 	lt_buffer_push(vm, &chunk->chunk.code, &op);
+	if (debug) lt_buffer_push(vm, debug, &p->root->loc);
 
-	_lt_compile_body(vm, p, chunk->chunk.name, &chunk->chunk.debug->locations, &p->root->chunk.body, p->root->chunk.scope, &chunk->chunk.code, &chunk->chunk.constants);
-	
+	_lt_compile_body(vm, p, chunk->chunk.name, debug, &p->root->chunk.body, p->root->chunk.scope, &chunk->chunk.code, &chunk->chunk.constants);
+
+	lt_DebugLoc ret_loc = { 0, 0 };
+	if (debug && debug->length > 0) ret_loc = *(lt_DebugLoc*)lt_buffer_at(debug, debug->length - 1);
 	lt_Op op2 = { LT_OP_RET, 0 };
 	lt_buffer_push(vm, &chunk->chunk.code, &op2);
+	if (debug) lt_buffer_push(vm, debug, &ret_loc);
 
 	((lt_Op*)lt_buffer_at(&chunk->chunk.code, 0))->arg = p->root->chunk.scope->locals.length;
 
@@ -3983,6 +4099,9 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 		vm->free(entry);
 	}
 
+	for (uint32_t i = 0; i < p->generated_tokens.length; i++)
+		vm->free(*(lt_Token**)lt_buffer_at(&p->generated_tokens, i));
+	lt_buffer_destroy(vm, &p->generated_tokens);
 	lt_buffer_destroy(vm, &p->ast_nodes);
 }
 
