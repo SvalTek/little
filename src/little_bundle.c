@@ -336,7 +336,10 @@ static char* make_module_candidate(const char* requested, int initializer)
 static int read_zip_entry_vm(lt_VM* vm, mz_zip_archive* archive, const char* name, char** source)
 {
     mz_zip_archive_file_stat stat;
-    int index = zip_file_index(archive, name, NULL, 0);
+    char error[256] = { 0 };
+    int index = zip_file_index(archive, name, error, sizeof(error));
+    if (index == -2)
+        lt_runtime_error(vm, error[0] ? error : "Invalid bundled module index!");
     if (index < 0) return 0;
     if (!mz_zip_reader_file_stat(archive, (mz_uint)index, &stat))
         lt_runtime_error(vm, "Failed to inspect bundled module!");

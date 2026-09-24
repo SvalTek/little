@@ -594,8 +594,8 @@ int main(int argc, char** argv)
     char* file_source = NULL;
     char* executable = NULL;
     lt_Bundle* bundle = NULL;
-    const char** module_paths = malloc((size_t)argc * 2 * sizeof(*module_paths));
-    const char** bundle_include_paths = module_paths ? module_paths + argc : NULL;
+    const char** module_paths = malloc((size_t)argc * sizeof(*module_paths));
+    const char** bundle_include_paths = malloc((size_t)argc * sizeof(*bundle_include_paths));
     const char** library_paths = malloc((size_t)argc * sizeof(*library_paths));
     uint32_t module_path_count = 0;
     uint32_t library_path_count = 0;
@@ -614,10 +614,11 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (!module_paths || !library_paths)
+    if (!module_paths || !bundle_include_paths || !library_paths)
     {
         fprintf(stderr, "ERROR: Failed to allocate command-line options\n");
         free(module_paths);
+        free(bundle_include_paths);
         free(library_paths);
         return 1;
     }
@@ -628,6 +629,7 @@ int main(int argc, char** argv)
         {
             print_usage(stdout);
             free(module_paths);
+            free(bundle_include_paths);
             free(library_paths);
             return 0;
         }
@@ -635,6 +637,7 @@ int main(int argc, char** argv)
         {
             printf("little API %d\n", LT_API_VERSION);
             free(module_paths);
+            free(bundle_include_paths);
             free(library_paths);
             return 0;
         }
@@ -644,6 +647,7 @@ int main(int argc, char** argv)
             {
                 fprintf(stderr, "ERROR: %s requires a directory\n", argv[i - 1]);
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -655,6 +659,7 @@ int main(int argc, char** argv)
             {
                 fprintf(stderr, "ERROR: %s requires a directory\n", argv[i - 1]);
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -666,6 +671,7 @@ int main(int argc, char** argv)
             {
                 fprintf(stderr, "ERROR: --bundle requires one entry file\n");
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -677,6 +683,7 @@ int main(int argc, char** argv)
             {
                 fprintf(stderr, "ERROR: --include requires a file or directory\n");
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -688,6 +695,7 @@ int main(int argc, char** argv)
             {
                 fprintf(stderr, "ERROR: %s requires one output file\n", argv[i - 1]);
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -699,6 +707,7 @@ int main(int argc, char** argv)
             {
                 fprintf(stderr, "ERROR: --config requires one file\n");
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -714,6 +723,7 @@ int main(int argc, char** argv)
             {
                 print_usage(stderr);
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -727,6 +737,7 @@ int main(int argc, char** argv)
             {
                 print_usage(stderr);
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -746,6 +757,7 @@ int main(int argc, char** argv)
             {
                 print_usage(stderr);
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -753,6 +765,7 @@ int main(int argc, char** argv)
             if (!file_source)
             {
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -767,6 +780,7 @@ int main(int argc, char** argv)
         {
             fprintf(stderr, "ERROR: Unknown option '%s'\n", argv[i]);
             free(module_paths);
+            free(bundle_include_paths);
             free(library_paths);
             return 2;
         }
@@ -774,6 +788,7 @@ int main(int argc, char** argv)
         {
             print_usage(stderr);
             free(module_paths);
+            free(bundle_include_paths);
             free(library_paths);
             return 2;
         }
@@ -789,6 +804,7 @@ int main(int argc, char** argv)
             if (!file_source)
             {
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 2;
             }
@@ -812,6 +828,7 @@ int main(int argc, char** argv)
             fprintf(stderr, "ERROR: --bundle requires ENTRY and -o OUTPUT; it cannot run a script or use -I or -L\n");
             free(file_source);
             free(module_paths);
+            free(bundle_include_paths);
             free(library_paths);
             return 2;
         }
@@ -820,6 +837,7 @@ int main(int argc, char** argv)
         {
             fprintf(stderr, "ERROR: Failed to locate the Little runtime\n");
             free(module_paths);
+            free(bundle_include_paths);
             free(library_paths);
             return 1;
         }
@@ -830,6 +848,7 @@ int main(int argc, char** argv)
             printf("Created bundle '%s'\n", bundle_output_path);
         free(runtime_path);
         free(module_paths);
+        free(bundle_include_paths);
         free(library_paths);
         return success ? 0 : 1;
     }
@@ -838,6 +857,7 @@ int main(int argc, char** argv)
     {
         print_usage(stderr);
         free(module_paths);
+        free(bundle_include_paths);
         free(library_paths);
         return 2;
     }
@@ -848,6 +868,7 @@ int main(int argc, char** argv)
         fprintf(stderr, "ERROR: Failed to initialize VM\n");
         free(file_source);
         free(module_paths);
+        free(bundle_include_paths);
         free(library_paths);
         return 1;
     }
@@ -859,6 +880,7 @@ int main(int argc, char** argv)
         destroy_vm(vm);
         free(file_source);
         free(module_paths);
+        free(bundle_include_paths);
         free(library_paths);
         return 1;
     }
@@ -875,6 +897,7 @@ int main(int argc, char** argv)
             destroy_vm(vm);
             free(file_source);
             free(module_paths);
+            free(bundle_include_paths);
             free(library_paths);
             return 1;
         }
@@ -888,6 +911,7 @@ int main(int argc, char** argv)
                 free(executable);
                 destroy_vm(vm);
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 1;
             }
@@ -911,6 +935,7 @@ int main(int argc, char** argv)
         destroy_vm(vm);
         free(file_source);
         free(module_paths);
+        free(bundle_include_paths);
         free(library_paths);
         return 1;
     }
@@ -924,6 +949,7 @@ int main(int argc, char** argv)
             destroy_vm(vm);
             free(file_source);
             free(module_paths);
+            free(bundle_include_paths);
             free(library_paths);
             return 1;
         }
@@ -947,6 +973,7 @@ int main(int argc, char** argv)
                 destroy_vm(vm);
                 free(file_source);
                 free(module_paths);
+                free(bundle_include_paths);
                 free(library_paths);
                 return 1;
             }
@@ -965,6 +992,7 @@ int main(int argc, char** argv)
             destroy_vm(vm);
             free(file_source);
             free(module_paths);
+            free(bundle_include_paths);
             free(library_paths);
             return 1;
         }
@@ -980,6 +1008,7 @@ int main(int argc, char** argv)
             destroy_vm(vm);
             free(file_source);
             free(module_paths);
+            free(bundle_include_paths);
             free(library_paths);
             return 1;
         }
@@ -1010,6 +1039,7 @@ int main(int argc, char** argv)
     lt_bundle_close(bundle);
     free(file_source);
     free(module_paths);
+    free(bundle_include_paths);
     free(library_paths);
 
     return had_error ? 1 : 0;

@@ -14,6 +14,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
 #else
 #include <unistd.h>
 #endif
@@ -40,6 +42,17 @@ char* lt_executable_path(const char* argv0)
     {
         buffer[length] = 0;
         return copy_host_string(buffer);
+    }
+#elif defined(__APPLE__)
+    {
+        char buffer[32768];
+        uint32_t size = (uint32_t)sizeof(buffer);
+        if (_NSGetExecutablePath(buffer, &size) == 0)
+        {
+            char* resolved = realpath(buffer, NULL);
+            if (resolved) return resolved;
+            return copy_host_string(buffer);
+        }
     }
 #endif
 #ifndef _WIN32
