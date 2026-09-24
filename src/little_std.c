@@ -114,8 +114,7 @@ static uint8_t _ltstd_unpack(lt_VM* vm, uint8_t argc)
 static FILE* _ltstd_open_module_base(lt_VM* vm, const char* base, char** resolved)
 {
     char* candidate = 0;
-    size_t base_len = strlen(base);
-    if (base_len >= 7 && strcmp(base + base_len - 7, ".little") == 0)
+    if (lt_common_has_little_extension(base))
         candidate = lt_common_copy_string(vm, base);
     else
         candidate = lt_common_make_suffixed_path(vm, base, ".little");

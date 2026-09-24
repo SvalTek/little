@@ -342,7 +342,7 @@ char* lt_bundle_read_entry(lt_Bundle* bundle, const char* name, size_t* size, ch
 static char* make_module_candidate(const char* requested, int initializer)
 {
     size_t length = strlen(requested);
-    int has_extension = length >= 7 && strcmp(requested + length - 7, ".little") == 0;
+    int has_extension = lt_common_has_little_extension(requested);
     const char* suffix = initializer ? "/init.little" : (has_extension ? "" : ".little");
     size_t suffix_length = strlen(suffix);
     char* candidate = malloc(length + suffix_length + 1);

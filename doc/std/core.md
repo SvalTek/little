@@ -63,7 +63,7 @@ module.addPath("lib")
 var common = import "utils/common"
 ```
 
-For each direct path or search-path candidate, Little tries `path.little`, then `path/init.little`. Extensionless files are not loaded. Use `module.clearPaths()` to remove registered search paths.
+For each direct path or search-path candidate, Little tries `path.little`, then `path/init.little`. The `.little` suffix is recognized case-insensitively, so an explicit import such as `import "path/module.LITTLE"` is not given a second suffix. Extensionless files are not loaded. Use `module.clearPaths()` to remove registered search paths.
 
 When a search path contains `?`, it receives the first import path segment and any remaining subpath is appended after the template.
 

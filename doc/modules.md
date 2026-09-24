@@ -54,6 +54,8 @@ The named form is preferred when a script only needs specific exported values.
 ## Paths
 
 `import "path"` only loads Little source files. It tries `path.little`, then `path/init.little`.
+The `.little` suffix is recognized case-insensitively, so an explicit import such
+as `import "path/module.LITTLE"` is not given a second suffix.
 
 ```js
 import { greet } from "tests/fixtures/greeter"
