@@ -13,6 +13,7 @@
 #endif
 
 #include "src/little.h"
+#include "src/little_bundle.h"
 #include "src/little_std.h"
 #include "src/little_async.h"
 
@@ -64,11 +65,15 @@ static void print_usage(FILE* stream)
 {
     fprintf(stream,
         "Usage: little [options] (-i | -e SOURCE | FILE [ARG]...)\n"
+        "       little --bundle ENTRY --include PATH... -o OUTPUT\n"
         "\n"
         "  -i, --interactive      Start an interactive terminal session.\n"
         "  -e SOURCE              Execute Little source supplied on the command line.\n"
         "  -I, --module-path DIR  Add a source-module search directory. May be repeated.\n"
         "  -L, --library-path DIR Add a native-library search directory. May be repeated.\n"
+        "  --bundle FILE         Create a self-contained Little executable.\n"
+        "  --include PATH        Add a file or directory to a bundle. May be repeated.\n"
+        "  -o, --output FILE     Write a bundle to this executable path.\n"
         "  --config FILE          Load only this configuration file.\n"
         "  --no-config            Do not load default configuration files.\n"
         "  -v, --version          Show the Little API version used by this CLI.\n"
@@ -617,17 +622,29 @@ int main(int argc, char** argv)
     const char* source = NULL;
     const char* module_name = NULL;
     const char* script_name = NULL;
+    const char* bundle_entry_path = NULL;
+    const char* bundle_output_path = NULL;
     char* file_source = NULL;
+    char* executable = NULL;
+    lt_Bundle* bundle = NULL;
     const char** module_paths = malloc((size_t)argc * sizeof(*module_paths));
     const char** library_paths = malloc((size_t)argc * sizeof(*library_paths));
     uint32_t module_path_count = 0;
     uint32_t library_path_count = 0;
+    uint32_t bundle_include_count = 0;
     const char* config_path = NULL;
     int no_config = 0;
     int interactive = 0;
     int repl_echo = 0;
     int script_arg_count = 0;
     char** script_args = NULL;
+    int bundled = lt_bundle_probe_self(argv[0]);
+
+    if (bundled < 0)
+    {
+        fprintf(stderr, "ERROR: Failed to inspect the running executable bundle\n");
+        return 1;
+    }
 
     if (!module_paths || !library_paths)
     {
@@ -675,6 +692,39 @@ int main(int argc, char** argv)
             }
             library_paths[library_path_count++] = argv[i];
         }
+        else if (strcmp(argv[i], "--bundle") == 0)
+        {
+            if (bundle_entry_path || ++i >= argc)
+            {
+                fprintf(stderr, "ERROR: --bundle requires one entry file\n");
+                free(module_paths);
+                free(library_paths);
+                return 2;
+            }
+            bundle_entry_path = argv[i];
+        }
+        else if (strcmp(argv[i], "--include") == 0)
+        {
+            if (++i >= argc)
+            {
+                fprintf(stderr, "ERROR: --include requires a file or directory\n");
+                free(module_paths);
+                free(library_paths);
+                return 2;
+            }
+            module_paths[bundle_include_count++] = argv[i];
+        }
+        else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0)
+        {
+            if (bundle_output_path || ++i >= argc)
+            {
+                fprintf(stderr, "ERROR: %s requires one output file\n", argv[i - 1]);
+                free(module_paths);
+                free(library_paths);
+                return 2;
+            }
+            bundle_output_path = argv[i];
+        }
         else if (strcmp(argv[i], "--config") == 0)
         {
             if (config_path || ++i >= argc)
@@ -718,6 +768,12 @@ int main(int argc, char** argv)
         }
         else if (strcmp(argv[i], "--") == 0)
         {
+            if (bundled && !source && !interactive && !bundle_entry_path)
+            {
+                script_args = &argv[i + 1];
+                script_arg_count = argc - i - 1;
+                break;
+            }
             if (++i >= argc || source || interactive)
             {
                 print_usage(stderr);
@@ -753,6 +809,12 @@ int main(int argc, char** argv)
             free(library_paths);
             return 2;
         }
+        else if (bundled && !bundle_entry_path)
+        {
+            script_args = &argv[i];
+            script_arg_count = argc - i;
+            break;
+        }
         else
         {
             file_source = read_source_file(argv[i]);
@@ -771,7 +833,40 @@ int main(int argc, char** argv)
         }
     }
 
-    if (!source && !interactive)
+    if (bundle_entry_path || bundle_output_path || bundle_include_count > 0)
+    {
+        char bundle_error[512] = { 0 };
+        char* runtime_path;
+        int success;
+
+        if (!bundle_entry_path || !bundle_output_path || source || interactive || module_path_count > 0)
+        {
+            fprintf(stderr, "ERROR: --bundle requires ENTRY and -o OUTPUT; it cannot run a script or use -I\n");
+            free(file_source);
+            free(module_paths);
+            free(library_paths);
+            return 2;
+        }
+        runtime_path = executable_path(argv[0]);
+        if (!runtime_path)
+        {
+            fprintf(stderr, "ERROR: Failed to locate the Little runtime\n");
+            free(module_paths);
+            free(library_paths);
+            return 1;
+        }
+        success = lt_bundle_create(runtime_path, bundle_output_path, bundle_entry_path, module_paths, bundle_include_count, bundle_error, sizeof(bundle_error));
+        if (!success)
+            fprintf(stderr, "ERROR: %s\n", bundle_error[0] ? bundle_error : "Failed to create bundle");
+        else
+            printf("Created bundle '%s'\n", bundle_output_path);
+        free(runtime_path);
+        free(module_paths);
+        free(library_paths);
+        return success ? 0 : 1;
+    }
+
+    if (!source && !interactive && !bundled)
     {
         print_usage(stderr);
         free(module_paths);
@@ -779,7 +874,6 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    // Init VM and run program
     lt_VM* vm = lt_open(malloc, free, error);
     if (!vm)
     {
@@ -789,16 +883,63 @@ int main(int argc, char** argv)
         free(library_paths);
         return 1;
     }
+    had_error = 0;
+    executable = executable_path(argv[0]);
+    if (!executable)
+    {
+        fprintf(stderr, "ERROR: Failed to locate the Little runtime\n");
+        free(executable);
+        destroy_vm(vm);
+        free(file_source);
+        free(module_paths);
+        free(library_paths);
+        return 1;
+    }
+
+    if (bundled)
+    {
+        char bundle_error[512] = { 0 };
+        size_t entry_size;
+        bundle = lt_bundle_open_self(executable, bundle_error, sizeof(bundle_error));
+        if (!bundle)
+        {
+            fprintf(stderr, "ERROR: %s\n", bundle_error[0] ? bundle_error : "Failed to open embedded bundle");
+            free(executable);
+            destroy_vm(vm);
+            free(file_source);
+            free(module_paths);
+            free(library_paths);
+            return 1;
+        }
+        if (!source && !interactive)
+        {
+            file_source = lt_bundle_read_entry(bundle, lt_bundle_entry(bundle), &entry_size, bundle_error, sizeof(bundle_error));
+            if (!file_source)
+            {
+                fprintf(stderr, "ERROR: %s\n", bundle_error[0] ? bundle_error : "Failed to read bundle entry");
+                lt_bundle_close(bundle);
+                free(executable);
+                destroy_vm(vm);
+                free(module_paths);
+                free(library_paths);
+                return 1;
+            }
+            source = file_source;
+            module_name = lt_bundle_entry(bundle);
+            script_name = module_name;
+        }
+        lt_add_module_loader(vm, lt_bundle_module_loader, bundle);
+    }
+
     ltstd_open_all(vm);
     ltstd_open_loadlib(vm);
     ltstd_open_term(vm);
     ltasync_open_all(vm);
 
-    had_error = 0;
-    char* executable = executable_path(argv[0]);
-    if (!executable || !add_default_library_paths(vm, executable))
+    if (!add_default_library_paths(vm, executable))
     {
         fprintf(stderr, "ERROR: Failed to configure default library paths\n");
+        lt_bundle_close(bundle);
         free(executable);
         destroy_vm(vm);
         free(file_source);
@@ -811,6 +952,7 @@ int main(int argc, char** argv)
     {
         if (!load_config(vm, config_path, 1, &repl_echo))
         {
+            lt_bundle_close(bundle);
             free(executable);
             destroy_vm(vm);
             free(file_source);
@@ -833,6 +975,7 @@ int main(int argc, char** argv)
                 if (!user_config)
                     fprintf(stderr, "ERROR: Failed to allocate configuration path\n");
                 free(user_config);
+                lt_bundle_close(bundle);
                 free(executable);
                 destroy_vm(vm);
                 free(file_source);
@@ -850,6 +993,7 @@ int main(int argc, char** argv)
             if (!local_config)
                 fprintf(stderr, "ERROR: Failed to allocate configuration path\n");
             free(local_config);
+            lt_bundle_close(bundle);
             free(executable);
             destroy_vm(vm);
             free(file_source);
@@ -865,6 +1009,7 @@ int main(int argc, char** argv)
     {
         if (!add_module_path(vm, module_paths[i]))
         {
+            lt_bundle_close(bundle);
             destroy_vm(vm);
             free(file_source);
             free(module_paths);
@@ -895,6 +1040,7 @@ int main(int argc, char** argv)
     }
 
     destroy_vm(vm);
+    lt_bundle_close(bundle);
     free(file_source);
     free(module_paths);
     free(library_paths);

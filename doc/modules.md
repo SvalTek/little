@@ -104,6 +104,24 @@ The same registered search paths are also used by `loadLibrary`, but native
 libraries are loaded explicitly with `loadLibrary(...)`, not with `import`.
 `import` remains source-only.
 
+## Bundled Source
+
+The CLI can package source files into a self-contained executable:
+
+```text
+little --bundle app/main.little --include app -o app.exe
+```
+
+`--bundle` selects the entry file. Each `--include` option adds a file or
+directory; directory contents are stored using paths relative to that
+directory. The bundled loader runs before filesystem lookup, so an embedded
+module takes precedence over a module with the same path on disk. The original
+source tree is not needed when the executable runs.
+
+Bundling stores Little source, not native code. `loadLibrary(...)` continues to
+use the host filesystem and native-library search paths, so native libraries
+must still be supplied separately for the target platform.
+
 ## Cache Behavior
 
 Imports are cached per VM by the resolved path spelling. Importing the same

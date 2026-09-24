@@ -21,6 +21,18 @@ $Compiler = if ($Compiler) { $Compiler } elseif ($env:GCC_PATH) { Join-Path $env
 $includeFlags = if ($env:INCLUDES_PATH) { @("-I", $env:INCLUDES_PATH) } else { @() }
 $outPath = Join-Path $repo $Output
 $outDir = Split-Path -Parent $outPath
+$minizName = [IO.Path]::GetFileNameWithoutExtension($Output)
+$minizOutput = "build/miniz-$minizName"
+$minizDir = Join-Path $repo $minizOutput
+& (Join-Path $repo "scripts/prepare-miniz.ps1") -Output $minizOutput
+if ($LASTEXITCODE -ne 0) { throw "miniz preparation failed with exit code $LASTEXITCODE" }
+$minizFlags = @("-I", $minizDir)
+$minizSources = @(
+    (Join-Path $minizDir "miniz.c"),
+    (Join-Path $minizDir "miniz_zip.c"),
+    (Join-Path $minizDir "miniz_tinfl.c"),
+    (Join-Path $minizDir "miniz_tdef.c")
+)
 $threadFlags = @()
 $dynamicFlags = @()
 if ($env:OS -ne "Windows_NT") {
@@ -66,7 +78,9 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 & $Compiler -std=c11 `
     $extraCFlags `
     $includeFlags `
+    $minizFlags `
     (Join-Path $repo "main.c") `
+    (Join-Path $repo "src/little_bundle.c") `
     (Join-Path $repo "src/little_buffer.c") `
     (Join-Path $repo "src/little.c") `
     (Join-Path $repo "src/little_common.c") `
@@ -81,6 +95,7 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     (Join-Path $repo "src/little_std_gc.c") `
     (Join-Path $repo "src/little_async.c") `
     (Join-Path $repo "nativelib/term/term.c") `
+    $minizSources `
     -I $terminalVendor `
     -DPDC_FORCE_UTF8 `
     $threadFlags `

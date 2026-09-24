@@ -65,6 +65,24 @@ build/little.exe -I lib scripts/main.little
 build/little.exe -L native scripts/main.little
 ```
 
+### Bundling Scripts
+
+The CLI can create a self-contained executable containing Little source files:
+
+```text
+little --bundle app/main.little --include app -o app.exe
+```
+
+`--bundle` selects the entry script, and `--include` adds a file or directory
+to the bundle. The option may be repeated. A bundled executable loads its
+embedded source before normal filesystem module lookup, so embedded modules
+are available even when the original source files are not present. Arguments
+after `--` are passed to the bundled script.
+
+Bundling embeds Little source only. Native libraries loaded with
+`loadLibrary(...)` remain external and must be installed for the target
+platform.
+
 The CLI accepts one script path, `-e SOURCE` for a short inline program, or
 `-i` / `--interactive` for an editable terminal prompt. The prompt keeps its
 in-process command history, reserves its `>> ` bottom line while output scrolls

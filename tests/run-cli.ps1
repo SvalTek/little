@@ -50,6 +50,58 @@ io.print(add(2, 3))
 
 Assert-Run "native library path" "5.000000" { & $Exe --no-config -L (Split-Path -Parent $nativeMath) $nativeScript }
 
+$bundleSource = Join-Path $build "bundle-source"
+$bundleShadow = Join-Path $build "bundle-shadow"
+$bundleEntry = Join-Path $bundleSource "main.little"
+$bundleHelper = Join-Path $bundleSource "lib/helper.little"
+$bundleShadowHelper = Join-Path $bundleShadow "lib/helper.little"
+$bundleExe = Join-Path $build "little-bundle-test.exe"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $bundleHelper), (Split-Path -Parent $bundleShadowHelper) | Out-Null
+Set-Content -LiteralPath $bundleEntry -NoNewline -Value @'
+module.addPath("build/bundle-shadow")
+var helper = import "lib/helper"
+io.print(helper.value)
+io.print(arg[1])
+io.print(arg[2])
+'@
+Set-Content -LiteralPath $bundleHelper -NoNewline -Value @'
+return { value: "from bundle" }
+'@
+Set-Content -LiteralPath $bundleShadowHelper -NoNewline -Value @'
+return { value: "from disk" }
+'@
+try {
+    & $Exe --bundle $bundleEntry --include $bundleSource -o $bundleExe
+    if ($LASTEXITCODE -ne 0) { throw "Bundle creation failed with exit code $LASTEXITCODE" }
+    Remove-Item -LiteralPath $bundleSource -Recurse -Force
+    Assert-Run "bundled source and arguments" "from bundle`nbundled-argument`nsecond-argument" { & $bundleExe --no-config -- bundled-argument second-argument }
+}
+finally {
+    Remove-Item -LiteralPath $bundleSource, $bundleShadow, $bundleExe -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+$bundleErrorSource = Join-Path $build "bundle-error-source"
+$bundleErrorEntry = Join-Path $bundleErrorSource "main.little"
+$bundleErrorModule = Join-Path $bundleErrorSource "lib/fail.little"
+$bundleErrorExe = Join-Path $build "little-bundle-error-test.exe"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $bundleErrorModule) | Out-Null
+Set-Content -LiteralPath $bundleErrorEntry -NoNewline -Value @'
+var fail = import "lib/fail"
+fail()
+'@
+Set-Content -LiteralPath $bundleErrorModule -NoNewline -Value @'
+return unpack(1)
+'@
+try {
+    & $Exe --bundle $bundleErrorEntry --include $bundleErrorSource -o $bundleErrorExe
+    if ($LASTEXITCODE -ne 0) { throw "Error bundle creation failed with exit code $LASTEXITCODE" }
+    Remove-Item -LiteralPath $bundleErrorSource -Recurse -Force
+    Assert-Fails "bundled error locations" 1 "LT ERROR: <unknown>|0:0: Expected first argument to unpack to be array!`ntraceback:`n(<unknown>|0:0)`n(lib/fail.little|1:0)`n(<unknown>|0:0)`n(main.little|1:0)" { & $bundleErrorExe --no-config }
+}
+finally {
+    Remove-Item -LiteralPath $bundleErrorSource, $bundleErrorExe -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $config = Join-Path $build "little-cli-test.conf"
 Set-Content -LiteralPath $config -NoNewline -Value "library_path = $(Split-Path -Parent $nativeMath)`nrepl_echo = true"
 Assert-Run "configured native library path" "5.000000" { & $Exe --config $config $nativeScript }

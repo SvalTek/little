@@ -26,6 +26,31 @@ if (!$SkipBuild) {
     & (Join-Path $repo "build.ps1") -Output "build/little-e2e.exe"
     if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
 
+    & (Join-Path $repo "scripts/prepare-miniz.ps1")
+    if ($LASTEXITCODE -ne 0) { throw "miniz preparation failed with exit code $LASTEXITCODE" }
+
+    $minizDir = Join-Path $buildDir "miniz"
+    $minizHarness = Join-Path $buildDir "miniz-roundtrip.exe"
+    & $Compiler -std=c11 `
+        @("-I", $minizDir) `
+        (Join-Path $repo "tests/native/miniz-roundtrip.c") `
+        (Join-Path $minizDir "miniz.c") `
+        (Join-Path $minizDir "miniz_zip.c") `
+        (Join-Path $minizDir "miniz_tinfl.c") `
+        (Join-Path $minizDir "miniz_tdef.c") `
+        $threadFlags `
+        $dynamicFlags `
+        -o $minizHarness
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "miniz round-trip harness build failed with exit code $LASTEXITCODE"
+    }
+
+    & $minizHarness (Join-Path $buildDir "roundtrip.zip") (Join-Path $buildDir "roundtrip.bundle")
+    if ($LASTEXITCODE -ne 0) {
+        throw "miniz round-trip harness failed with exit code $LASTEXITCODE"
+    }
+
     $optInHarness = Join-Path $buildDir "loadlib-opt-in.exe"
     & $Compiler -std=c11 `
         $includeFlags `
