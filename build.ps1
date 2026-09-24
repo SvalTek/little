@@ -25,7 +25,7 @@ $minizName = [IO.Path]::GetFileNameWithoutExtension($Output)
 $minizOutput = "build/miniz-$minizName"
 $minizDir = Join-Path $repo $minizOutput
 & (Join-Path $repo "scripts/prepare-miniz.ps1") -Output $minizOutput
-if ($LASTEXITCODE -ne 0) { throw "miniz preparation failed with exit code $LASTEXITCODE" }
+if (-not $?) { throw "miniz preparation failed" }
 $minizFlags = @("-I", $minizDir)
 $minizSources = @(
     (Join-Path $minizDir "miniz.c"),

@@ -27,7 +27,7 @@ if (!$SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
 
     & (Join-Path $repo "scripts/prepare-miniz.ps1")
-    if ($LASTEXITCODE -ne 0) { throw "miniz preparation failed with exit code $LASTEXITCODE" }
+    if (-not $?) { throw "miniz preparation failed" }
 
     $minizDir = Join-Path $buildDir "miniz"
     $minizHarness = Join-Path $buildDir "miniz-roundtrip.exe"
