@@ -16,6 +16,8 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - scripts/prepare-miniz.ps1
+      - vendor/miniz/**
       - nativelib/term/**
       - vendor/pdcursesmod/**
     generates:
@@ -29,6 +31,8 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - scripts/prepare-miniz.ps1
+      - vendor/miniz/**
       - nativelib/term/**
       - vendor/pdcursesmod/**
     generates:
@@ -42,6 +46,8 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - scripts/prepare-miniz.ps1
+      - vendor/miniz/**
       - nativelib/term/**
       - vendor/pdcursesmod/**
     generates:
@@ -55,6 +61,8 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - scripts/prepare-miniz.ps1
+      - vendor/miniz/**
       - nativelib/term/**
       - vendor/pdcursesmod/**
     generates:
@@ -68,6 +76,8 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - scripts/prepare-miniz.ps1
+      - vendor/miniz/**
       - nativelib/term/**
       - vendor/pdcursesmod/**
     generates:
@@ -131,4 +141,4 @@ tasks:
   clean:
     desc: Remove generated build output
     cmds:
-      - pwsh -NoProfile -Command "if (Test-Path build) { Remove-Item -Recurse -Force build }; Get-ChildItem nativelib -Directory -ErrorAction SilentlyContinue | ForEach-Object { $nativeBuild = Join-Path $_.FullName 'build'; if (Test-Path $nativeBuild) { Remove-Item -Recurse -Force $nativeBuild } }"
+      - pwsh -NoProfile -Command "if (Test-Path build) { Remove-Item -Recurse -Force build }; Get-ChildItem nativelib -Directory -Filter build -Recurse -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force"

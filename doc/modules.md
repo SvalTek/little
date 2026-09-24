@@ -54,6 +54,8 @@ The named form is preferred when a script only needs specific exported values.
 ## Paths
 
 `import "path"` only loads Little source files. It tries `path.little`, then `path/init.little`.
+The `.little` suffix is recognized case-insensitively, so an explicit import such
+as `import "path/module.LITTLE"` is not given a second suffix.
 
 ```js
 import { greet } from "tests/fixtures/greeter"
@@ -84,9 +86,43 @@ That tries `packages/toolkit/src/math.little` and `packages/toolkit/src/math/ini
 
 Use `module.clearPaths()` to remove registered search paths. Relative paths are still resolved by the host process in the same way as normal file opens, so they are relative to the current working directory.
 
+## Host Module Loaders
+
+Embedders can register a C module loader with `lt_add_module_loader(...)`.
+Loaders are called in registration order and can provide source from a resource
+that is not a file, such as an archive or an in-memory filesystem. A loader
+returns either `LT_MODULE_LOADER_NOT_FOUND` or `LT_MODULE_LOADER_FOUND` and,
+when it finds a module, supplies the source and an optional resolved module name.
+The source and resolved name must be allocated with `vm->alloc`; the VM releases
+them after loading.
+
+Register custom loaders before `ltstd_open_all(vm)`. The standard library adds
+the filesystem loader when it opens `import`, so registered loaders run before
+the normal `path.little` and `path/init.little` lookup. The resolved module name
+is used for diagnostics and cache identity, which lets archive-backed modules
+retain useful source names without extracting files.
+
 The same registered search paths are also used by `loadLibrary`, but native
 libraries are loaded explicitly with `loadLibrary(...)`, not with `import`.
 `import` remains source-only.
+
+## Bundled Source
+
+The CLI can package source files into a self-contained executable:
+
+```text
+little --bundle app/main.little --include app -o app.exe
+```
+
+`--bundle` selects the entry file. Each `--include` option adds a file or
+directory; directory contents are stored using paths relative to that
+directory. The bundled loader runs before filesystem lookup, so an embedded
+module takes precedence over a module with the same path on disk. The original
+source tree is not needed when the executable runs.
+
+Bundling stores Little source, not native code. `loadLibrary(...)` continues to
+use the host filesystem and native-library search paths, so native libraries
+must still be supplied separately for the target platform.
 
 ## Cache Behavior
 

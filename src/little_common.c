@@ -1,8 +1,68 @@
+#ifndef _WIN32
+#define _XOPEN_SOURCE 700
+#define _POSIX_C_SOURCE 200809L
+#define _FILE_OFFSET_BITS 64
+#endif
+
 #include "little_common.h"
+#include "little_internal.h"
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
+#endif
+
+static char* copy_host_string(const char* value)
+{
+    size_t length = strlen(value);
+    char* copy = malloc(length + 1);
+    if (!copy) return NULL;
+    memcpy(copy, value, length + 1);
+    return copy;
+}
+
+char* lt_executable_path(const char* argv0)
+{
+#ifdef _WIN32
+    char buffer[32768];
+    DWORD length = GetModuleFileNameA(NULL, buffer, (DWORD)sizeof(buffer));
+    if (length > 0 && length < sizeof(buffer)) return copy_host_string(buffer);
+#elif defined(__linux__)
+    char buffer[32768];
+    ssize_t length = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (length > 0 && length < (ssize_t)sizeof(buffer))
+    {
+        buffer[length] = 0;
+        return copy_host_string(buffer);
+    }
+#elif defined(__APPLE__)
+    {
+        char buffer[32768];
+        uint32_t size = (uint32_t)sizeof(buffer);
+        if (_NSGetExecutablePath(buffer, &size) == 0)
+        {
+            char* resolved = realpath(buffer, NULL);
+            if (resolved) return resolved;
+            return copy_host_string(buffer);
+        }
+    }
+#endif
+#ifndef _WIN32
+    {
+        char* resolved = realpath(argv0, NULL);
+        if (resolved) return resolved;
+    }
+#endif
+    return copy_host_string(argv0);
+}
 
 static size_t checked_add(lt_VM* vm, size_t left, size_t right)
 {
@@ -84,6 +144,23 @@ uint8_t lt_common_has_suffix(const char* path, const char* suffix)
     size_t path_len = strlen(path);
     size_t suffix_len = strlen(suffix);
     return path_len >= suffix_len && strcmp(path + path_len - suffix_len, suffix) == 0;
+}
+
+uint8_t lt_common_has_little_extension(const char* path)
+{
+    static const char extension[] = ".little";
+    size_t path_len = strlen(path);
+    size_t extension_len = sizeof(extension) - 1;
+
+    if (path_len < extension_len) return 0;
+    for (size_t index = 0; index < extension_len; ++index)
+    {
+        char actual = path[path_len - extension_len + index];
+        char expected = extension[index];
+        if (actual >= 'A' && actual <= 'Z') actual = (char)(actual - 'A' + 'a');
+        if (actual != expected) return 0;
+    }
+    return 1;
 }
 
 uint8_t lt_common_file_exists(const char* path)

@@ -50,6 +50,97 @@ io.print(add(2, 3))
 
 Assert-Run "native library path" "5.000000" { & $Exe --no-config -L (Split-Path -Parent $nativeMath) $nativeScript }
 
+$caseSource = Join-Path $build "case-extension-source"
+$caseEntry = Join-Path $caseSource "main.little"
+$caseModule = Join-Path $caseSource "lib/helper.LITTLE"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $caseModule) | Out-Null
+Set-Content -LiteralPath $caseEntry -NoNewline -Value @'
+var helper = import "lib/helper.LITTLE"
+io.print(helper.value)
+'@
+Set-Content -LiteralPath $caseModule -NoNewline -Value 'return { value: "uppercase extension" }'
+try {
+    Assert-Run "case-insensitive source extension" "uppercase extension" { & $Exe --no-config -I $caseSource $caseEntry }
+}
+finally {
+    Remove-Item -LiteralPath $caseSource -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+$bundleSource = Join-Path $build "bundle-source"
+$bundleShadow = Join-Path $build "bundle-shadow"
+$bundleEntry = Join-Path $bundleSource "main.little"
+$bundleHelper = Join-Path $bundleSource "lib/helper.little"
+$bundleUpperHelper = Join-Path $bundleSource "lib/upper.LITTLE"
+$bundleShadowHelper = Join-Path $bundleShadow "lib/helper.little"
+$bundleExe = Join-Path $build "little-bundle-test.exe"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $bundleHelper), (Split-Path -Parent $bundleShadowHelper) | Out-Null
+Set-Content -LiteralPath $bundleEntry -NoNewline -Value @'
+module.addPath("build/bundle-shadow")
+var helper = import "lib/helper"
+var explicit = import "lib/helper.little"
+var uppercase = import "lib/upper.LITTLE"
+io.print(helper.value)
+io.print(explicit.value)
+io.print(uppercase.value)
+io.print(arg[1])
+io.print(arg[2])
+'@
+Set-Content -LiteralPath $bundleHelper -NoNewline -Value @'
+return { value: "from bundle" }
+'@
+Set-Content -LiteralPath $bundleUpperHelper -NoNewline -Value @'
+return { value: "from uppercase bundle" }
+'@
+Set-Content -LiteralPath $bundleShadowHelper -NoNewline -Value @'
+return { value: "from disk" }
+'@
+try {
+    Assert-Fails "bundle library path conflict" 2 "cannot run a script or use -I or -L" { & $Exe --bundle $bundleEntry --include $bundleSource -L (Split-Path -Parent $nativeMath) -o $bundleExe }
+    & $Exe --bundle $bundleEntry --include $bundleSource -o $bundleExe
+    if ($LASTEXITCODE -ne 0) { throw "Bundle creation failed with exit code $LASTEXITCODE" }
+    Remove-Item -LiteralPath $bundleSource -Recurse -Force
+    Assert-Run "bundled source and arguments" "from bundle`nfrom bundle`nfrom uppercase bundle`nbundled-argument`nsecond-argument" { & $bundleExe --no-config -- bundled-argument second-argument }
+}
+finally {
+    Remove-Item -LiteralPath $bundleSource, $bundleShadow, $bundleExe -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+$inPlaceSource = Join-Path $build "bundle-in-place-source"
+$inPlaceEntry = Join-Path $inPlaceSource "main.little"
+$inPlaceRuntime = Join-Path $build "little-in-place-test.exe"
+$inPlaceOutput = if ($env:OS -eq "Windows_NT") { $inPlaceRuntime } else { "$build/./little-in-place-test.exe" }
+New-Item -ItemType Directory -Force -Path $inPlaceSource | Out-Null
+Set-Content -LiteralPath $inPlaceEntry -NoNewline -Value 'io.print("in-place")'
+Copy-Item -LiteralPath $Exe -Destination $inPlaceRuntime -Force
+try {
+    Assert-Fails "bundle runtime output conflict" 1 "Bundle output must differ from the runtime executable" { & $inPlaceRuntime --bundle $inPlaceEntry --include $inPlaceSource -o $inPlaceOutput }
+}
+finally {
+    Remove-Item -LiteralPath $inPlaceSource, $inPlaceRuntime -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+$bundleErrorSource = Join-Path $build "bundle-error-source"
+$bundleErrorEntry = Join-Path $bundleErrorSource "main.little"
+$bundleErrorModule = Join-Path $bundleErrorSource "lib/fail.little"
+$bundleErrorExe = Join-Path $build "little-bundle-error-test.exe"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $bundleErrorModule) | Out-Null
+Set-Content -LiteralPath $bundleErrorEntry -NoNewline -Value @'
+var fail = import "lib/fail"
+fail()
+'@
+Set-Content -LiteralPath $bundleErrorModule -NoNewline -Value @'
+return unpack(1)
+'@
+try {
+    & $Exe --bundle $bundleErrorEntry --include $bundleErrorSource -o $bundleErrorExe
+    if ($LASTEXITCODE -ne 0) { throw "Error bundle creation failed with exit code $LASTEXITCODE" }
+    Remove-Item -LiteralPath $bundleErrorSource -Recurse -Force
+    Assert-Fails "bundled error locations" 1 "LT ERROR: <unknown>|0:0: Expected first argument to unpack to be array!`ntraceback:`n(<unknown>|0:0)`n(lib/fail.little|1:0)`n(<unknown>|0:0)`n(main.little|1:0)" { & $bundleErrorExe --no-config }
+}
+finally {
+    Remove-Item -LiteralPath $bundleErrorSource, $bundleErrorExe -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $config = Join-Path $build "little-cli-test.conf"
 Set-Content -LiteralPath $config -NoNewline -Value "library_path = $(Split-Path -Parent $nativeMath)`nrepl_echo = true"
 Assert-Run "configured native library path" "5.000000" { & $Exe --config $config $nativeScript }

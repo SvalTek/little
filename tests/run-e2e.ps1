@@ -18,6 +18,7 @@ if ($toolchainBin -and (Test-Path $toolchainBin)) {
 }
 $Compiler = if ($Compiler) { $Compiler } elseif ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin/gcc.exe" } else { "gcc" }
 $includeFlags = if ($env:INCLUDES_PATH) { @("-I", $env:INCLUDES_PATH) } else { @() }
+$platformCFlags = if ($env:OS -eq "Windows_NT") { @() } else { @("-D_XOPEN_SOURCE=700") }
 $buildDir = Join-Path $repo "build"
 $exe = if ($Exe) { $Exe } else { Join-Path $buildDir "little-e2e.exe" }
 
@@ -25,6 +26,32 @@ if (!$SkipBuild) {
     New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
     & (Join-Path $repo "build.ps1") -Output "build/little-e2e.exe"
     if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
+
+    & (Join-Path $repo "scripts/prepare-miniz.ps1")
+    if (-not $?) { throw "miniz preparation failed" }
+
+    $minizDir = Join-Path $buildDir "miniz"
+    $minizHarness = Join-Path $buildDir "miniz-roundtrip.exe"
+    & $Compiler -std=c11 `
+        $platformCFlags `
+        @("-I", $minizDir) `
+        (Join-Path $repo "tests/native/miniz-roundtrip.c") `
+        (Join-Path $minizDir "miniz.c") `
+        (Join-Path $minizDir "miniz_zip.c") `
+        (Join-Path $minizDir "miniz_tinfl.c") `
+        (Join-Path $minizDir "miniz_tdef.c") `
+        $threadFlags `
+        $dynamicFlags `
+        -o $minizHarness
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "miniz round-trip harness build failed with exit code $LASTEXITCODE"
+    }
+
+    & $minizHarness (Join-Path $buildDir "roundtrip.zip") (Join-Path $buildDir "roundtrip.bundle")
+    if ($LASTEXITCODE -ne 0) {
+        throw "miniz round-trip harness failed with exit code $LASTEXITCODE"
+    }
 
     $optInHarness = Join-Path $buildDir "loadlib-opt-in.exe"
     & $Compiler -std=c11 `
@@ -53,6 +80,35 @@ if (!$SkipBuild) {
     & $optInHarness
     if ($LASTEXITCODE -ne 0) {
         throw "loadLibrary opt-in harness failed with exit code $LASTEXITCODE"
+    }
+
+    $moduleLoaderHarness = Join-Path $buildDir "module-loader.exe"
+    & $Compiler -std=c11 `
+        $includeFlags `
+        (Join-Path $repo "tests/native/module-loader.c") `
+        (Join-Path $repo "src/little_buffer.c") `
+        (Join-Path $repo "src/little.c") `
+        (Join-Path $repo "src/little_common.c") `
+        (Join-Path $repo "src/little_std.c") `
+        (Join-Path $repo "src/little_loadlib.c") `
+        (Join-Path $repo "src/little_std_io.c") `
+        (Join-Path $repo "src/little_std_math.c") `
+        (Join-Path $repo "src/little_std_array.c") `
+        (Join-Path $repo "src/little_std_table.c") `
+        (Join-Path $repo "src/little_std_string.c") `
+        (Join-Path $repo "src/little_std_gc.c") `
+        (Join-Path $repo "src/little_async.c") `
+        $threadFlags `
+        $dynamicFlags `
+        -lm -o $moduleLoaderHarness
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "module loader harness build failed with exit code $LASTEXITCODE"
+    }
+
+    & $moduleLoaderHarness
+    if ($LASTEXITCODE -ne 0) {
+        throw "module loader harness failed with exit code $LASTEXITCODE"
     }
 
     $nativeExt = if ($env:OS -eq "Windows_NT") { ".dll" } elseif ($IsMacOS) { ".dylib" } else { ".so" }

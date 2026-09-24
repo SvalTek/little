@@ -110,6 +110,18 @@ the VM polls and return `LT_POLL_IDLE`, `LT_POLL_WORK`, or
 additions; native libraries should check both `lt_Api.version` and
 `lt_Api.size` before using them.
 
+```c
+void lt_add_module_loader(lt_VM* vm, lt_ModuleLoaderFn loader, void* userdata);
+```
+Registers a host module loader. Loaders are called in registration order when
+`import` cannot use its cache. A loader returns `LT_MODULE_LOADER_NOT_FOUND` or
+`LT_MODULE_LOADER_FOUND`; on success it must return a null-terminated source
+buffer and may return a null-terminated resolved module name. Both buffers must
+be allocated with `vm->alloc`; the VM frees them after loading. If no module
+name is returned, the requested import string is used for diagnostics and
+caching. Register custom loaders before `ltstd_open_all`, which registers the
+filesystem loader as the final fallback.
+
 ---
 ## Library loading
 

@@ -543,6 +543,18 @@ typedef struct lt_NativeLibrary {
 	lt_NativeLibraryCloseFn close;
 } lt_NativeLibrary;
 
+typedef enum {
+	LT_MODULE_LOADER_NOT_FOUND,
+	LT_MODULE_LOADER_FOUND,
+} lt_ModuleLoaderResult;
+
+typedef lt_ModuleLoaderResult(*lt_ModuleLoaderFn)(lt_VM* vm, const char* requested, char** source, char** module_name, void* userdata);
+
+typedef struct {
+	lt_ModuleLoaderFn load;
+	void* userdata;
+} lt_ModuleLoader;
+
 struct lt_VM {
 	lt_Buffer heap;
 	lt_Buffer keepalive;
@@ -563,6 +575,7 @@ struct lt_VM {
 	lt_Buffer workers;
 	lt_Buffer poll_hooks;
 	lt_Buffer native_libraries;
+	lt_Buffer module_loaders;
 	uint32_t next_timer_id;
 	uint32_t next_poll_hook_id;
 	uint8_t runloop_stop;
@@ -606,6 +619,7 @@ uint8_t lt_poll_now(lt_VM* vm);
 void lt_runloop(lt_VM* vm);
 uint32_t lt_add_poll_hook(lt_VM* vm, lt_PollHook hook, void* context);
 void lt_remove_poll_hook(lt_VM* vm, uint32_t hook_id);
+void lt_add_module_loader(lt_VM* vm, lt_ModuleLoaderFn loader, void* userdata);
 void lt_error(lt_VM* vm, const char* msg);
 void lt_runtime_error(lt_VM* vm, const char* message);
 

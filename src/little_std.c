@@ -114,8 +114,7 @@ static uint8_t _ltstd_unpack(lt_VM* vm, uint8_t argc)
 static FILE* _ltstd_open_module_base(lt_VM* vm, const char* base, char** resolved)
 {
     char* candidate = 0;
-    size_t base_len = strlen(base);
-    if (base_len >= 7 && strcmp(base + base_len - 7, ".little") == 0)
+    if (lt_common_has_little_extension(base))
         candidate = lt_common_copy_string(vm, base);
     else
         candidate = lt_common_make_suffixed_path(vm, base, ".little");
@@ -194,6 +193,31 @@ static char* _ltstd_read_module_file(lt_VM* vm, const char* requested, char** re
     return source;
 }
 
+static lt_ModuleLoaderResult _ltstd_file_module_loader(lt_VM* vm, const char* requested, char** source, char** module_name, void* userdata)
+{
+    (void)userdata;
+    *module_name = 0;
+    *source = _ltstd_read_module_file(vm, requested, module_name);
+    return *source ? LT_MODULE_LOADER_FOUND : LT_MODULE_LOADER_NOT_FOUND;
+}
+
+static uint8_t _ltstd_read_module(lt_VM* vm, const char* requested, char** source, char** module_name)
+{
+    for (uint32_t i = 0; i < vm->module_loaders.length; ++i)
+    {
+        lt_ModuleLoader* loader = lt_buffer_at(&vm->module_loaders, i);
+        *source = 0;
+        *module_name = 0;
+        if (loader->load(vm, requested, source, module_name, loader->userdata) != LT_MODULE_LOADER_FOUND)
+            continue;
+        if (!*source) lt_runtime_error(vm, "Module loader returned no source!");
+        if (!*module_name || !**module_name)
+            *module_name = lt_common_copy_string(vm, requested);
+        return 1;
+    }
+    return 0;
+}
+
 static uint8_t _ltstd_module_add_path(lt_VM* vm, uint8_t argc)
 {
     if (argc < 1) lt_runtime_error(vm, "Expected at least one path for module.addPath!");
@@ -257,8 +281,8 @@ static uint8_t _ltstd_import(lt_VM* vm, uint8_t argc)
     vm->free(fallback);
 
     char* resolved = 0;
-    char* source = _ltstd_read_module_file(vm, requested, &resolved);
-    if (!source)
+    char* source = 0;
+    if (!_ltstd_read_module(vm, requested, &source, &resolved))
     {
         char message[256];
         snprintf(message, sizeof(message), "Failed to import module '%s'!", requested);
@@ -365,6 +389,7 @@ void ltstd_open_all(lt_VM* vm)
     lt_table_set(vm, module, lt_make_string(vm, "addPath"), lt_make_native(vm, _ltstd_module_add_path));
     lt_table_set(vm, module, lt_make_string(vm, "clearPaths"), lt_make_native(vm, _ltstd_module_clear_paths));
     lt_table_set(vm, vm->global, lt_make_string(vm, "module"), module);
+    lt_add_module_loader(vm, _ltstd_file_module_loader, 0);
     ltstd_open_io(vm);
     ltstd_open_math(vm);
     ltstd_open_array(vm);

@@ -2300,6 +2300,7 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 	vm->heap = lt_buffer_new(sizeof(lt_Object*));
 	vm->keepalive = lt_buffer_new(sizeof(lt_Object*));
 	vm->native_libraries = lt_buffer_new(sizeof(lt_NativeLibrary));
+	vm->module_loaders = lt_buffer_new(sizeof(lt_ModuleLoader));
 	ltasync_init_state(vm);
 
 	vm->generate_debug = 1;
@@ -2319,10 +2320,18 @@ void lt_destroy(lt_VM* vm)
 		if (library->handle && library->close) library->close(library->handle);
 	}
 	lt_buffer_destroy(vm, &vm->native_libraries);
+	lt_buffer_destroy(vm, &vm->module_loaders);
 	lt_buffer_destroy(vm, &vm->keepalive);
 	lt_collect(vm);
 	if (vm->error_trap) vm->free(vm->error_trap);
 	vm->free(vm);
+}
+
+void lt_add_module_loader(lt_VM* vm, lt_ModuleLoaderFn loader, void* userdata)
+{
+	if (!loader) return;
+	lt_ModuleLoader entry = { loader, userdata };
+	lt_buffer_push(vm, &vm->module_loaders, &entry);
 }
 
 lt_Object* lt_allocate(lt_VM* vm, lt_ObjectType type)
