@@ -18,6 +18,7 @@ if ($toolchainBin -and (Test-Path $toolchainBin)) {
 }
 $Compiler = if ($Compiler) { $Compiler } elseif ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin/gcc.exe" } else { "gcc" }
 $includeFlags = if ($env:INCLUDES_PATH) { @("-I", $env:INCLUDES_PATH) } else { @() }
+$platformCFlags = if ($env:OS -eq "Windows_NT") { @() } else { @("-D_XOPEN_SOURCE=700") }
 $buildDir = Join-Path $repo "build"
 $exe = if ($Exe) { $Exe } else { Join-Path $buildDir "little-e2e.exe" }
 
@@ -32,6 +33,7 @@ if (!$SkipBuild) {
     $minizDir = Join-Path $buildDir "miniz"
     $minizHarness = Join-Path $buildDir "miniz-roundtrip.exe"
     & $Compiler -std=c11 `
+        $platformCFlags `
         @("-I", $minizDir) `
         (Join-Path $repo "tests/native/miniz-roundtrip.c") `
         (Join-Path $minizDir "miniz.c") `

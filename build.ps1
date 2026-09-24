@@ -19,6 +19,7 @@ if ($toolchainBin -and (Test-Path $toolchainBin)) {
 }
 $Compiler = if ($Compiler) { $Compiler } elseif ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin/gcc.exe" } else { "gcc" }
 $includeFlags = if ($env:INCLUDES_PATH) { @("-I", $env:INCLUDES_PATH) } else { @() }
+$platformCFlags = if ($env:OS -eq "Windows_NT") { @() } else { @("-D_XOPEN_SOURCE=700") }
 $outPath = Join-Path $repo $Output
 $outDir = Split-Path -Parent $outPath
 $minizName = [IO.Path]::GetFileNameWithoutExtension($Output)
@@ -77,6 +78,7 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 & $Compiler -std=c11 `
     $extraCFlags `
+    $platformCFlags `
     $includeFlags `
     $minizFlags `
     (Join-Path $repo "main.c") `
