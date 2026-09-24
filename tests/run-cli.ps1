@@ -95,6 +95,7 @@ Set-Content -LiteralPath $bundleShadowHelper -NoNewline -Value @'
 return { value: "from disk" }
 '@
 try {
+    Assert-Fails "bundle library path conflict" 2 "cannot run a script or use -I or -L" { & $Exe --bundle $bundleEntry --include $bundleSource -L (Split-Path -Parent $nativeMath) -o $bundleExe }
     & $Exe --bundle $bundleEntry --include $bundleSource -o $bundleExe
     if ($LASTEXITCODE -ne 0) { throw "Bundle creation failed with exit code $LASTEXITCODE" }
     Remove-Item -LiteralPath $bundleSource -Recurse -Force

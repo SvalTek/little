@@ -11,6 +11,7 @@ void lt_buffer_pop(lt_Buffer* buf);
 
 void lt_sweep_v(lt_VM* vm, lt_Value val);
 uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc);
+char* lt_executable_path(const char* argv0);
 
 void ltasync_init_state(lt_VM* vm);
 void ltasync_destroy_state(lt_VM* vm);

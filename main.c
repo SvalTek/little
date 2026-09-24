@@ -1,19 +1,9 @@
-#ifndef _WIN32
-#define _XOPEN_SOURCE 700
-#define _POSIX_C_SOURCE 200809L
-#endif
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
-
 #include "src/little.h"
+#include "src/little_internal.h"
 #include "src/little_bundle.h"
 #include "src/little_std.h"
 #include "src/little_async.h"
@@ -355,36 +345,6 @@ static int is_absolute_path(const char* path)
 static char* path_from_directory(const char* directory, const char* path)
 {
     return is_absolute_path(path) ? copy_string(path) : join_path(directory, path);
-}
-
-/**
- * Retrieves the path of the running executable.
- *
- * @param argv0 Fallback executable path supplied by the command line.
- * @return An allocated executable path, or a copy of {@p argv0} if the path cannot be determined.
- */
-static char* executable_path(const char* argv0)
-{
-#ifdef _WIN32
-    char buffer[32768];
-    DWORD length = GetModuleFileNameA(NULL, buffer, (DWORD)sizeof(buffer));
-    if (length > 0 && length < sizeof(buffer)) return copy_string(buffer);
-#elif defined(__linux__)
-    char buffer[32768];
-    ssize_t length = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
-    if (length > 0 && length < (ssize_t)sizeof(buffer))
-    {
-        buffer[length] = 0;
-        return copy_string(buffer);
-    }
-#endif
-#ifndef _WIN32
-    {
-        char* resolved = realpath(argv0, NULL);
-        if (resolved) return resolved;
-    }
-#endif
-    return copy_string(argv0);
 }
 
 /**
@@ -847,15 +807,15 @@ int main(int argc, char** argv)
         char* runtime_path;
         int success;
 
-        if (!bundle_entry_path || !bundle_output_path || source || interactive || module_path_count > 0)
+        if (!bundle_entry_path || !bundle_output_path || source || interactive || module_path_count > 0 || library_path_count > 0)
         {
-            fprintf(stderr, "ERROR: --bundle requires ENTRY and -o OUTPUT; it cannot run a script or use -I\n");
+            fprintf(stderr, "ERROR: --bundle requires ENTRY and -o OUTPUT; it cannot run a script or use -I or -L\n");
             free(file_source);
             free(module_paths);
             free(library_paths);
             return 2;
         }
-        runtime_path = executable_path(argv[0]);
+        runtime_path = lt_executable_path(argv[0]);
         if (!runtime_path)
         {
             fprintf(stderr, "ERROR: Failed to locate the Little runtime\n");
@@ -892,7 +852,7 @@ int main(int argc, char** argv)
         return 1;
     }
     had_error = 0;
-    executable = executable_path(argv[0]);
+    executable = lt_executable_path(argv[0]);
     if (!executable)
     {
         fprintf(stderr, "ERROR: Failed to locate the Little runtime\n");

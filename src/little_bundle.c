@@ -7,6 +7,7 @@
 #include "little_bundle.h"
 
 #include "little_common.h"
+#include "little_internal.h"
 #include "miniz.h"
 
 #include <errno.h>
@@ -109,30 +110,6 @@ static const char* path_basename(const char* path)
     return separator ? separator + 1 : path;
 }
 
-static char* executable_path(const char* argv0)
-{
-#ifdef _WIN32
-    char buffer[32768];
-    DWORD length = GetModuleFileNameA(NULL, buffer, (DWORD)sizeof(buffer));
-    if (length > 0 && length < sizeof(buffer)) return copy_string(buffer);
-#elif defined(__linux__)
-    char buffer[32768];
-    ssize_t length = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
-    if (length > 0 && length < (ssize_t)sizeof(buffer))
-    {
-        buffer[length] = 0;
-        return copy_string(buffer);
-    }
-#endif
-#ifndef _WIN32
-    {
-        char* resolved = realpath(argv0, NULL);
-        if (resolved) return resolved;
-    }
-#endif
-    return copy_string(argv0);
-}
-
 static int seek_file(FILE* file, uint64_t offset)
 {
 #ifdef _WIN32
@@ -230,7 +207,7 @@ static int read_footer(const char* path, uint64_t* archive_offset, uint64_t* arc
 
 int lt_bundle_probe_self(const char* argv0)
 {
-    char* path = executable_path(argv0);
+    char* path = lt_executable_path(argv0);
     uint64_t archive_offset;
     uint64_t archive_size;
     int result;
@@ -714,8 +691,12 @@ int lt_bundle_create(
     int writer_open = 0;
     int result = 0;
 
-    if (!runtime_path || !output_path) {
-        set_error(error, error_size, "Bundle output must differ from the runtime executable");
+    if (!runtime_path) {
+        set_error(error, error_size, "Runtime executable path is required");
+        return 0;
+    }
+    if (!output_path) {
+        set_error(error, error_size, "Bundle output path is required");
         return 0;
     }
     if (!entry_path) {
