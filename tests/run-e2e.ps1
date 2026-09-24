@@ -55,6 +55,35 @@ if (!$SkipBuild) {
         throw "loadLibrary opt-in harness failed with exit code $LASTEXITCODE"
     }
 
+    $moduleLoaderHarness = Join-Path $buildDir "module-loader.exe"
+    & $Compiler -std=c11 `
+        $includeFlags `
+        (Join-Path $repo "tests/native/module-loader.c") `
+        (Join-Path $repo "src/little_buffer.c") `
+        (Join-Path $repo "src/little.c") `
+        (Join-Path $repo "src/little_common.c") `
+        (Join-Path $repo "src/little_std.c") `
+        (Join-Path $repo "src/little_loadlib.c") `
+        (Join-Path $repo "src/little_std_io.c") `
+        (Join-Path $repo "src/little_std_math.c") `
+        (Join-Path $repo "src/little_std_array.c") `
+        (Join-Path $repo "src/little_std_table.c") `
+        (Join-Path $repo "src/little_std_string.c") `
+        (Join-Path $repo "src/little_std_gc.c") `
+        (Join-Path $repo "src/little_async.c") `
+        $threadFlags `
+        $dynamicFlags `
+        -lm -o $moduleLoaderHarness
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "module loader harness build failed with exit code $LASTEXITCODE"
+    }
+
+    & $moduleLoaderHarness
+    if ($LASTEXITCODE -ne 0) {
+        throw "module loader harness failed with exit code $LASTEXITCODE"
+    }
+
     $nativeExt = if ($env:OS -eq "Windows_NT") { ".dll" } elseif ($IsMacOS) { ".dylib" } else { ".so" }
     $nativeLibs = @(
         @{

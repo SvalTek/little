@@ -822,6 +822,9 @@ int main(int argc, char** argv)
     else if (!no_config)
     {
         const char* home = getenv("HOME");
+#ifdef _WIN32
+        if (!home || !*home) home = getenv("USERPROFILE");
+#endif
         if (home)
         {
             char* user_config = join_path(home, ".config/little.conf");
