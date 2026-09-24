@@ -124,6 +124,12 @@ static char* executable_path(const char* argv0)
         return copy_string(buffer);
     }
 #endif
+#ifndef _WIN32
+    {
+        char* resolved = realpath(argv0, NULL);
+        if (resolved) return resolved;
+    }
+#endif
     return copy_string(argv0);
 }
 
@@ -336,7 +342,8 @@ char* lt_bundle_read_entry(lt_Bundle* bundle, const char* name, size_t* size, ch
 static char* make_module_candidate(const char* requested, int initializer)
 {
     size_t length = strlen(requested);
-    const char* suffix = initializer ? "/init.little" : ".little";
+    int has_extension = length >= 7 && strcmp(requested + length - 7, ".little") == 0;
+    const char* suffix = initializer ? "/init.little" : (has_extension ? "" : ".little");
     size_t suffix_length = strlen(suffix);
     char* candidate = malloc(length + suffix_length + 1);
     if (!candidate) return NULL;
@@ -422,6 +429,25 @@ static char* canonical_path(const char* path)
 #else
     return realpath(path, NULL);
 #endif
+}
+
+static int paths_equal(const char* left, const char* right)
+{
+    char* left_canonical = canonical_path(left);
+    char* right_canonical = canonical_path(right);
+    int equal = 0;
+
+    if (left_canonical && right_canonical)
+    {
+#ifdef _WIN32
+        equal = _stricmp(left_canonical, right_canonical) == 0;
+#else
+        equal = strcmp(left_canonical, right_canonical) == 0;
+#endif
+    }
+    free(left_canonical);
+    free(right_canonical);
+    return equal;
 }
 
 static void free_entry_list(BundleEntryList* list)
@@ -688,12 +714,20 @@ int lt_bundle_create(
     int writer_open = 0;
     int result = 0;
 
-    if (path_kind(entry_path) != 1) {
-        set_error(error, error_size, "Bundle entry must be a regular file: %s", entry_path);
+    if (!runtime_path || !output_path) {
+        set_error(error, error_size, "Bundle output must differ from the runtime executable");
         return 0;
     }
-    if (!runtime_path || !output_path || strcmp(runtime_path, output_path) == 0) {
+    if (!entry_path) {
+        set_error(error, error_size, "Bundle entry is required");
+        return 0;
+    }
+    if (paths_equal(runtime_path, output_path)) {
         set_error(error, error_size, "Bundle output must differ from the runtime executable");
+        return 0;
+    }
+    if (path_kind(entry_path) != 1) {
+        set_error(error, error_size, "Bundle entry must be a regular file: %s", entry_path);
         return 0;
     }
     {

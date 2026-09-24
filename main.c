@@ -1,4 +1,5 @@
 #ifndef _WIN32
+#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 #endif
 
@@ -377,6 +378,12 @@ static char* executable_path(const char* argv0)
         return copy_string(buffer);
     }
 #endif
+#ifndef _WIN32
+    {
+        char* resolved = realpath(argv0, NULL);
+        if (resolved) return resolved;
+    }
+#endif
     return copy_string(argv0);
 }
 
@@ -627,7 +634,8 @@ int main(int argc, char** argv)
     char* file_source = NULL;
     char* executable = NULL;
     lt_Bundle* bundle = NULL;
-    const char** module_paths = malloc((size_t)argc * sizeof(*module_paths));
+    const char** module_paths = malloc((size_t)argc * 2 * sizeof(*module_paths));
+    const char** bundle_include_paths = module_paths ? module_paths + argc : NULL;
     const char** library_paths = malloc((size_t)argc * sizeof(*library_paths));
     uint32_t module_path_count = 0;
     uint32_t library_path_count = 0;
@@ -712,7 +720,7 @@ int main(int argc, char** argv)
                 free(library_paths);
                 return 2;
             }
-            module_paths[bundle_include_count++] = argv[i];
+            bundle_include_paths[bundle_include_count++] = argv[i];
         }
         else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0)
         {
@@ -855,7 +863,7 @@ int main(int argc, char** argv)
             free(library_paths);
             return 1;
         }
-        success = lt_bundle_create(runtime_path, bundle_output_path, bundle_entry_path, module_paths, bundle_include_count, bundle_error, sizeof(bundle_error));
+        success = lt_bundle_create(runtime_path, bundle_output_path, bundle_entry_path, bundle_include_paths, bundle_include_count, bundle_error, sizeof(bundle_error));
         if (!success)
             fprintf(stderr, "ERROR: %s\n", bundle_error[0] ? bundle_error : "Failed to create bundle");
         else
@@ -888,7 +896,6 @@ int main(int argc, char** argv)
     if (!executable)
     {
         fprintf(stderr, "ERROR: Failed to locate the Little runtime\n");
-        free(executable);
         destroy_vm(vm);
         free(file_source);
         free(module_paths);

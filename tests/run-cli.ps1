@@ -60,7 +60,9 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $bundleHelper), (S
 Set-Content -LiteralPath $bundleEntry -NoNewline -Value @'
 module.addPath("build/bundle-shadow")
 var helper = import "lib/helper"
+var explicit = import "lib/helper.little"
 io.print(helper.value)
+io.print(explicit.value)
 io.print(arg[1])
 io.print(arg[2])
 '@
@@ -74,10 +76,24 @@ try {
     & $Exe --bundle $bundleEntry --include $bundleSource -o $bundleExe
     if ($LASTEXITCODE -ne 0) { throw "Bundle creation failed with exit code $LASTEXITCODE" }
     Remove-Item -LiteralPath $bundleSource -Recurse -Force
-    Assert-Run "bundled source and arguments" "from bundle`nbundled-argument`nsecond-argument" { & $bundleExe --no-config -- bundled-argument second-argument }
+    Assert-Run "bundled source and arguments" "from bundle`nfrom bundle`nbundled-argument`nsecond-argument" { & $bundleExe --no-config -- bundled-argument second-argument }
 }
 finally {
     Remove-Item -LiteralPath $bundleSource, $bundleShadow, $bundleExe -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+$inPlaceSource = Join-Path $build "bundle-in-place-source"
+$inPlaceEntry = Join-Path $inPlaceSource "main.little"
+$inPlaceRuntime = Join-Path $build "little-in-place-test.exe"
+$inPlaceOutput = if ($env:OS -eq "Windows_NT") { $inPlaceRuntime } else { "$build/./little-in-place-test.exe" }
+New-Item -ItemType Directory -Force -Path $inPlaceSource | Out-Null
+Set-Content -LiteralPath $inPlaceEntry -NoNewline -Value 'io.print("in-place")'
+Copy-Item -LiteralPath $Exe -Destination $inPlaceRuntime -Force
+try {
+    Assert-Fails "bundle runtime output conflict" 1 "Bundle output must differ from the runtime executable" { & $inPlaceRuntime --bundle $inPlaceEntry --include $inPlaceSource -o $inPlaceOutput }
+}
+finally {
+    Remove-Item -LiteralPath $inPlaceSource, $inPlaceRuntime -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $bundleErrorSource = Join-Path $build "bundle-error-source"
