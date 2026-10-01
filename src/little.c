@@ -2299,6 +2299,7 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 	
 	vm->heap = lt_buffer_new(sizeof(lt_Object*));
 	vm->keepalive = lt_buffer_new(sizeof(lt_Object*));
+	vm->native_roots = lt_buffer_new(sizeof(lt_Value));
 	vm->native_libraries = lt_buffer_new(sizeof(lt_NativeLibrary));
 	vm->module_loaders = lt_buffer_new(sizeof(lt_ModuleLoader));
 	ltasync_init_state(vm);
@@ -2322,6 +2323,7 @@ void lt_destroy(lt_VM* vm)
 	lt_buffer_destroy(vm, &vm->native_libraries);
 	lt_buffer_destroy(vm, &vm->module_loaders);
 	lt_buffer_destroy(vm, &vm->keepalive);
+	lt_buffer_destroy(vm, &vm->native_roots);
 	lt_collect(vm);
 	if (vm->error_trap) vm->free(vm->error_trap);
 	vm->free(vm);
@@ -2528,6 +2530,10 @@ uint32_t lt_collect(lt_VM* vm)
 	for (uint32_t i = 0; i < vm->keepalive.length; ++i)
 	{
 		lt_sweep(vm, *(lt_Object**)lt_buffer_at(&vm->keepalive, i));
+	}
+	for (uint32_t i = 0; i < vm->native_roots.length; ++i)
+	{
+		lt_sweep_v(vm, *(lt_Value*)lt_buffer_at(&vm->native_roots, i));
 	}
 
 	for (uint32_t i = 0; i < vm->top; ++i)
@@ -2942,6 +2948,8 @@ uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 {
 	uint16_t base = vm->top - argc;
 	uint16_t saved_depth = vm->depth;
+	uint32_t root_mark = vm->native_roots.length;
+	uint32_t saved_root_floor = vm->native_root_floor;
 	lt_Frame* saved_current = vm->current;
 	void* saved_error_buf = vm->error_buf;
 	jmp_buf error_buf;
@@ -2961,9 +2969,22 @@ uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 		vm->top = base;
 		vm->depth = saved_depth;
 		vm->current = saved_current;
+		vm->native_roots.length = root_mark;
+		vm->native_root_floor = saved_root_floor;
 		vm->error_buf = saved_error_buf;
 		return 0;
 	}
+}
+
+static uint8_t _lt_call_native(lt_VM* vm, lt_NativeFn fn, uint8_t argc)
+{
+	uint32_t root_mark = vm->native_roots.length;
+	uint32_t saved_root_floor = vm->native_root_floor;
+	vm->native_root_floor = root_mark;
+	uint8_t n_return = fn(vm, argc);
+	vm->native_roots.length = root_mark;
+	vm->native_root_floor = saved_root_floor;
+	return n_return;
 }
 
 void lt_error(lt_VM* vm, const char* msg)
@@ -3032,7 +3053,7 @@ uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc)
 		}
 		else
 		{
-			uint8_t n_return = fn->native(vm, argc);
+			uint8_t n_return = _lt_call_native(vm, fn->native, argc);
 
 			--vm->depth;
 			vm->current = vm->depth > 0 ? &vm->callstack[vm->depth - 1] : 0;
@@ -3040,14 +3061,14 @@ uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc)
 		}
 	} break;
 	case LT_OBJECT_NATIVEFN: {
-		uint8_t n_return = callee->native(vm, argc);
+		uint8_t n_return = _lt_call_native(vm, callee->native, argc);
 
 		--vm->depth;
 		vm->current = vm->depth > 0 ? &vm->callstack[vm->depth - 1] : 0;
 		return n_return;
 	} break;
 	case LT_OBJECT_BOUND_NATIVE: {
-		uint8_t n_return = callee->bound_native.native(vm, argc);
+		uint8_t n_return = _lt_call_native(vm, callee->bound_native.native, argc);
 
 		--vm->depth;
 		vm->current = vm->depth > 0 ? &vm->callstack[vm->depth - 1] : 0;

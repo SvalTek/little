@@ -157,6 +157,50 @@ The table includes value constructors/accessors, table and array helpers,
 with asynchronous host APIs should use those function pointers rather than
 linking against VM symbols or reading VM stack/frame internals.
 
+Three members were appended to `lt_Api` after `poll_now`. They are additive and
+do not require a new `LT_API_VERSION`: the `size` field remains the compatibility
+gate, so an older host hands back a table whose `size` is smaller than the
+library's `sizeof(lt_Api)` and the load is rejected by the standard guard.
+
+```c
+void (*root)(lt_VM* vm, lt_Value value);
+void (*unroot)(lt_VM* vm, lt_Value value);
+uint8_t (*equals)(lt_Value a, lt_Value b);
+```
+
+`root` keeps any `lt_Value` alive during the current native callback, including
+native functions and poll hooks, and works for strings as well as heap objects.
+`unroot` removes one matching value early; otherwise the VM drops roots added
+by a callback when it returns. Nested callbacks have their own root scope, so
+returning from one does not discard roots held by its caller. `unroot` only
+removes roots added in the current callback. These temporary roots are also
+discarded if a runtime error unwinds the native call.
+
+`equals` exposes the language's value equality operation to native libraries,
+so they can compare values without linking against the host executable.
+
+A `lt_Value` held only in a C local is **not** a GC root. Use these functions
+for values that must survive a re-entrant VM call (`lt->exec`, `lt->poll`, or
+`lt->poll_now`):
+
+```c
+static uint8_t hold_across_reentry(lt_VM* vm, uint8_t argc)
+{
+    while (argc--) lt->pop(vm);
+
+    lt_Value kept = lt->make_table(vm);
+    lt->table_set(vm, kept, lt->make_string(vm, "marker"), lt->make_string(vm, "ALIVE"));
+    lt->root(vm, kept);
+
+    lt->exec(vm, collect_callable, 0);   /* a full collection may run here */
+
+    lt_Value marker = lt->table_get(vm, kept, lt->make_string(vm, "marker"));
+    lt->unroot(vm, kept);                 /* optional; callback return releases it */
+    lt->push(vm, marker);
+    return 1;
+}
+```
+
 ---
 ```c
 lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name);

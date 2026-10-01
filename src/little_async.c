@@ -1234,7 +1234,12 @@ uint8_t ltasync_poll_hooks(lt_VM* vm, uint8_t* pending)
 	{
 		lt_PollHookEntry entry = *(lt_PollHookEntry*)lt_buffer_at(&vm->poll_hooks, i);
 		if (entry.removed) continue;
+		uint32_t root_mark = vm->native_roots.length;
+		uint32_t saved_root_floor = vm->native_root_floor;
+		vm->native_root_floor = root_mark;
 		lt_PollResult result = entry.hook(vm, entry.context);
+		vm->native_roots.length = root_mark;
+		vm->native_root_floor = saved_root_floor;
 		if (result == LT_POLL_WORK) did_work = 1;
 		if (result == LT_POLL_WORK || result == LT_POLL_PENDING) *pending = 1;
 	}
