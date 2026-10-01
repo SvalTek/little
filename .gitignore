@@ -9,4 +9,7 @@ vendor/*
 tests/native/reenter.dll
 tests/native/reenter.so
 tests/native/reenter.dylib
+tests/native/rooting.dll
+tests/native/rooting.so
+tests/native/rooting.dylib
 .little-user-lab/

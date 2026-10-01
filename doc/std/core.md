@@ -101,6 +101,27 @@ host executable. That table is the ABI boundary: native libraries should reject
 the load unless `ltopen` receives a non-null API pointer with the expected
 `LT_API_VERSION` and at least `sizeof(lt_Api)` bytes.
 
+### Rooting values
+
+A `lt_Value` held only in a C local is **not** a GC root. A native function
+that must keep a value across a re-entrant VM call (`lt->exec`, `lt->poll`, or
+`lt->poll_now`) can call `lt->root(vm, value)`. This works for strings and heap
+objects. Roots added by a native function or poll hook are released
+automatically when that callback returns, including when a runtime error
+unwinds it. `lt->unroot(vm, value)` removes one matching root from that
+callback's scope earlier. A nested callback has an independent root scope.
+The `equals` member exposes Little value equality to native libraries that
+cannot link against the host executable.
+
+```c
+lt_Value kept = lt->make_table(vm);
+lt->root(vm, kept);
+
+/* lt->exec, lt->poll, and lt->poll_now can trigger a collection */
+
+lt->unroot(vm, kept); /* optional; callback return releases it */
+```
+
 The repository's `nativelib/json` directory is an example of a native library
 that returns a module table:
 

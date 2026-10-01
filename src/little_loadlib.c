@@ -52,6 +52,23 @@ static lt_Value _lt_api_promise_result(lt_Value value)
     return LT_GET_OBJECT(value)->promise.result;
 }
 
+static void _lt_api_root(lt_VM* vm, lt_Value value)
+{
+    lt_buffer_push(vm, &vm->native_roots, &value);
+}
+
+static void _lt_api_unroot(lt_VM* vm, lt_Value value)
+{
+    for (uint32_t i = vm->native_root_floor; i < vm->native_roots.length; ++i)
+    {
+        if (*(lt_Value*)lt_buffer_at(&vm->native_roots, i) == value)
+        {
+            lt_buffer_cycle(&vm->native_roots, i);
+            return;
+        }
+    }
+}
+
 static const lt_Api _lt_native_api = {
     .version = LT_API_VERSION,
     .size = sizeof(lt_Api),
@@ -86,6 +103,9 @@ static const lt_Api _lt_native_api = {
     .promise_state = _lt_api_promise_state,
     .promise_result = _lt_api_promise_result,
     .poll_now = lt_poll_now,
+    .root = _lt_api_root,
+    .unroot = _lt_api_unroot,
+    .equals = lt_equals,
 };
 
 const lt_Api* ltstd_native_api(void)
@@ -298,7 +318,12 @@ static uint8_t _lt_load_library(lt_VM* vm, uint8_t argc)
     /* A native library can re-enter the VM and collect while opening. */
     lt_push(vm, requested_key);
     lt_push(vm, resolved_key);
+    uint32_t root_mark = vm->native_roots.length;
+    uint32_t saved_root_floor = vm->native_root_floor;
+    vm->native_root_floor = root_mark;
     lt_Value value = open_fn(vm, &_lt_native_api);
+    vm->native_roots.length = root_mark;
+    vm->native_root_floor = saved_root_floor;
     if (value == LT_VALUE_NULL)
     {
         _lt_close_native_library(handle);

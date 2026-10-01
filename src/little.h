@@ -558,6 +558,8 @@ typedef struct {
 struct lt_VM {
 	lt_Buffer heap;
 	lt_Buffer keepalive;
+	lt_Buffer native_roots;
+	uint32_t native_root_floor;
 
 	uint16_t top;
 	lt_Value stack[LT_STACK_SIZE];
@@ -702,4 +704,9 @@ struct lt_Api {
 	lt_PromiseState (*promise_state)(lt_Value value);
 	lt_Value (*promise_result)(lt_Value value);
 	uint8_t (*poll_now)(lt_VM* vm);
+
+	/* API v3 addendum: value roots scoped to the active native C callback. */
+	void (*root)(lt_VM* vm, lt_Value value);
+	void (*unroot)(lt_VM* vm, lt_Value value);
+	uint8_t (*equals)(lt_Value a, lt_Value b);
 };
