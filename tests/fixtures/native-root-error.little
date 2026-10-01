@@ -1,0 +1,2 @@
+var roots = loadLibrary("tests/native/rooting")
+return roots.rootAndFail()

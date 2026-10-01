@@ -26,3 +26,15 @@ io.print(roots.equals(2, 3))
 io.print(roots.equals(null, null))
 io.print(roots.equals(null, false))
 io.print(roots.equals() is null)
+
+; Error traps that invoke the VM directly must restore native root scopes too.
+var failed = pcall(roots.rootAndFail)
+io.print(not failed.ok)
+io.print(roots.rootCount() == 0)
+
+; Import has its own error trap around module execution.
+var importFailed = pcall(fn() {
+    return import "tests/fixtures/native-root-error"
+})
+io.print(not importFailed.ok)
+io.print(roots.rootCount() == 0)

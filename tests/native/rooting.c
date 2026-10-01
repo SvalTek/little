@@ -51,6 +51,23 @@ static uint8_t unrooted_collected(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+static uint8_t root_and_fail(lt_VM* vm, uint8_t argc)
+{
+    while (argc--) lt->pop(vm);
+
+    lt_Value value = lt->make_table(vm);
+    lt->root(vm, value);
+    lt->runtime_error(vm, "rooted native failure");
+    return 0;
+}
+
+static uint8_t root_count(lt_VM* vm, uint8_t argc)
+{
+    while (argc--) lt->pop(vm);
+    lt->push(vm, lt->make_number((double)vm->native_roots.length));
+    return 1;
+}
+
 static uint8_t api_members(lt_VM* vm, uint8_t argc)
 {
     while (argc--) lt->pop(vm);
@@ -93,6 +110,8 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     lt_Value module = lt->make_table(vm);
     set_native(vm, module, "rootedHold", rooted_hold);
     set_native(vm, module, "unrootedCollected", unrooted_collected);
+    set_native(vm, module, "rootAndFail", root_and_fail);
+    set_native(vm, module, "rootCount", root_count);
     set_native(vm, module, "apiMembers", api_members);
     set_native(vm, module, "equals", equals_native);
     return module;
