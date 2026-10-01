@@ -180,8 +180,8 @@ discarded if a runtime error unwinds the native call.
 so they can compare values without linking against the host executable.
 
 API v3 also appends the native-backed class functions below. Native libraries
-must use the passed API table and check its version and size before accessing
-these members.
+must use the passed API table and check that it is API v3. Within API v3, the
+table's `size` determines whether these appended members are available.
 
 ```c
 lt_Value (*class_create)(lt_VM* vm, const char* name);
@@ -200,7 +200,10 @@ void (*instance_clear_native_data)(lt_VM* vm, lt_Value instance);
 members before returning it from `ltopen`, usually by storing the class in the
 module table. Native class members follow Little's class rules: names must be
 Little identifiers, same-name members conflict except for a getter/setter pair,
-and public inherited members require `override` with the same member kind.
+and public inherited members require `override` with the same member kind. A
+class created by this API has no superclass, and native-to-native inheritance
+is not supported, so `is_override` must be false for classes created by this
+API.
 Constructors do not take visibility or override flags. Registration errors are
 runtime errors.
 
@@ -219,13 +222,21 @@ depth. The native class's destroy callback is copied to the instance when data
 is attached, so collection does not need to look up a class object to finalize
 the payload. The destroy callback runs at most once, when the instance is
 collected or the VM is destroyed. Loaded libraries remain open during VM
-finalization.
+finalization. The callback runs during collection while the heap is being
+swept. It must only release native resources: it must not call Little or any
+`lt_Api` function, allocate VM values, or trigger collection. This restriction
+also applies when `instance_dispose_native_data` invokes the callback.
 
 `instance_get_native_data` performs the same ancestry check and returns `NULL`
 after the payload has been cleared. `instance_dispose_native_data` calls the
 registered destroy callback and clears the payload. Use
 `instance_clear_native_data` when the native resource has already been
 destroyed elsewhere; it clears the pointer without calling the callback.
+
+`lt_Object` is a VM heap representation, not part of the `lt_Api` ABI. Native
+libraries must not allocate it, depend on its size, or read its union fields.
+Use the `LT_IS_*` macros for value type checks and the `lt_Api` functions for
+all other VM operations.
 
 A `lt_Value` held only in a C local is **not** a GC root. Use these functions
 for values that must survive a re-entrant VM call (`lt->exec`, `lt->poll`, or

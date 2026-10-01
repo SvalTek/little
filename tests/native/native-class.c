@@ -143,6 +143,7 @@ static uint8_t drop_native_class(lt_VM* vm, uint8_t argc)
 {
     while (argc--) api->pop(vm);
     api->table_set(vm, native_module, api->make_string(vm, "NativeBox"), LT_VALUE_NULL);
+    native_box_class = LT_VALUE_NULL;
     return 0;
 }
 
@@ -173,6 +174,13 @@ static uint8_t try_duplicate_registration(lt_VM* vm, uint8_t argc)
 {
     while (argc--) api->pop(vm);
     api->class_add_method(vm, native_box_class, "value", box_native_value, LT_VIS_PUBLIC, 0);
+    return 0;
+}
+
+static uint8_t try_reserved_registration(lt_VM* vm, uint8_t argc)
+{
+    while (argc--) api->pop(vm);
+    api->class_add_method(vm, native_box_class, "is", box_native_value, LT_VIS_PUBLIC, 0);
     return 0;
 }
 
@@ -210,6 +218,7 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* native_api)
     set_native(vm, native_module, "destroyedCount", destroyed_count);
     set_native(vm, native_module, "externalCount", external_count);
     set_native(vm, native_module, "tryDuplicateRegistration", try_duplicate_registration);
+    set_native(vm, native_module, "tryReservedRegistration", try_reserved_registration);
     set_native(vm, native_module, "rawNativeValue", raw_native_value);
     return native_module;
 }

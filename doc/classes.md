@@ -81,12 +81,14 @@ The superclass must be named directly. Dynamic superclass expressions are not su
 
 A Little class may extend a native-backed class, including through multiple
 levels of Little subclasses. The instance keeps the native payload from its
-native base class. V1 native classes are created without a superclass; native
-class-to-native-class inheritance is not supported.
+native base class. Native classes created by `lt_Api` have no superclass, and
+native class-to-native-class inheritance is not supported.
 
 Inherited public methods, getters, setters, and fields participate in lookup. A subclass member that shares a public inherited name is an error unless it is an explicit `override`, and `override` must match an inherited member of the same kind. Fields cannot be marked `override`.
 
-Inside a constructor, `super(...)` calls the superclass constructor for the current instance. Inside methods and constructors, `super.method(...)` calls an inherited public method with the current instance as `this`.
+Inside a constructor, `super(...)` calls the nearest ancestor constructor for
+the current instance. Inside methods and constructors, `super.method(...)`
+calls an inherited public method with the current instance as `this`.
 
 ## Public And Private Members
 

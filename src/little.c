@@ -136,7 +136,14 @@ static lt_DebugInfo* _lt_get_debuginfo(lt_Object* obj)
 	{
 	case LT_OBJECT_CHUNK: return obj->chunk.debug;
 	case LT_OBJECT_FN: return obj->fn.debug;
-	case LT_OBJECT_CLOSURE: return LT_GET_OBJECT(obj->closure.function)->fn.debug;
+	case LT_OBJECT_CLOSURE: {
+		lt_Value function_value = obj->closure.function;
+		if (!LT_IS_OBJECT(function_value)) return 0;
+		lt_Object* function = LT_GET_OBJECT(function_value);
+		if (function->type == LT_OBJECT_FN) return function->fn.debug;
+		if (function->type == LT_OBJECT_CLOSURE) return _lt_get_debuginfo(function);
+		return 0;
+	}
 	}
 
 	return 0;
@@ -156,9 +163,9 @@ void lt_runtime_error(lt_VM* vm, const char* message)
 {
 	char sprint_buf[1024];
 
-	lt_Frame* topmost = &vm->callstack[vm->depth - 1];
-	lt_DebugInfo* info = _lt_get_debuginfo(topmost->callee);
-	uint32_t pc = topmost->pc > 0 ? topmost->pc - 1 : 0;
+	lt_Frame* topmost = vm->depth ? &vm->callstack[vm->depth - 1] : 0;
+	lt_DebugInfo* info = topmost ? _lt_get_debuginfo(topmost->callee) : 0;
+	uint32_t pc = topmost && topmost->pc > 0 ? topmost->pc - 1 : 0;
 	lt_DebugLoc loc = _lt_get_location(info, pc);
 
 	const char* name = "<unknown>";
@@ -2791,7 +2798,7 @@ static uint8_t _lt_native_class_name_valid(const char* name)
 		"true", "false", "null", "fn", "async", "await", "class", "extends",
 		"override", "super", "public", "private", "constructor", "get", "set",
 		"break", "var", "global", "if", "else", "elseif", "for", "in", "while",
-		"with", "import", "return", "type", "typeof", "and", "or", "not", 0
+		"with", "import", "return", "type", "typeof", "and", "or", "not", "is", "isnt", 0
 	};
 	for (uint32_t i = 0; reserved[i]; ++i)
 		if (strcmp(name, reserved[i]) == 0) return 0;
@@ -2823,15 +2830,6 @@ void lt_class_set_constructor(lt_VM* vm, lt_Value klass, lt_NativeFn fn)
 {
 	lt_Object* member = _lt_make_native_class_member(vm, klass, fn);
 	_lt_class_set_member(vm, klass, lt_make_string(vm, "constructor"), LT_VALUE_OBJECT(member), LT_CLASS_CONSTRUCTOR);
-}
-
-static lt_Table* _lt_native_class_member_table(lt_Object* klass, lt_ClassMemberType type, lt_Visibility visibility)
-{
-	if (type == LT_CLASS_GETTER)
-		return visibility == LT_VIS_PRIVATE ? &klass->class_def.private_getters : &klass->class_def.public_getters;
-	if (type == LT_CLASS_SETTER)
-		return visibility == LT_VIS_PRIVATE ? &klass->class_def.private_setters : &klass->class_def.public_setters;
-	return visibility == LT_VIS_PRIVATE ? &klass->class_def.private_methods : &klass->class_def.public_methods;
 }
 
 static void _lt_native_class_add_member(lt_VM* vm, lt_Value klass_value, const char* name, lt_NativeFn fn,

@@ -435,6 +435,8 @@ typedef struct lt_SharedObject lt_SharedObject;
 typedef struct lt_Api lt_Api;
 
 typedef uint8_t(*lt_NativeFn)(lt_VM* vm, uint8_t argc);
+/* Called during instance finalization. Must only release native resources; it
+   must not call back into Little, allocate VM values, or trigger collection. */
 typedef void(*lt_NativeDataDestroyFn)(void* data);
 
 /* A host poll hook is called by lt_poll on the VM's owning thread. Return
@@ -448,6 +450,8 @@ typedef enum {
 
 typedef lt_PollResult(*lt_PollHook)(lt_VM* vm, void* context);
 
+/* Internal heap representation. Native library ABI is provided by lt_Api;
+   consumers must not depend on lt_Object's size or union layout. */
 typedef struct lt_Object {
 	lt_ObjectType type;
 
@@ -567,7 +571,6 @@ typedef struct {
 struct lt_VM {
 	lt_Buffer heap;
 	lt_Buffer keepalive;
-	lt_Buffer temporary_roots;
 	lt_Buffer native_roots;
 	uint32_t native_root_floor;
 
@@ -602,6 +605,9 @@ struct lt_VM {
 	char* error_trap;
 	uint8_t trap_errors;
 	uint8_t generate_debug;
+
+	/* Appended to preserve offsets of fields exposed by earlier headers. */
+	lt_Buffer temporary_roots;
 };
 
 lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error);

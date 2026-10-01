@@ -12,4 +12,7 @@ tests/native/reenter.dylib
 tests/native/rooting.dll
 tests/native/rooting.so
 tests/native/rooting.dylib
+tests/native/native-class.dll
+tests/native/native-class.so
+tests/native/native-class.dylib
 .little-user-lab/
