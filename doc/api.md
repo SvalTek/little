@@ -137,8 +137,10 @@ The VM starts without standard libraries. Use `ltstd_open_all` for the tradition
 
 `ltstd_open_term(vm)` exposes the optional interactive `term` module. It is
 separate from `ltstd_open_all` because it owns terminal state. Call
-`ltstd_close_term()` before destroying a VM if the terminal module may have
-been opened.
+`ltstd_close_term()` to shut down the process-wide terminal integration before
+destroying VMs that may have opened it. Shutdown unregisters the terminal poll
+hook and clears the per-VM module associations; call `ltstd_open_term(vm)` again
+before using terminal support after shutdown.
 
 `loadLibrary(path)` loads a platform-native library and calls its exported
 `ltopen(lt_VM* vm, const lt_Api* lt)` function. The `ltopen` function returns
@@ -157,7 +159,7 @@ The table includes value constructors/accessors, table and array helpers,
 with asynchronous host APIs should use those function pointers rather than
 linking against VM symbols or reading VM stack/frame internals.
 
-Three members were appended to `lt_Api` after `poll_now`. They are additive and
+Members were appended to `lt_Api` after `poll_now`. They are additive and
 do not require a new `LT_API_VERSION`: the `size` field remains the compatibility
 gate, so an older host hands back a table whose `size` is smaller than the
 library's `sizeof(lt_Api)` and the load is rejected by the standard guard.
@@ -166,6 +168,8 @@ library's `sizeof(lt_Api)` and the load is rejected by the standard guard.
 void (*root)(lt_VM* vm, lt_Value value);
 void (*unroot)(lt_VM* vm, lt_Value value);
 uint8_t (*equals)(lt_Value a, lt_Value b);
+void (*root_persistent)(lt_VM* vm, lt_Value value);
+void (*unroot_persistent)(lt_VM* vm, lt_Value value);
 ```
 
 `root` keeps any `lt_Value` alive during the current native callback, including
@@ -175,6 +179,12 @@ by a callback when it returns. Nested callbacks have their own root scope, so
 returning from one does not discard roots held by its caller. `unroot` only
 removes roots added in the current callback. These temporary roots are also
 discarded if a runtime error unwinds the native call.
+
+`root_persistent` keeps an object alive beyond the current native callback.
+The native library must call `unroot_persistent` when it no longer needs the
+object. Persistent roots are not released automatically when a callback returns
+or errors, so libraries must balance each root with an unroot during replacement
+and shutdown. Non-object values do not need rooting.
 
 `equals` exposes the language's value equality operation to native libraries,
 so they can compare values without linking against the host executable.

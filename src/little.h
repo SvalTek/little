@@ -709,8 +709,11 @@ struct lt_Api {
 	lt_Value (*promise_result)(lt_Value value);
 	uint8_t (*poll_now)(lt_VM* vm);
 
-	/* API v3 addendum: value roots scoped to the active native C callback. */
+	/* API v3 addendum: callback-scoped and persistent value roots. */
 	void (*root)(lt_VM* vm, lt_Value value);
 	void (*unroot)(lt_VM* vm, lt_Value value);
 	uint8_t (*equals)(lt_Value a, lt_Value b);
+	/* Roots retained beyond the current native callback, until explicitly removed. */
+	void (*root_persistent)(lt_VM* vm, lt_Value value);
+	void (*unroot_persistent)(lt_VM* vm, lt_Value value);
 };

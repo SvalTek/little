@@ -69,6 +69,16 @@ static void _lt_api_unroot(lt_VM* vm, lt_Value value)
     }
 }
 
+static void _lt_api_root_persistent(lt_VM* vm, lt_Value value)
+{
+    if (LT_IS_OBJECT(value)) lt_nocollect(vm, LT_GET_OBJECT(value));
+}
+
+static void _lt_api_unroot_persistent(lt_VM* vm, lt_Value value)
+{
+    if (LT_IS_OBJECT(value)) lt_resumecollect(vm, LT_GET_OBJECT(value));
+}
+
 static const lt_Api _lt_native_api = {
     .version = LT_API_VERSION,
     .size = sizeof(lt_Api),
@@ -106,6 +116,8 @@ static const lt_Api _lt_native_api = {
     .root = _lt_api_root,
     .unroot = _lt_api_unroot,
     .equals = lt_equals,
+    .root_persistent = _lt_api_root_persistent,
+    .unroot_persistent = _lt_api_unroot_persistent,
 };
 
 const lt_Api* ltstd_native_api(void)
