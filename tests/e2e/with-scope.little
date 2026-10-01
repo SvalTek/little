@@ -1,0 +1,22 @@
+var outer = "outside"
+var saved = null
+var root = {
+    value: "root"
+    child: { value: "child" }
+}
+
+with root {
+    var outer = "inside"
+    saved = fn() { return outer }
+
+    with @child {
+        var nestedValue = @value
+        io.print("nested", nestedValue)
+        @value = string.concat(@value, "!")
+    }
+
+    io.print("with", outer, @value)
+}
+
+io.print("outer", outer)
+io.print("closure", saved(), root.child.value)

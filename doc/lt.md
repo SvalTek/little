@@ -31,6 +31,7 @@ var { id, name } = user
 var { id: userId } = user
 ```
 Variables are declared with the `var` keyword. A declaration may bind a single name, or destructure values from an array or table.
+Locals declared inside a `with` block are scoped to that block. Nested blocks can use them, and leaving the block restores any shadowed outer local.
 
 Array destructuring reads 0-based positions and binds missing slots as `null`:
 ```js

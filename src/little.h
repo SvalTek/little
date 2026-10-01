@@ -364,15 +364,19 @@ typedef struct lt_AstNode {
 			lt_Token* receiver;
 			struct lt_AstNode* expr;
 			lt_Buffer body;
+			struct lt_Scope* scope;
 		} with_stmt;
 	};
 } lt_AstNode;
 
 typedef struct lt_Scope {
 	struct lt_Scope* last;
+	struct lt_Scope* frame;
 
 	lt_Token* start;
 	lt_Buffer locals;
+	lt_Buffer local_slots;
+	lt_Buffer frame_slots;
 	lt_Buffer upvals;
 	lt_Buffer captured;
 	lt_Token* end;

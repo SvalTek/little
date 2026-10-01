@@ -1,0 +1,7 @@
+var box = {}
+
+with box {
+    var temporary = 1
+}
+
+temporary = 2

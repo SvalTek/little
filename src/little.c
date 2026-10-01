@@ -697,77 +697,91 @@ uint32_t _lt_tokens_equal(lt_Token* a, lt_Token* b)
 
 uint16_t _lt_make_local(lt_VM* vm, lt_Scope* scope, lt_Token* t)
 {
-	lt_Scope* current = scope;
-	
-	for (uint32_t i = 0; i < current->locals.length; ++i)
+	for (uint32_t i = 0; i < scope->locals.length; ++i)
 	{
-		if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&current->locals, i), t)) return i;
+		if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&scope->locals, i), t))
+			return *(uint16_t*)lt_buffer_at(&scope->local_slots, i);
 	}
 
-	if (current->locals.length >= LT_MAX_LOCALS) lt_error(vm, "Too many local variables!");
-	lt_buffer_push(vm, &current->locals, t);
-	return current->locals.length - 1;
+	lt_Scope* frame = scope->frame;
+	if (frame->frame_slots.length >= LT_MAX_LOCALS) lt_error(vm, "Too many local variables!");
+	uint16_t slot = (uint16_t)frame->frame_slots.length;
+	lt_buffer_push(vm, &frame->frame_slots, &t);
+	lt_buffer_push(vm, &scope->locals, t);
+	lt_buffer_push(vm, &scope->local_slots, &slot);
+	return slot;
 }
 
-static void _lt_mark_captured_local(lt_VM* vm, lt_Scope* scope, lt_Token* t)
+static void _lt_mark_captured_local(lt_VM* vm, lt_Scope* frame, uint16_t slot)
 {
-	for (uint32_t i = 0; i < scope->captured.length; ++i)
-		if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&scope->captured, i), t)) return;
-	lt_buffer_push(vm, &scope->captured, t);
+	for (uint32_t i = 0; i < frame->captured.length; ++i)
+		if (*(uint16_t*)lt_buffer_at(&frame->captured, i) == slot) return;
+	lt_buffer_push(vm, &frame->captured, &slot);
 }
-
-static uint8_t _lt_is_captured_local(lt_Scope* scope, uint32_t idx)
-{
-	if (idx >= scope->locals.length) return 0;
-	lt_Token* local = lt_buffer_at(&scope->locals, idx);
-	for (uint32_t i = 0; i < scope->captured.length; ++i)
-		if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&scope->captured, i), local)) return 1;
-	return 0;
-}
-
 
 #define UPVAL_BIT 0x07000000
 #define NOT_FOUND ((uint32_t)-1)
 
+static uint8_t _lt_is_captured_local(lt_Scope* scope, uint32_t idx)
+{
+	lt_Scope* frame = scope->frame;
+	if ((idx & UPVAL_BIT) == UPVAL_BIT || idx >= frame->frame_slots.length) return 0;
+	for (uint32_t i = 0; i < frame->captured.length; ++i)
+		if (*(uint16_t*)lt_buffer_at(&frame->captured, i) == idx) return 1;
+	return 0;
+}
+
+
 uint32_t _lt_find_local(lt_VM* vm, lt_Scope* scope, lt_Token* t)
 {
-	lt_Scope* current = scope;
-	
-	for (uint32_t i = 0; i < current->locals.length; ++i)
-		if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&current->locals, i), t)) return i;
+	lt_Scope* frame = scope->frame;
+	for (lt_Scope* lexical = scope; lexical && lexical->frame == frame; lexical = lexical->last)
+	{
+		for (uint32_t i = 0; i < lexical->locals.length; ++i)
+			if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&lexical->locals, i), t))
+				return *(uint16_t*)lt_buffer_at(&lexical->local_slots, i);
+	}
 
-	for (uint32_t i = 0; i < current->upvals.length; ++i)
-		if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&current->upvals, i), t)) return i | UPVAL_BIT;
+	for (uint32_t i = 0; i < frame->upvals.length; ++i)
+		if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&frame->upvals, i), t)) return i | UPVAL_BIT;
 
-	lt_Scope* test = current->last;
+	lt_Scope* test = frame->last;
 	while (test)
 	{
-		lt_Token* found_local = 0;
+		uint32_t found_slot = NOT_FOUND;
 		for (uint32_t i = 0; i < test->locals.length; ++i)
 		{
-			lt_Token* local = lt_buffer_at(&test->locals, i);
-			if (_lt_tokens_equal(local, t)) { found_local = local; break; }
+			if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&test->locals, i), t))
+			{
+				found_slot = *(uint16_t*)lt_buffer_at(&test->local_slots, i);
+				break;
+			}
 		}
 
-		if(!found_local)
+		if (found_slot != NOT_FOUND)
+		{
+			_lt_mark_captured_local(vm, test->frame, (uint16_t)found_slot);
+			for (uint32_t i = 0; i < frame->upvals.length; ++i)
+			{
+				if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&frame->upvals, i), t))
+					return i | UPVAL_BIT;
+			}
+			lt_buffer_push(vm, &frame->upvals, t);
+			return (frame->upvals.length - 1) | UPVAL_BIT;
+		}
+
+		if (test == test->frame)
+		{
 			for (uint32_t i = 0; i < test->upvals.length; ++i)
 			{
-				if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&test->upvals, i), t)) { found_local = t; break; }
-			}
-
-		if (found_local)
-		{
-			for (uint32_t i = 0; i < test->locals.length; ++i)
-			{
-				lt_Token* local = lt_buffer_at(&test->locals, i);
-				if (_lt_tokens_equal(local, t))
+				if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&test->upvals, i), t))
 				{
-					_lt_mark_captured_local(vm, test, local);
-					break;
+					for (uint32_t j = 0; j < frame->upvals.length; ++j)
+						if (_lt_tokens_equal((lt_Token*)lt_buffer_at(&frame->upvals, j), t)) return j | UPVAL_BIT;
+					lt_buffer_push(vm, &frame->upvals, t);
+					return (frame->upvals.length - 1) | UPVAL_BIT;
 				}
 			}
-			lt_buffer_push(vm, &current->upvals, t);
-			return (current->upvals.length - 1) | UPVAL_BIT;
 		}
 
 		test = test->last;
@@ -959,11 +973,14 @@ static lt_AstNode* _lt_make_field_initializer_fn(lt_VM* vm, lt_Parser* p, lt_Tok
 
 	lt_Scope* fn_scope = vm->alloc(sizeof(lt_Scope));
 	fn_scope->last = p->current;
+	fn_scope->frame = fn_scope;
 	fn_scope->start = loc;
 	fn_scope->end = loc;
 	fn_scope->locals = lt_buffer_new(sizeof(lt_Token));
+	fn_scope->local_slots = lt_buffer_new(sizeof(uint16_t));
+	fn_scope->frame_slots = lt_buffer_new(sizeof(lt_Token*));
 	fn_scope->upvals = lt_buffer_new(sizeof(lt_Token));
-	fn_scope->captured = lt_buffer_new(sizeof(lt_Token));
+	fn_scope->captured = lt_buffer_new(sizeof(uint16_t));
 	_lt_make_local(vm, fn_scope, fn->fn.args[0]);
 	fn->fn.scope = fn_scope;
 	return fn;
@@ -1146,20 +1163,25 @@ static lt_Token* _lt_parse_destructure_pattern(lt_VM* vm, lt_Parser* p, lt_Token
 	return current;
 }
 
-lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* dst, uint8_t expects_terminator, uint8_t makes_scope, lt_Token** argnames)
+enum { LT_PARSE_SCOPE_NONE, LT_PARSE_SCOPE_FRAME, LT_PARSE_SCOPE_LEXICAL };
+
+lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* dst, uint8_t expects_terminator, uint8_t scope_type, lt_Token** argnames)
 {
-	if (makes_scope)
+	if (scope_type != LT_PARSE_SCOPE_NONE)
 	{
 		lt_Scope* new_scope = vm->alloc(sizeof(lt_Scope));
 		new_scope->last = p->current;
+		new_scope->frame = scope_type == LT_PARSE_SCOPE_FRAME ? new_scope : p->current->frame;
 		p->current = new_scope;
 
 		new_scope->start = start;
 		new_scope->end = start;
 
 		new_scope->locals = lt_buffer_new(sizeof(lt_Token));
+		new_scope->local_slots = lt_buffer_new(sizeof(uint16_t));
+		new_scope->frame_slots = lt_buffer_new(sizeof(lt_Token*));
 		new_scope->upvals = lt_buffer_new(sizeof(lt_Token));
-		new_scope->captured = lt_buffer_new(sizeof(lt_Token));
+		new_scope->captured = lt_buffer_new(sizeof(uint16_t));
 
 		if (argnames) while (*argnames) _lt_make_local(vm, p->current, *argnames++);
 	}
@@ -1330,15 +1352,15 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 			if (current->type != LT_TOKEN_OPENBRACE) _lt_parse_error(vm, p->tkn->module, current, "Expected open brace to follow 'with' expression!");
 			with_stmt->with_stmt.receiver = _lt_make_hidden_identifier_token(vm, p, "__with", current);
-			_lt_make_local(vm, p->current, with_stmt->with_stmt.receiver);
 			current++;
 
 			lt_Token* previous_self = p->self_token;
+			lt_Token* with_args[] = { with_stmt->with_stmt.receiver, 0 };
 			p->self_token = with_stmt->with_stmt.receiver;
 			with_stmt->with_stmt.body = lt_buffer_new(sizeof(lt_AstNode*));
-			_lt_parse_block(vm, p, current, &with_stmt->with_stmt.body, 1, 0, 0);
+			with_stmt->with_stmt.scope = _lt_parse_block(vm, p, current, &with_stmt->with_stmt.body, 1, LT_PARSE_SCOPE_LEXICAL, with_args);
 			p->self_token = previous_self;
-			current = p->current->end;
+			current = with_stmt->with_stmt.scope->end;
 
 			lt_buffer_push(vm, dst, &with_stmt);
 			REQUIRE_STATEMENT_BOUNDARY();
@@ -1583,7 +1605,7 @@ end_block:
 	p->current->end = current;
 	lt_Scope* new_scope = p->current;
 
-	if(makes_scope) p->current = p->current->last;
+	if (scope_type != LT_PARSE_SCOPE_NONE) p->current = p->current->last;
 
 	return new_scope;
 }
@@ -3550,7 +3572,7 @@ static lt_Value _lt_compile_function_value(lt_VM* vm, lt_Parser* p, const char* 
 	lt_buffer_push(vm, &fn->fn.code, &op2);
 	if (debug) lt_buffer_push(vm, debug, &ret_loc);
 
-	((lt_Op*)lt_buffer_at(&fn->fn.code, 0))->arg = node->fn.scope->locals.length;
+	((lt_Op*)lt_buffer_at(&fn->fn.code, 0))->arg = node->fn.scope->frame_slots.length;
 	return LT_VALUE_OBJECT(fn);
 }
 
@@ -4008,11 +4030,11 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 
 	case LT_AST_NODE_WITH: {
 		_lt_compile_node(vm, p, name, debug, node->with_stmt.expr, scope, code_body, constants);
-		uint32_t idx = _lt_find_local(vm, scope, node->with_stmt.receiver);
-		if (idx == NOT_FOUND) idx = _lt_make_local(vm, scope, node->with_stmt.receiver);
-		if (_lt_is_captured_local(scope, idx)) OPARG(STORECELL, idx & 0xFFFF)
+		uint32_t idx = _lt_find_local(vm, node->with_stmt.scope, node->with_stmt.receiver);
+		if (idx == NOT_FOUND) idx = _lt_make_local(vm, node->with_stmt.scope, node->with_stmt.receiver);
+		if (_lt_is_captured_local(node->with_stmt.scope, idx)) OPARG(STORECELL, idx & 0xFFFF)
 		else OPARG(STORE, idx & 0xFFFF);
-		_lt_compile_body(vm, p, name, debug, &node->with_stmt.body, scope, code_body, constants);
+		_lt_compile_body(vm, p, name, debug, &node->with_stmt.body, node->with_stmt.scope, code_body, constants);
 	} break;
 	}
 }
@@ -4065,7 +4087,7 @@ lt_Value lt_compile(lt_VM* vm, lt_Parser* p)
 	lt_buffer_push(vm, &chunk->chunk.code, &op2);
 	if (debug) lt_buffer_push(vm, debug, &ret_loc);
 
-	((lt_Op*)lt_buffer_at(&chunk->chunk.code, 0))->arg = p->root->chunk.scope->locals.length;
+	((lt_Op*)lt_buffer_at(&chunk->chunk.code, 0))->arg = p->root->chunk.scope->frame_slots.length;
 
 	lt_Value as_val = LT_VALUE_OBJECT(chunk);
 	return as_val;
@@ -4074,6 +4096,8 @@ lt_Value lt_compile(lt_VM* vm, lt_Parser* p)
 void lt_free_scope(lt_VM* vm, lt_Scope* scope)
 {
 	lt_buffer_destroy(vm, &scope->locals);
+	lt_buffer_destroy(vm, &scope->local_slots);
+	lt_buffer_destroy(vm, &scope->frame_slots);
 	lt_buffer_destroy(vm, &scope->upvals);
 	lt_buffer_destroy(vm, &scope->captured);
 }
@@ -4102,7 +4126,10 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 			if (entry->fn.scope) lt_free_scope(vm, entry->fn.scope);
 			break;
 		case LT_AST_NODE_IF: case LT_AST_NODE_ELSEIF: case LT_AST_NODE_ELSE: lt_buffer_destroy(vm, &entry->branch.body); break;
-		case LT_AST_NODE_WITH: lt_buffer_destroy(vm, &entry->with_stmt.body); break;
+		case LT_AST_NODE_WITH:
+			lt_buffer_destroy(vm, &entry->with_stmt.body);
+			if (entry->with_stmt.scope) lt_free_scope(vm, entry->with_stmt.scope);
+			break;
 		}
 
 		vm->free(entry);
