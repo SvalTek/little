@@ -1,0 +1,77 @@
+var native = loadLibrary("tests/native/native-class")
+var NativeBox = native.NativeBox
+
+class MiddleBox extends NativeBox {
+}
+
+class DeepBox extends MiddleBox {
+}
+
+class SuperDeepBox extends MiddleBox {
+    constructor(value) {
+        super(value)
+    }
+}
+
+class OverrideBox extends NativeBox {
+    override nativeValue() {
+        return 99
+    }
+}
+
+var box = DeepBox(5)
+io.print(typeof box is DeepBox)
+io.print(type box)
+io.print(box.value)
+box.value = 8
+io.print(box.value)
+io.print(box:add(2))
+io.print(box:classContext())
+io.print(box.hidden is null)
+var badReceiver = pcall(fn() { return native.rawNativeValue({}) })
+io.print(not badReceiver.ok)
+var duplicateRegistration = pcall(native.tryDuplicateRegistration)
+io.print(not duplicateRegistration.ok)
+
+var overridden = OverrideBox(3)
+io.print(overridden:nativeValue())
+io.print(overridden.value)
+var superDeep = SuperDeepBox(14)
+io.print(superDeep.value)
+
+var failed = pcall(fn() { return native.BrokenBox() })
+io.print(not failed.ok)
+gc.collect()
+io.print(native.destroyedCount())
+var shutdownProbe = NativeBox(-2)
+
+var disposed = NativeBox(10)
+disposed:dispose()
+gc.collect()
+io.print(native.destroyedCount())
+disposed = null
+
+var external = NativeBox(11)
+external:externalRelease()
+external:dispose()
+external = null
+gc.collect()
+io.print(native.destroyedCount())
+io.print(native.externalCount())
+
+var ephemeralClass = NativeBox
+var ephemeral = ephemeralClass(12)
+native.dropNativeClass()
+native.NativeBox = null
+ephemeralClass = null
+ephemeral = null
+box = null
+overridden = null
+superDeep = null
+NativeBox = null
+MiddleBox = null
+DeepBox = null
+SuperDeepBox = null
+OverrideBox = null
+gc.collect()
+io.print(native.destroyedCount())

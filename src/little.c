@@ -81,6 +81,7 @@ static void _lt_table_mark(lt_VM* vm, lt_Table* table);
 static lt_Value _lt_table_get_raw(lt_Table* table, lt_Value key);
 static lt_Value _lt_table_set_raw(lt_VM* vm, lt_Table* table, lt_Value key, lt_Value val);
 static lt_Value _lt_class_call(lt_VM* vm, lt_Value class_value, uint8_t argc);
+static lt_Value _lt_make_class(lt_VM* vm, lt_Value name);
 static lt_Value _lt_instance_get(lt_VM* vm, lt_Value instance_value, lt_Value key);
 static void _lt_instance_set(lt_VM* vm, lt_Value instance_value, lt_Value key, lt_Value value);
 
@@ -2321,6 +2322,7 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 	
 	vm->heap = lt_buffer_new(sizeof(lt_Object*));
 	vm->keepalive = lt_buffer_new(sizeof(lt_Object*));
+	vm->temporary_roots = lt_buffer_new(sizeof(lt_Object*));
 	vm->native_roots = lt_buffer_new(sizeof(lt_Value));
 	vm->native_libraries = lt_buffer_new(sizeof(lt_NativeLibrary));
 	vm->module_loaders = lt_buffer_new(sizeof(lt_ModuleLoader));
@@ -2337,6 +2339,12 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 void lt_destroy(lt_VM* vm)
 {
 	ltasync_destroy_state(vm);
+	/* Drop every VM root and collect while plugin callbacks are still loaded. */
+	vm->top = 0;
+	vm->keepalive.length = 0;
+	vm->temporary_roots.length = 0;
+	vm->native_roots.length = 0;
+	lt_collect(vm);
 	for (uint32_t i = 0; i < vm->native_libraries.length; ++i)
 	{
 		lt_NativeLibrary* library = lt_buffer_at(&vm->native_libraries, i);
@@ -2345,8 +2353,8 @@ void lt_destroy(lt_VM* vm)
 	lt_buffer_destroy(vm, &vm->native_libraries);
 	lt_buffer_destroy(vm, &vm->module_loaders);
 	lt_buffer_destroy(vm, &vm->keepalive);
+	lt_buffer_destroy(vm, &vm->temporary_roots);
 	lt_buffer_destroy(vm, &vm->native_roots);
-	lt_collect(vm);
 	if (vm->error_trap) vm->free(vm->error_trap);
 	vm->free(vm);
 }
@@ -2407,6 +2415,12 @@ void lt_free(lt_VM* vm, uint32_t heapidx)
 		_lt_table_destroy(vm, &obj->class_def.private_setters);
 	} break;
 	case LT_OBJECT_INSTANCE: {
+		if (obj->instance.native_data && obj->instance.native_data_destroy)
+		{
+			void* data = obj->instance.native_data;
+			obj->instance.native_data = 0;
+			obj->instance.native_data_destroy(data);
+		}
 		_lt_table_destroy(vm, &obj->instance.public_fields);
 		_lt_table_destroy(vm, &obj->instance.private_fields);
 	} break;
@@ -2552,6 +2566,10 @@ uint32_t lt_collect(lt_VM* vm)
 	for (uint32_t i = 0; i < vm->keepalive.length; ++i)
 	{
 		lt_sweep(vm, *(lt_Object**)lt_buffer_at(&vm->keepalive, i));
+	}
+	for (uint32_t i = 0; i < vm->temporary_roots.length; ++i)
+	{
+		lt_sweep(vm, *(lt_Object**)lt_buffer_at(&vm->temporary_roots, i));
 	}
 	for (uint32_t i = 0; i < vm->native_roots.length; ++i)
 	{
@@ -2706,6 +2724,13 @@ static lt_Object* _lt_superclass_of(lt_Object* klass)
 	return klass ? klass->class_def.superclass : 0;
 }
 
+static lt_Value _lt_find_class_constructor(lt_Object* klass)
+{
+	for (lt_Object* current = klass; current; current = _lt_superclass_of(current))
+		if (!LT_IS_NULL(current->class_def.constructor)) return current->class_def.constructor;
+	return LT_VALUE_NULL;
+}
+
 static void _lt_class_set_member(lt_VM* vm, lt_Value class_value, lt_Value key, lt_Value value, int16_t encoded)
 {
 	lt_Object* klass = LT_GET_OBJECT(class_value);
@@ -2755,6 +2780,164 @@ static void _lt_class_set_member(lt_VM* vm, lt_Value class_value, lt_Value key, 
 	else table = visibility == LT_VIS_PRIVATE ? &klass->class_def.private_methods : &klass->class_def.public_methods;
 
 	_lt_table_set_raw(vm, table, key, value);
+}
+
+static uint8_t _lt_native_class_name_valid(const char* name)
+{
+	if (!name || !(isalpha((unsigned char)name[0]) || name[0] == '_')) return 0;
+	for (const unsigned char* c = (const unsigned char*)name + 1; *c; ++c)
+		if (!(isalnum(*c) || *c == '_')) return 0;
+	static const char* reserved[] = {
+		"true", "false", "null", "fn", "async", "await", "class", "extends",
+		"override", "super", "public", "private", "constructor", "get", "set",
+		"break", "var", "global", "if", "else", "elseif", "for", "in", "while",
+		"with", "import", "return", "type", "typeof", "and", "or", "not", 0
+	};
+	for (uint32_t i = 0; reserved[i]; ++i)
+		if (strcmp(name, reserved[i]) == 0) return 0;
+	return 1;
+}
+
+lt_Value lt_class_create(lt_VM* vm, const char* name)
+{
+	if (!_lt_native_class_name_valid(name)) lt_runtime_error(vm, "Native class name must be a Little identifier!");
+	lt_Value klass = _lt_make_class(vm, lt_make_string(vm, name));
+	LT_GET_OBJECT(klass)->class_def.is_native_class = 1;
+	return klass;
+}
+
+static lt_Object* _lt_make_native_class_member(lt_VM* vm, lt_Value klass, lt_NativeFn fn)
+{
+	if (!LT_IS_CLASS(klass) || !LT_GET_OBJECT(klass)->class_def.is_native_class)
+		lt_runtime_error(vm, "Expected native class!");
+	if (!fn) lt_runtime_error(vm, "Native class member callback cannot be null!");
+	lt_Value native = lt_make_native(vm, fn);
+	lt_Object* closure = lt_allocate(vm, LT_OBJECT_CLOSURE);
+	closure->closure.function = native;
+	closure->closure.captures = lt_buffer_new(sizeof(lt_Value));
+	closure->closure.owner_class = LT_GET_OBJECT(klass);
+	return closure;
+}
+
+void lt_class_set_constructor(lt_VM* vm, lt_Value klass, lt_NativeFn fn)
+{
+	lt_Object* member = _lt_make_native_class_member(vm, klass, fn);
+	_lt_class_set_member(vm, klass, lt_make_string(vm, "constructor"), LT_VALUE_OBJECT(member), LT_CLASS_CONSTRUCTOR);
+}
+
+static lt_Table* _lt_native_class_member_table(lt_Object* klass, lt_ClassMemberType type, lt_Visibility visibility)
+{
+	if (type == LT_CLASS_GETTER)
+		return visibility == LT_VIS_PRIVATE ? &klass->class_def.private_getters : &klass->class_def.public_getters;
+	if (type == LT_CLASS_SETTER)
+		return visibility == LT_VIS_PRIVATE ? &klass->class_def.private_setters : &klass->class_def.public_setters;
+	return visibility == LT_VIS_PRIVATE ? &klass->class_def.private_methods : &klass->class_def.public_methods;
+}
+
+static void _lt_native_class_add_member(lt_VM* vm, lt_Value klass_value, const char* name, lt_NativeFn fn,
+	lt_ClassMemberType type, lt_Visibility visibility, uint8_t is_override)
+{
+	if (!LT_IS_CLASS(klass_value) || !LT_GET_OBJECT(klass_value)->class_def.is_native_class)
+		lt_runtime_error(vm, "Expected native class!");
+	if (!_lt_native_class_name_valid(name)) lt_runtime_error(vm, "Native class member name must be a Little identifier!");
+	if (visibility != LT_VIS_PUBLIC && visibility != LT_VIS_PRIVATE)
+		lt_runtime_error(vm, "Invalid native class member visibility!");
+	if (is_override > 1) lt_runtime_error(vm, "Invalid native class override flag!");
+	if (is_override && visibility == LT_VIS_PRIVATE)
+		lt_runtime_error(vm, "Private members cannot be override!");
+	lt_Value key = lt_make_string(vm, name);
+	lt_Object* klass = LT_GET_OBJECT(klass_value);
+	lt_Table* tables[] = {
+		&klass->class_def.public_fields, &klass->class_def.private_fields,
+		&klass->class_def.public_getters, &klass->class_def.private_getters,
+		&klass->class_def.public_setters, &klass->class_def.private_setters,
+		&klass->class_def.public_methods, &klass->class_def.private_methods
+	};
+	lt_ClassMemberType existing_types[] = {
+		LT_CLASS_FIELD, LT_CLASS_FIELD, LT_CLASS_GETTER, LT_CLASS_GETTER,
+		LT_CLASS_SETTER, LT_CLASS_SETTER, LT_CLASS_METHOD, LT_CLASS_METHOD
+	};
+	for (uint32_t i = 0; i < sizeof(tables) / sizeof(tables[0]); ++i)
+	{
+		if (!_lt_table_index_raw(vm, tables[i], key, 0)) continue;
+		if ((type == LT_CLASS_GETTER && existing_types[i] == LT_CLASS_SETTER) ||
+			(type == LT_CLASS_SETTER && existing_types[i] == LT_CLASS_GETTER)) continue;
+		lt_runtime_error(vm, "Class members cannot share a name except matching get/set accessors!");
+	}
+
+	lt_Object* member = _lt_make_native_class_member(vm, klass_value, fn);
+	int16_t encoded = (int16_t)(type | (visibility == LT_VIS_PRIVATE ? 0x10 : 0) | (is_override ? 0x20 : 0));
+	_lt_class_set_member(vm, klass_value, key, LT_VALUE_OBJECT(member), encoded);
+}
+
+void lt_class_add_method(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override)
+{
+	_lt_native_class_add_member(vm, klass, name, fn, LT_CLASS_METHOD, visibility, is_override);
+}
+
+void lt_class_add_getter(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override)
+{
+	_lt_native_class_add_member(vm, klass, name, fn, LT_CLASS_GETTER, visibility, is_override);
+}
+
+void lt_class_add_setter(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override)
+{
+	_lt_native_class_add_member(vm, klass, name, fn, LT_CLASS_SETTER, visibility, is_override);
+}
+
+void lt_class_set_native_data_destroy(lt_VM* vm, lt_Value klass, lt_NativeDataDestroyFn destroy)
+{
+	if (!LT_IS_CLASS(klass) || !LT_GET_OBJECT(klass)->class_def.is_native_class)
+		lt_runtime_error(vm, "Expected native class!");
+	LT_GET_OBJECT(klass)->class_def.native_data_destroy = destroy;
+}
+
+static lt_Object* _lt_validate_native_instance(lt_VM* vm, lt_Value instance_value, lt_Value native_class_value)
+{
+	if (!LT_IS_INSTANCE(instance_value)) lt_runtime_error(vm, "Expected class instance!");
+	if (!LT_IS_CLASS(native_class_value) || !LT_GET_OBJECT(native_class_value)->class_def.is_native_class)
+		lt_runtime_error(vm, "Expected native class!");
+	lt_Object* expected = LT_GET_OBJECT(native_class_value);
+	for (lt_Object* current = LT_GET_OBJECT(instance_value)->instance.klass; current; current = _lt_superclass_of(current))
+		if (current == expected) return LT_GET_OBJECT(instance_value);
+	lt_runtime_error(vm, "Instance is not derived from the requested native class!");
+	return 0;
+}
+
+void lt_instance_set_native_data(lt_VM* vm, lt_Value instance_value, lt_Value native_class_value, void* data)
+{
+	lt_Object* instance = _lt_validate_native_instance(vm, instance_value, native_class_value);
+	if (!data) lt_runtime_error(vm, "Native instance data cannot be null!");
+	if (instance->instance.native_data) lt_runtime_error(vm, "Native instance data is already set!");
+	if (!LT_GET_OBJECT(native_class_value)->class_def.native_data_destroy)
+		lt_runtime_error(vm, "Native class has no instance data destroy callback!");
+	instance->instance.native_data = data;
+	instance->instance.native_data_destroy = LT_GET_OBJECT(native_class_value)->class_def.native_data_destroy;
+}
+
+void* lt_instance_get_native_data(lt_VM* vm, lt_Value instance_value, lt_Value native_class_value)
+{
+	lt_Object* instance = _lt_validate_native_instance(vm, instance_value, native_class_value);
+	return instance->instance.native_data;
+}
+
+void lt_instance_dispose_native_data(lt_VM* vm, lt_Value instance_value)
+{
+	if (!LT_IS_INSTANCE(instance_value)) lt_runtime_error(vm, "Expected class instance!");
+	lt_Object* instance = LT_GET_OBJECT(instance_value);
+	void* data = instance->instance.native_data;
+	lt_NativeDataDestroyFn destroy = instance->instance.native_data_destroy;
+	instance->instance.native_data = 0;
+	instance->instance.native_data_destroy = 0;
+	if (data && destroy) destroy(data);
+}
+
+void lt_instance_clear_native_data(lt_VM* vm, lt_Value instance_value)
+{
+	if (!LT_IS_INSTANCE(instance_value)) lt_runtime_error(vm, "Expected class instance!");
+	lt_Object* instance = LT_GET_OBJECT(instance_value);
+	instance->instance.native_data = 0;
+	instance->instance.native_data_destroy = 0;
 }
 
 static lt_Value _lt_make_class(lt_VM* vm, lt_Value name)
@@ -2825,12 +3008,16 @@ static lt_Value _lt_class_call(lt_VM* vm, lt_Value class_value, uint8_t argc)
 {
 	lt_Object* klass = LT_GET_OBJECT(class_value);
 	lt_Value instance = _lt_make_instance(vm, klass);
-	lt_nocollect(vm, LT_GET_OBJECT(instance));
+	uint32_t root_mark = vm->temporary_roots.length;
+	lt_Object* instance_obj = LT_GET_OBJECT(instance);
+	lt_buffer_push(vm, &vm->temporary_roots, &instance_obj);
 	uint16_t base = vm->top - argc;
 
 	_lt_run_class_field_initializers(vm, instance, klass);
 
-	if (!LT_IS_NULL(klass->class_def.constructor))
+	lt_Value constructor = _lt_find_class_constructor(klass);
+
+	if (!LT_IS_NULL(constructor))
 	{
 		for (uint8_t i = 0; i < argc; ++i)
 			vm->stack[vm->top - i] = vm->stack[vm->top - i - 1];
@@ -2838,22 +3025,12 @@ static lt_Value _lt_class_call(lt_VM* vm, lt_Value class_value, uint8_t argc)
 		vm->top++;
 		if (vm->top > LT_STACK_SIZE) lt_runtime_error(vm, "VM stack overflow!");
 
-		uint16_t nret = lt_exec_internal(vm, klass->class_def.constructor, argc + 1);
-		while (nret-- > 0) lt_pop(vm);
-	}
-	else if (klass->class_def.superclass && !LT_IS_NULL(klass->class_def.superclass->class_def.constructor))
-	{
-		for (uint8_t i = 0; i < argc; ++i)
-			vm->stack[vm->top - i] = vm->stack[vm->top - i - 1];
-		vm->stack[base] = instance;
-		vm->top++;
-		if (vm->top > LT_STACK_SIZE) lt_runtime_error(vm, "VM stack overflow!");
-		uint16_t nret = lt_exec_internal(vm, klass->class_def.superclass->class_def.constructor, argc + 1);
+		uint16_t nret = lt_exec_internal(vm, constructor, argc + 1);
 		while (nret-- > 0) lt_pop(vm);
 	}
 
 	vm->top = base;
-	lt_resumecollect(vm, LT_GET_OBJECT(instance));
+	vm->temporary_roots.length = root_mark;
 	return instance;
 }
 
@@ -2971,6 +3148,7 @@ uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 	uint16_t base = vm->top - argc;
 	uint16_t saved_depth = vm->depth;
 	uint32_t root_mark = vm->native_roots.length;
+	uint32_t temporary_root_mark = vm->temporary_roots.length;
 	uint32_t saved_root_floor = vm->native_root_floor;
 	lt_Frame* saved_current = vm->current;
 	void* saved_error_buf = vm->error_buf;
@@ -2992,6 +3170,7 @@ uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 		vm->depth = saved_depth;
 		vm->current = saved_current;
 		vm->native_roots.length = root_mark;
+		vm->temporary_roots.length = temporary_root_mark;
 		vm->native_root_floor = saved_root_floor;
 		vm->error_buf = saved_error_buf;
 		return 0;
@@ -3426,7 +3605,8 @@ inst_loop:
 	case LT_OP_SUPERC: {
 		if (!frame->class_context || !frame->class_context->class_def.superclass) lt_runtime_error(vm, "No superclass constructor to call!");
 		lt_Object* superclass = frame->class_context->class_def.superclass;
-		if (LT_IS_NULL(superclass->class_def.constructor)) lt_runtime_error(vm, "Superclass has no constructor!");
+		lt_Value constructor = _lt_find_class_constructor(superclass);
+		if (LT_IS_NULL(constructor)) lt_runtime_error(vm, "Superclass has no constructor!");
 		uint8_t argc = (uint8_t)current.arg;
 		uint16_t base = vm->top - argc;
 		for (uint8_t i = 0; i < argc; ++i)
@@ -3434,7 +3614,7 @@ inst_loop:
 		vm->stack[base] = vm->stack[frame->start];
 		vm->top++;
 		if (vm->top > LT_STACK_SIZE) lt_runtime_error(vm, "VM stack overflow!");
-		uint16_t nret = lt_exec_internal(vm, superclass->class_def.constructor, argc + 1);
+		uint16_t nret = lt_exec_internal(vm, constructor, argc + 1);
 		while (nret-- > 0) lt_pop(vm);
 		PUSH(LT_VALUE_NULL);
 		vm->last_call_returns = 1;
