@@ -324,6 +324,10 @@ with counter {
 
 This is equivalent to evaluating `counter` into a hidden local and using that local as the receiver for each `@name` access. Nested `with` blocks temporarily replace the active receiver.
 
+A `with` body has its own lexical block scope. Locals declared in the body are available inside it and in nested blocks, but not after its closing brace. A local declared in a `with` body may shadow an outer local; the outer local is visible again after the block. The expression after `with` is evaluated in the surrounding scope before the new receiver becomes active.
+
+Names matching `__with` followed by digits are reserved for generated receiver locals when using `with`; user code should not declare locals with those names in a `with` body.
+
 ## Constructor Field Parameters
 
 Class constructor parameters may start with `@`. These parameters are automatically assigned to fields with the same name before the constructor body runs.
