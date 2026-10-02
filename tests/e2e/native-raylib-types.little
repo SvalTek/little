@@ -1,0 +1,84 @@
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+var a = ray.Vector2(3, 4)
+io.print(typeof a is ray.Vector2)
+io.print(type a)
+io.print(a.x)
+io.print(a.y)
+io.print(a:length())
+io.print(a:lengthSq())
+io.print(a:toString())
+
+var b = a:add(ray.Vector2(1, 1))
+io.print(b:toString())
+io.print(a:toString())
+b.x = 10
+io.print(b.x)
+io.print(a.x)
+io.print(a:clone():equals(a))
+io.print(a:equals(ray.Vector2(3, 4)))
+io.print(a is ray.Vector2(3, 4))
+
+var fromTable = ray.Vector2 {
+    x: 1
+    y: 2
+}
+io.print(fromTable:toString())
+
+var scaled = ray.Vector2(2, 0):scale(3):sub(ray.Vector2(1, 0))
+io.print(scaled:toString())
+io.print(ray.Vector2(0, 0):normalize():toString())
+io.print(ray.Vector2(3, 4):normalize():length())
+
+var color = ray.Color {
+    r: 255
+    g: 100
+    b: 50
+}
+io.print(color:toString())
+io.print(color:equals(ray.Color(255, 100, 50)))
+io.print(color:equals(ray.Color(255, 100, 51)))
+io.print(color:withAlpha(128):toString())
+color.r = 300
+io.print(color.r)
+color.a = -5
+io.print(color.a)
+
+var v3 = ray.Vector3(1, 2, 3)
+io.print(v3:toString())
+io.print(v3:cross(ray.Vector3(1, 0, 0)):toString())
+io.print(v3:dot(ray.Vector3(1, 1, 1)))
+io.print(v3:length())
+io.print(v3:lengthSq())
+io.print(v3.z)
+v3.z = 6
+io.print(v3:toString())
+
+var rect = ray.Rectangle(10, 20, 100, 50)
+io.print(rect:toString())
+io.print(rect:contains(ray.Vector2(20, 30)))
+io.print(rect:contains(ray.Vector2(200, 30)))
+io.print(rect:center():toString())
+io.print(rect.width)
+rect.width = 30
+io.print(rect:toString())
+
+io.print(ray.colors.red:toString())
+io.print(ray.colors.blank:toString())
+io.print(ray.colors.night is null)
+
+var missingMember = ray.Vector2(1, 2).z
+io.print(missingMember is null)
+var badConstructor = pcall(fn() { return ray.Color("red") })
+io.print(badConstructor.ok)
+var tooMany = pcall(fn() { return ray.Vector2(1, 2, 3) })
+io.print(tooMany.ok)
+var badAdd = pcall(fn() { return ray.Vector2(1, 2):add(3) })
+io.print(badAdd.ok)
+var badSetter = pcall(fn() {
+    var temp = ray.Vector2(1, 2)
+    temp.x = "wide"
+})
+io.print(badSetter.ok)
+var badTableField = pcall(fn() { return ray.Color({ r: "red" }) })
+io.print(badTableField.ok)

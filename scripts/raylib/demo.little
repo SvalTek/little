@@ -10,6 +10,10 @@ var ray = loadLibrary("nativelib/raylib/build/raylib")
 
 ray.open(800, 450, "little + raylib")
 
+var background = ray.Color(20, 20, 30)
+var accent = ray.Color(255, 100, 50)
+var label = ray.Vector2(10, 60)
+var body = ray.Rectangle(10, 200, 120, 40)
 var x = 10.0
 
 ray.on("start", fn() {
@@ -22,9 +26,10 @@ ray.on("update", fn(dt) {
     if x > 680.0 {
         x = 10.0
     }
-    ray.clear({ r: 20, g: 20, b: 30 })
-    ray.rect(x, 200, 120, 40, { r: 255, g: 100, b: 50 })
-    ray.text("little + raylib", 10, 60, 20, ray.white)
+    body.x = x
+    ray.clear(background)
+    ray.rect(body, accent)
+    ray.text("little + raylib", label, 20, ray.colors.white)
     if ray.keyPressed(ray.keys.escape) {
         ray.close()
     }

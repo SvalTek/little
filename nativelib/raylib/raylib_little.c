@@ -2,6 +2,8 @@
 
 #include "raylib.h"
 
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -42,6 +44,40 @@ static Color clear_color = { 0, 0, 0, 255 };
 static RayCommand commands[RAY_MAX_COMMANDS];
 static uint32_t command_count = 0;
 
+/* raylib's value structs are exposed as native-backed Little classes. Little
+   has a fixed type set, so each instance carries the struct as its native
+   payload: `typeof v` is the class, fields dispatch through getters/setters,
+   and the payload is freed by the class destroy callback on collection. */
+typedef struct {
+    double x;
+    double y;
+} LtVector2;
+
+typedef struct {
+    double x;
+    double y;
+    double z;
+} LtVector3;
+
+typedef struct {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint8_t a;
+} LtColor;
+
+typedef struct {
+    double x;
+    double y;
+    double width;
+    double height;
+} LtRectangle;
+
+static lt_Value vector2_class = LT_VALUE_NULL;
+static lt_Value vector3_class = LT_VALUE_NULL;
+static lt_Value color_class = LT_VALUE_NULL;
+static lt_Value rectangle_class = LT_VALUE_NULL;
+
 static void expect_number(lt_VM* vm, lt_Value value, const char* message)
 {
     if (!LT_IS_NUMBER(value)) lt->runtime_error(vm, message);
@@ -64,24 +100,556 @@ static void expect_callable(lt_VM* vm, lt_Value value, const char* message)
     lt->runtime_error(vm, message);
 }
 
-static uint8_t color_channel(lt_VM* vm, lt_Value channel, const char* message)
+static void destroy_native_data(void* data)
 {
-    expect_number(vm, channel, message);
-    double n = lt->get_number(channel);
-    if (n < 0) n = 0;
-    if (n > 255) n = 255;
-    return (uint8_t)n;
+    free(data);
+}
+
+#define RAY_DATA_ACCESSOR(function_name, data_type, class_slot)                         \
+    static data_type* function_name(lt_VM* vm, lt_Value value, const char* message)     \
+    {                                                                                   \
+        data_type* data = 0;                                                            \
+        if (LT_IS_INSTANCE(value)) data = lt->instance_get_native_data(vm, value, class_slot); \
+        if (!data) lt->runtime_error(vm, message);                                      \
+        return data;                                                                    \
+    }
+
+RAY_DATA_ACCESSOR(vector2_data, LtVector2, vector2_class)
+RAY_DATA_ACCESSOR(vector3_data, LtVector3, vector3_class)
+RAY_DATA_ACCESSOR(color_data, LtColor, color_class)
+RAY_DATA_ACCESSOR(rectangle_data, LtRectangle, rectangle_class)
+
+static void* allocate_native_data(lt_VM* vm, size_t size)
+{
+    void* data = malloc(size);
+    if (!data) lt->runtime_error(vm, "Out of memory!");
+    return data;
+}
+
+/* Builds a native-class instance by re-entering the VM. Constructors push no
+   return values, so a successful call yields exactly the instance. */
+static lt_Value construct(lt_VM* vm, lt_Value klass, const double* args, uint8_t count)
+{
+    for (uint8_t i = 0; i < count; ++i) lt->push(vm, lt->make_number(args[i]));
+    uint16_t returns = lt->exec(vm, klass, count);
+    if (returns == 0) return LT_VALUE_NULL;
+    return lt->pop(vm);
+}
+
+static lt_Value make_vector2(lt_VM* vm, double x, double y)
+{
+    double args[2] = { x, y };
+    return construct(vm, vector2_class, args, 2);
+}
+
+static lt_Value make_vector3(lt_VM* vm, double x, double y, double z)
+{
+    double args[3] = { x, y, z };
+    return construct(vm, vector3_class, args, 3);
+}
+
+static lt_Value make_color(lt_VM* vm, double r, double g, double b, double a)
+{
+    double args[4] = { r, g, b, a };
+    return construct(vm, color_class, args, 4);
+}
+
+static double table_field_number(lt_VM* vm, lt_Value table, const char* key, double fallback, const char* message)
+{
+    lt_Value value = lt->table_get(vm, table, lt->make_string(vm, key));
+    if (LT_IS_NULL(value)) return fallback;
+    if (!LT_IS_NUMBER(value)) lt->runtime_error(vm, message);
+    return lt->get_number(value);
+}
+
+/* Fills `values`, seeded with defaults, from either one table argument or
+   leading positional numbers. The instance is left for the constructor to pop. */
+static void read_constructor_fields(lt_VM* vm, uint8_t argc, const char* type_name, const char* const* keys, uint8_t field_count, double* values)
+{
+    uint8_t count = (uint8_t)(argc - 1);
+    char message[96];
+    if (count == 1)
+    {
+        lt_Value source = lt->pop(vm);
+        if (LT_IS_TABLE(source))
+        {
+            for (uint8_t i = 0; i < field_count; ++i)
+            {
+                snprintf(message, sizeof(message), "Expected %s %s to be number!", type_name, keys[i]);
+                values[i] = table_field_number(vm, source, keys[i], values[i], message);
+            }
+            return;
+        }
+        snprintf(message, sizeof(message), "Expected %s %s to be number!", type_name, keys[0]);
+        expect_number(vm, source, message);
+        values[0] = lt->get_number(source);
+        return;
+    }
+    if (count == 0) return;
+    if (count > field_count)
+    {
+        snprintf(message, sizeof(message), "Expected at most %u values for %s!", field_count, type_name);
+        lt->runtime_error(vm, message);
+    }
+    lt_Value raw[4];
+    for (uint8_t i = count; i > 0; --i) raw[i - 1] = lt->pop(vm);
+    for (uint8_t i = 0; i < count; ++i)
+    {
+        snprintf(message, sizeof(message), "Expected %s %s to be number!", type_name, keys[i]);
+        expect_number(vm, raw[i], message);
+        values[i] = lt->get_number(raw[i]);
+    }
+}
+
+static uint8_t vector2_constructor(lt_VM* vm, uint8_t argc)
+{
+    static const char* const keys[] = { "x", "y" };
+    if (argc > 3) lt->runtime_error(vm, "Expected a table or x, y numbers for Vector2!");
+    double values[2] = { 0, 0 };
+    read_constructor_fields(vm, argc, "Vector2", keys, 2, values);
+    lt_Value instance = lt->pop(vm);
+    LtVector2* data = allocate_native_data(vm, sizeof(LtVector2));
+    data->x = values[0];
+    data->y = values[1];
+    lt->instance_set_native_data(vm, instance, vector2_class, data);
+    return 0;
+}
+
+static uint8_t vector3_constructor(lt_VM* vm, uint8_t argc)
+{
+    static const char* const keys[] = { "x", "y", "z" };
+    if (argc > 4) lt->runtime_error(vm, "Expected a table or x, y, z numbers for Vector3!");
+    double values[3] = { 0, 0, 0 };
+    read_constructor_fields(vm, argc, "Vector3", keys, 3, values);
+    lt_Value instance = lt->pop(vm);
+    LtVector3* data = allocate_native_data(vm, sizeof(LtVector3));
+    data->x = values[0];
+    data->y = values[1];
+    data->z = values[2];
+    lt->instance_set_native_data(vm, instance, vector3_class, data);
+    return 0;
+}
+
+static uint8_t color_constructor(lt_VM* vm, uint8_t argc)
+{
+    static const char* const keys[] = { "r", "g", "b", "a" };
+    if (argc > 5) lt->runtime_error(vm, "Expected a table or r, g, b, a numbers for Color!");
+    double values[4] = { 0, 0, 0, 255 };
+    read_constructor_fields(vm, argc, "Color", keys, 4, values);
+    lt_Value instance = lt->pop(vm);
+    LtColor* data = allocate_native_data(vm, sizeof(LtColor));
+    data->r = (uint8_t)(values[0] < 0 ? 0 : values[0] > 255 ? 255 : values[0]);
+    data->g = (uint8_t)(values[1] < 0 ? 0 : values[1] > 255 ? 255 : values[1]);
+    data->b = (uint8_t)(values[2] < 0 ? 0 : values[2] > 255 ? 255 : values[2]);
+    data->a = (uint8_t)(values[3] < 0 ? 0 : values[3] > 255 ? 255 : values[3]);
+    lt->instance_set_native_data(vm, instance, color_class, data);
+    return 0;
+}
+
+static uint8_t rectangle_constructor(lt_VM* vm, uint8_t argc)
+{
+    static const char* const keys[] = { "x", "y", "width", "height" };
+    if (argc > 5) lt->runtime_error(vm, "Expected a table or x, y, width, height numbers for Rectangle!");
+    double values[4] = { 0, 0, 0, 0 };
+    read_constructor_fields(vm, argc, "Rectangle", keys, 4, values);
+    lt_Value instance = lt->pop(vm);
+    LtRectangle* data = allocate_native_data(vm, sizeof(LtRectangle));
+    data->x = values[0];
+    data->y = values[1];
+    data->width = values[2];
+    data->height = values[3];
+    lt->instance_set_native_data(vm, instance, rectangle_class, data);
+    return 0;
+}
+
+#define RAY_NUMBER_GETTER(function_name, data_type, accessor, field, type_name)         \
+    static uint8_t function_name(lt_VM* vm, uint8_t argc)                               \
+    {                                                                                   \
+        if (argc != 1) lt->runtime_error(vm, #field " getter expects no arguments!");    \
+        data_type* data = accessor(vm, lt->pop(vm), "Expected a " type_name "!");        \
+        lt->push(vm, lt->make_number(data->field));                                      \
+        return 1;                                                                        \
+    }
+
+#define RAY_NUMBER_SETTER(function_name, data_type, accessor, field, type_name)         \
+    static uint8_t function_name(lt_VM* vm, uint8_t argc)                               \
+    {                                                                                   \
+        if (argc != 2) lt->runtime_error(vm, #field " setter expects one value!");        \
+        lt_Value raw = lt->pop(vm);                                                       \
+        expect_number(vm, raw, "Expected a number for " #field "!");                      \
+        double value = lt->get_number(raw);                                               \
+        data_type* data = accessor(vm, lt->pop(vm), "Expected a " type_name "!");         \
+        data->field = value;                                                              \
+        return 0;                                                                          \
+    }
+
+#define RAY_CHANNEL_SETTER(function_name, field)                                        \
+    static uint8_t function_name(lt_VM* vm, uint8_t argc)                               \
+    {                                                                                   \
+        if (argc != 2) lt->runtime_error(vm, #field " setter expects one value!");        \
+        lt_Value raw = lt->pop(vm);                                                       \
+        expect_number(vm, raw, "Expected a number for " #field "!");                      \
+        double value = lt->get_number(raw);                                               \
+        if (value < 0) value = 0;                                                         \
+        if (value > 255) value = 255;                                                     \
+        LtColor* data = color_data(vm, lt->pop(vm), "Expected a Color!");                 \
+        data->field = (uint8_t)value;                                                     \
+        return 0;                                                                          \
+    }
+
+RAY_NUMBER_GETTER(vector2_get_x, LtVector2, vector2_data, x, "Vector2")
+RAY_NUMBER_SETTER(vector2_set_x, LtVector2, vector2_data, x, "Vector2")
+RAY_NUMBER_GETTER(vector2_get_y, LtVector2, vector2_data, y, "Vector2")
+RAY_NUMBER_SETTER(vector2_set_y, LtVector2, vector2_data, y, "Vector2")
+
+RAY_NUMBER_GETTER(vector3_get_x, LtVector3, vector3_data, x, "Vector3")
+RAY_NUMBER_SETTER(vector3_set_x, LtVector3, vector3_data, x, "Vector3")
+RAY_NUMBER_GETTER(vector3_get_y, LtVector3, vector3_data, y, "Vector3")
+RAY_NUMBER_SETTER(vector3_set_y, LtVector3, vector3_data, y, "Vector3")
+RAY_NUMBER_GETTER(vector3_get_z, LtVector3, vector3_data, z, "Vector3")
+RAY_NUMBER_SETTER(vector3_set_z, LtVector3, vector3_data, z, "Vector3")
+
+RAY_NUMBER_GETTER(color_get_r, LtColor, color_data, r, "Color")
+RAY_CHANNEL_SETTER(color_set_r, r)
+RAY_NUMBER_GETTER(color_get_g, LtColor, color_data, g, "Color")
+RAY_CHANNEL_SETTER(color_set_g, g)
+RAY_NUMBER_GETTER(color_get_b, LtColor, color_data, b, "Color")
+RAY_CHANNEL_SETTER(color_set_b, b)
+RAY_NUMBER_GETTER(color_get_a, LtColor, color_data, a, "Color")
+RAY_CHANNEL_SETTER(color_set_a, a)
+
+RAY_NUMBER_GETTER(rectangle_get_x, LtRectangle, rectangle_data, x, "Rectangle")
+RAY_NUMBER_SETTER(rectangle_set_x, LtRectangle, rectangle_data, x, "Rectangle")
+RAY_NUMBER_GETTER(rectangle_get_y, LtRectangle, rectangle_data, y, "Rectangle")
+RAY_NUMBER_SETTER(rectangle_set_y, LtRectangle, rectangle_data, y, "Rectangle")
+RAY_NUMBER_GETTER(rectangle_get_width, LtRectangle, rectangle_data, width, "Rectangle")
+RAY_NUMBER_SETTER(rectangle_set_width, LtRectangle, rectangle_data, width, "Rectangle")
+RAY_NUMBER_GETTER(rectangle_get_height, LtRectangle, rectangle_data, height, "Rectangle")
+RAY_NUMBER_SETTER(rectangle_set_height, LtRectangle, rectangle_data, height, "Rectangle")
+
+static lt_Value make_boolean(uint8_t value)
+{
+    return value ? LT_VALUE_TRUE : LT_VALUE_FALSE;
+}
+
+static double vector2_length_value(LtVector2* data)
+{
+    return sqrt(data->x * data->x + data->y * data->y);
+}
+
+static uint8_t vector2_add(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "add expects one Vector2!");
+    LtVector2* other = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    lt->push(vm, make_vector2(vm, self->x + other->x, self->y + other->y));
+    return 1;
+}
+
+static uint8_t vector2_sub(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "sub expects one Vector2!");
+    LtVector2* other = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    lt->push(vm, make_vector2(vm, self->x - other->x, self->y - other->y));
+    return 1;
+}
+
+static uint8_t vector2_mul(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "mul expects one Vector2!");
+    LtVector2* other = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    lt->push(vm, make_vector2(vm, self->x * other->x, self->y * other->y));
+    return 1;
+}
+
+static uint8_t vector2_scale(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "scale expects one number!");
+    lt_Value raw = lt->pop(vm);
+    expect_number(vm, raw, "Expected a number to scale by!");
+    double amount = lt->get_number(raw);
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    lt->push(vm, make_vector2(vm, self->x * amount, self->y * amount));
+    return 1;
+}
+
+static uint8_t vector2_dot(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "dot expects one Vector2!");
+    LtVector2* other = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    lt->push(vm, lt->make_number(self->x * other->x + self->y * other->y));
+    return 1;
+}
+
+static uint8_t vector2_length(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "length expects no arguments!");
+    lt->push(vm, lt->make_number(vector2_length_value(vector2_data(vm, lt->pop(vm), "Expected a Vector2!"))));
+    return 1;
+}
+
+static uint8_t vector2_length_sq(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "lengthSq expects no arguments!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    lt->push(vm, lt->make_number(self->x * self->x + self->y * self->y));
+    return 1;
+}
+
+static uint8_t vector2_normalize(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "normalize expects no arguments!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    double length = vector2_length_value(self);
+    if (length == 0) lt->push(vm, make_vector2(vm, 0, 0));
+    else lt->push(vm, make_vector2(vm, self->x / length, self->y / length));
+    return 1;
+}
+
+static uint8_t vector2_distance(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "distance expects one Vector2!");
+    LtVector2* other = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    double dx = self->x - other->x;
+    double dy = self->y - other->y;
+    lt->push(vm, lt->make_number(sqrt(dx * dx + dy * dy)));
+    return 1;
+}
+
+static uint8_t vector2_clone(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "clone expects no arguments!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    lt->push(vm, make_vector2(vm, self->x, self->y));
+    return 1;
+}
+
+static uint8_t vector2_equals(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "equals expects one Vector2!");
+    LtVector2* other = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    lt->push(vm, make_boolean(self->x == other->x && self->y == other->y));
+    return 1;
+}
+
+static uint8_t vector2_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    char text[64];
+    snprintf(text, sizeof(text), "(%g, %g)", self->x, self->y);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static double vector3_length_value(LtVector3* data)
+{
+    return sqrt(data->x * data->x + data->y * data->y + data->z * data->z);
+}
+
+static uint8_t vector3_add(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "add expects one Vector3!");
+    LtVector3* other = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    lt->push(vm, make_vector3(vm, self->x + other->x, self->y + other->y, self->z + other->z));
+    return 1;
+}
+
+static uint8_t vector3_sub(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "sub expects one Vector3!");
+    LtVector3* other = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    lt->push(vm, make_vector3(vm, self->x - other->x, self->y - other->y, self->z - other->z));
+    return 1;
+}
+
+static uint8_t vector3_mul(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "mul expects one Vector3!");
+    LtVector3* other = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    lt->push(vm, make_vector3(vm, self->x * other->x, self->y * other->y, self->z * other->z));
+    return 1;
+}
+
+static uint8_t vector3_scale(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "scale expects one number!");
+    lt_Value raw = lt->pop(vm);
+    expect_number(vm, raw, "Expected a number to scale by!");
+    double amount = lt->get_number(raw);
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    lt->push(vm, make_vector3(vm, self->x * amount, self->y * amount, self->z * amount));
+    return 1;
+}
+
+static uint8_t vector3_dot(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "dot expects one Vector3!");
+    LtVector3* other = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    lt->push(vm, lt->make_number(self->x * other->x + self->y * other->y + self->z * other->z));
+    return 1;
+}
+
+static uint8_t vector3_cross(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "cross expects one Vector3!");
+    LtVector3* other = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    double x = self->y * other->z - self->z * other->y;
+    double y = self->z * other->x - self->x * other->z;
+    double z = self->x * other->y - self->y * other->x;
+    lt->push(vm, make_vector3(vm, x, y, z));
+    return 1;
+}
+
+static uint8_t vector3_length(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "length expects no arguments!");
+    lt->push(vm, lt->make_number(vector3_length_value(vector3_data(vm, lt->pop(vm), "Expected a Vector3!"))));
+    return 1;
+}
+
+static uint8_t vector3_length_sq(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "lengthSq expects no arguments!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    lt->push(vm, lt->make_number(self->x * self->x + self->y * self->y + self->z * self->z));
+    return 1;
+}
+
+static uint8_t vector3_normalize(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "normalize expects no arguments!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    double length = vector3_length_value(self);
+    if (length == 0) lt->push(vm, make_vector3(vm, 0, 0, 0));
+    else lt->push(vm, make_vector3(vm, self->x / length, self->y / length, self->z / length));
+    return 1;
+}
+
+static uint8_t vector3_distance(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "distance expects one Vector3!");
+    LtVector3* other = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    double dx = self->x - other->x;
+    double dy = self->y - other->y;
+    double dz = self->z - other->z;
+    lt->push(vm, lt->make_number(sqrt(dx * dx + dy * dy + dz * dz)));
+    return 1;
+}
+
+static uint8_t vector3_clone(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "clone expects no arguments!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    lt->push(vm, make_vector3(vm, self->x, self->y, self->z));
+    return 1;
+}
+
+static uint8_t vector3_equals(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "equals expects one Vector3!");
+    LtVector3* other = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    lt->push(vm, make_boolean(self->x == other->x && self->y == other->y && self->z == other->z));
+    return 1;
+}
+
+static uint8_t vector3_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    char text[80];
+    snprintf(text, sizeof(text), "(%g, %g, %g)", self->x, self->y, self->z);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t color_equals(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "equals expects one Color!");
+    LtColor* other = color_data(vm, lt->pop(vm), "Expected a Color!");
+    LtColor* self = color_data(vm, lt->pop(vm), "Expected a Color!");
+    lt->push(vm, make_boolean(self->r == other->r && self->g == other->g && self->b == other->b && self->a == other->a));
+    return 1;
+}
+
+static uint8_t color_with_alpha(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "withAlpha expects one number!");
+    lt_Value raw = lt->pop(vm);
+    expect_number(vm, raw, "Expected an alpha number!");
+    double alpha = lt->get_number(raw);
+    LtColor* self = color_data(vm, lt->pop(vm), "Expected a Color!");
+    lt->push(vm, make_color(vm, self->r, self->g, self->b, alpha));
+    return 1;
+}
+
+static uint8_t color_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    LtColor* self = color_data(vm, lt->pop(vm), "Expected a Color!");
+    char text[64];
+    snprintf(text, sizeof(text), "rgba(%u, %u, %u, %u)", (unsigned)self->r, (unsigned)self->g, (unsigned)self->b, (unsigned)self->a);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t rectangle_equals(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "equals expects one Rectangle!");
+    LtRectangle* other = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle!");
+    LtRectangle* self = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle!");
+    lt->push(vm, make_boolean(self->x == other->x && self->y == other->y && self->width == other->width && self->height == other->height));
+    return 1;
+}
+
+static uint8_t rectangle_contains(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "contains expects one Vector2!");
+    LtVector2* point = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    LtRectangle* self = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle!");
+    lt->push(vm, make_boolean(point->x >= self->x && point->x <= self->x + self->width
+        && point->y >= self->y && point->y <= self->y + self->height));
+    return 1;
+}
+
+static uint8_t rectangle_center(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "center expects no arguments!");
+    LtRectangle* self = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle!");
+    lt->push(vm, make_vector2(vm, self->x + self->width / 2.0, self->y + self->height / 2.0));
+    return 1;
+}
+
+static uint8_t rectangle_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    LtRectangle* self = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle!");
+    char text[96];
+    snprintf(text, sizeof(text), "(%g, %g, %g, %g)", self->x, self->y, self->width, self->height);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
 }
 
 static Color expect_color(lt_VM* vm, lt_Value value, const char* message)
 {
-    Color color = { 255, 255, 255, 255 };
-    if (!LT_IS_TABLE(value)) lt->runtime_error(vm, message);
-    color.r = color_channel(vm, lt->table_get(vm, value, lt->make_string(vm, "r")), message);
-    color.g = color_channel(vm, lt->table_get(vm, value, lt->make_string(vm, "g")), message);
-    color.b = color_channel(vm, lt->table_get(vm, value, lt->make_string(vm, "b")), message);
-    lt_Value alpha = lt->table_get(vm, value, lt->make_string(vm, "a"));
-    if (!LT_IS_NULL(alpha)) color.a = color_channel(vm, alpha, message);
+    LtColor* source = color_data(vm, value, message);
+    Color color;
+    color.r = source->r;
+    color.g = source->g;
+    color.b = source->b;
+    color.a = source->a;
     return color;
 }
 
@@ -220,34 +788,29 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
 
 static uint8_t native_clear(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 1) lt->runtime_error(vm, "Expected color for ray.clear!");
+    if (argc != 1) lt->runtime_error(vm, "Expected a Color for ray.clear!");
     lt_Value color = lt->pop(vm);
     if (!window_open) lt->runtime_error(vm, "Expected ray.open before ray.clear!");
-    clear_color = expect_color(vm, color, "Expected ray color table with r, g, b!");
+    clear_color = expect_color(vm, color, "Expected a Color for ray.clear!");
     has_clear = 1;
     return 0;
 }
 
 static uint8_t native_rect(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 5) lt->runtime_error(vm, "Expected x, y, width, height, and color for ray.rect!");
-    lt_Value color = lt->pop(vm);
-    lt_Value height = lt->pop(vm);
-    lt_Value width = lt->pop(vm);
-    lt_Value y = lt->pop(vm);
-    lt_Value x = lt->pop(vm);
-    expect_number(vm, x, "Expected ray rect x to be number!");
-    expect_number(vm, y, "Expected ray rect y to be number!");
-    expect_number(vm, width, "Expected ray rect width to be number!");
-    expect_number(vm, height, "Expected ray rect height to be number!");
+    if (argc != 2) lt->runtime_error(vm, "Expected a Rectangle and a Color for ray.rect!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value bounds_value = lt->pop(vm);
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.rect!");
+    LtRectangle* bounds = rectangle_data(vm, bounds_value, "Expected a Rectangle for ray.rect!");
     RayCommand command;
     command.kind = RAY_CMD_RECT;
-    command.x = (int)lt->get_number(x);
-    command.y = (int)lt->get_number(y);
-    command.w = (int)lt->get_number(width);
-    command.h = (int)lt->get_number(height);
+    command.x = (int)bounds->x;
+    command.y = (int)bounds->y;
+    command.w = (int)bounds->width;
+    command.h = (int)bounds->height;
     command.size = 0;
-    command.color = expect_color(vm, color, "Expected ray color table with r, g, b!");
+    command.color = color;
     command.text = 0;
     require_draw_target(vm);
     push_command(command);
@@ -256,26 +819,26 @@ static uint8_t native_rect(lt_VM* vm, uint8_t argc)
 
 static uint8_t native_text(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 5) lt->runtime_error(vm, "Expected text, x, y, size, and color for ray.text!");
-    lt_Value color = lt->pop(vm);
-    lt_Value size = lt->pop(vm);
-    lt_Value y = lt->pop(vm);
-    lt_Value x = lt->pop(vm);
+    if (argc != 4) lt->runtime_error(vm, "Expected text, a Vector2, a size, and a Color for ray.text!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value size_value = lt->pop(vm);
+    lt_Value position_value = lt->pop(vm);
     lt_Value message = lt->pop(vm);
     expect_string(vm, message, "Expected ray text to be string!");
-    expect_number(vm, x, "Expected ray text x to be number!");
-    expect_number(vm, y, "Expected ray text y to be number!");
-    expect_number(vm, size, "Expected ray text size to be number!");
+    expect_number(vm, size_value, "Expected ray text size to be number!");
+    int size = (int)lt->get_number(size_value);
+    if (size <= 0) lt->runtime_error(vm, "Expected ray text size to be positive!");
+    LtVector2* position = vector2_data(vm, position_value, "Expected a Vector2 for ray.text!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.text!");
+    require_draw_target(vm);
     RayCommand command;
     command.kind = RAY_CMD_TEXT;
-    command.x = (int)lt->get_number(x);
-    command.y = (int)lt->get_number(y);
+    command.x = (int)position->x;
+    command.y = (int)position->y;
     command.w = 0;
     command.h = 0;
-    command.size = (int)lt->get_number(size);
-    if (command.size <= 0) lt->runtime_error(vm, "Expected ray text size to be positive!");
-    command.color = expect_color(vm, color, "Expected ray color table with r, g, b!");
-    require_draw_target(vm);
+    command.size = size;
+    command.color = color;
     const char* source = lt->get_string(vm, message);
     command.text = malloc(strlen(source) + 1);
     if (!command.text) lt->runtime_error(vm, "Out of memory!");
@@ -302,32 +865,20 @@ static uint8_t native_key_down(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
-static uint8_t native_mouse(lt_VM* vm, uint8_t argc, uint8_t pressed)
-{
-    if (pressed)
-    {
-        if (argc != 1) lt->runtime_error(vm, "Expected mouse button for ray.mousePressed!");
-        lt_Value button = lt->pop(vm);
-        expect_number(vm, button, "Expected ray mouse button to be number!");
-        lt->push(vm, IsMouseButtonPressed((int)lt->get_number(button)) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
-        return 1;
-    }
-    if (argc != 0) lt->runtime_error(vm, "Expected no arguments!");
-    lt_Value position = lt->make_table(vm);
-    lt->table_set(vm, position, lt->make_string(vm, "x"), lt->make_number((double)GetMouseX()));
-    lt->table_set(vm, position, lt->make_string(vm, "y"), lt->make_number((double)GetMouseY()));
-    lt->push(vm, position);
-    return 1;
-}
-
 static uint8_t native_mouse_pressed(lt_VM* vm, uint8_t argc)
 {
-    return native_mouse(vm, argc, 1);
+    if (argc != 1) lt->runtime_error(vm, "Expected mouse button for ray.mousePressed!");
+    lt_Value button = lt->pop(vm);
+    expect_number(vm, button, "Expected ray mouse button to be number!");
+    lt->push(vm, IsMouseButtonPressed((int)lt->get_number(button)) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
 }
 
 static uint8_t native_mouse_position(lt_VM* vm, uint8_t argc)
 {
-    return native_mouse(vm, argc, 0);
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.mouse!");
+    lt->push(vm, make_vector2(vm, (double)GetMouseX(), (double)GetMouseY()));
+    return 1;
 }
 
 static uint8_t native_set_fps(lt_VM* vm, uint8_t argc)
@@ -349,6 +900,15 @@ static void set_number(lt_VM* vm, lt_Value module, const char* name, double valu
     lt->table_set(vm, module, lt->make_string(vm, name), lt->make_number(value));
 }
 
+static void set_color(lt_VM* vm, lt_Value colors, const char* name, double r, double g, double b, double a)
+{
+    lt->table_set(vm, colors, lt->make_string(vm, name), make_color(vm, r, g, b, a));
+}
+
+#define RAY_CLASS_METHOD(klass, name, fn) lt->class_add_method(vm, klass, name, fn, LT_VIS_PUBLIC, 0)
+#define RAY_CLASS_GETTER(klass, name, fn) lt->class_add_getter(vm, klass, name, fn, LT_VIS_PUBLIC, 0)
+#define RAY_CLASS_SETTER(klass, name, fn) lt->class_add_setter(vm, klass, name, fn, LT_VIS_PUBLIC, 0)
+
 LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
 {
     if (!api || api->version != LT_API_VERSION || api->size < sizeof(lt_Api))
@@ -364,6 +924,84 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     module_value = lt->make_table(vm);
     callback_registry = lt->make_table(vm);
     lt->table_set(vm, module_value, lt->make_string(vm, "__callbacks"), callback_registry);
+
+    vector2_class = lt->class_create(vm, "Vector2");
+    lt->class_set_native_data_destroy(vm, vector2_class, destroy_native_data);
+    lt->class_set_constructor(vm, vector2_class, vector2_constructor);
+    RAY_CLASS_GETTER(vector2_class, "x", vector2_get_x);
+    RAY_CLASS_SETTER(vector2_class, "x", vector2_set_x);
+    RAY_CLASS_GETTER(vector2_class, "y", vector2_get_y);
+    RAY_CLASS_SETTER(vector2_class, "y", vector2_set_y);
+    RAY_CLASS_METHOD(vector2_class, "add", vector2_add);
+    RAY_CLASS_METHOD(vector2_class, "sub", vector2_sub);
+    RAY_CLASS_METHOD(vector2_class, "mul", vector2_mul);
+    RAY_CLASS_METHOD(vector2_class, "scale", vector2_scale);
+    RAY_CLASS_METHOD(vector2_class, "dot", vector2_dot);
+    RAY_CLASS_METHOD(vector2_class, "length", vector2_length);
+    RAY_CLASS_METHOD(vector2_class, "lengthSq", vector2_length_sq);
+    RAY_CLASS_METHOD(vector2_class, "normalize", vector2_normalize);
+    RAY_CLASS_METHOD(vector2_class, "distance", vector2_distance);
+    RAY_CLASS_METHOD(vector2_class, "clone", vector2_clone);
+    RAY_CLASS_METHOD(vector2_class, "equals", vector2_equals);
+    RAY_CLASS_METHOD(vector2_class, "toString", vector2_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Vector2"), vector2_class);
+
+    vector3_class = lt->class_create(vm, "Vector3");
+    lt->class_set_native_data_destroy(vm, vector3_class, destroy_native_data);
+    lt->class_set_constructor(vm, vector3_class, vector3_constructor);
+    RAY_CLASS_GETTER(vector3_class, "x", vector3_get_x);
+    RAY_CLASS_SETTER(vector3_class, "x", vector3_set_x);
+    RAY_CLASS_GETTER(vector3_class, "y", vector3_get_y);
+    RAY_CLASS_SETTER(vector3_class, "y", vector3_set_y);
+    RAY_CLASS_GETTER(vector3_class, "z", vector3_get_z);
+    RAY_CLASS_SETTER(vector3_class, "z", vector3_set_z);
+    RAY_CLASS_METHOD(vector3_class, "add", vector3_add);
+    RAY_CLASS_METHOD(vector3_class, "sub", vector3_sub);
+    RAY_CLASS_METHOD(vector3_class, "mul", vector3_mul);
+    RAY_CLASS_METHOD(vector3_class, "scale", vector3_scale);
+    RAY_CLASS_METHOD(vector3_class, "dot", vector3_dot);
+    RAY_CLASS_METHOD(vector3_class, "cross", vector3_cross);
+    RAY_CLASS_METHOD(vector3_class, "length", vector3_length);
+    RAY_CLASS_METHOD(vector3_class, "lengthSq", vector3_length_sq);
+    RAY_CLASS_METHOD(vector3_class, "normalize", vector3_normalize);
+    RAY_CLASS_METHOD(vector3_class, "distance", vector3_distance);
+    RAY_CLASS_METHOD(vector3_class, "clone", vector3_clone);
+    RAY_CLASS_METHOD(vector3_class, "equals", vector3_equals);
+    RAY_CLASS_METHOD(vector3_class, "toString", vector3_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Vector3"), vector3_class);
+
+    color_class = lt->class_create(vm, "Color");
+    lt->class_set_native_data_destroy(vm, color_class, destroy_native_data);
+    lt->class_set_constructor(vm, color_class, color_constructor);
+    RAY_CLASS_GETTER(color_class, "r", color_get_r);
+    RAY_CLASS_SETTER(color_class, "r", color_set_r);
+    RAY_CLASS_GETTER(color_class, "g", color_get_g);
+    RAY_CLASS_SETTER(color_class, "g", color_set_g);
+    RAY_CLASS_GETTER(color_class, "b", color_get_b);
+    RAY_CLASS_SETTER(color_class, "b", color_set_b);
+    RAY_CLASS_GETTER(color_class, "a", color_get_a);
+    RAY_CLASS_SETTER(color_class, "a", color_set_a);
+    RAY_CLASS_METHOD(color_class, "equals", color_equals);
+    RAY_CLASS_METHOD(color_class, "withAlpha", color_with_alpha);
+    RAY_CLASS_METHOD(color_class, "toString", color_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Color"), color_class);
+
+    rectangle_class = lt->class_create(vm, "Rectangle");
+    lt->class_set_native_data_destroy(vm, rectangle_class, destroy_native_data);
+    lt->class_set_constructor(vm, rectangle_class, rectangle_constructor);
+    RAY_CLASS_GETTER(rectangle_class, "x", rectangle_get_x);
+    RAY_CLASS_SETTER(rectangle_class, "x", rectangle_set_x);
+    RAY_CLASS_GETTER(rectangle_class, "y", rectangle_get_y);
+    RAY_CLASS_SETTER(rectangle_class, "y", rectangle_set_y);
+    RAY_CLASS_GETTER(rectangle_class, "width", rectangle_get_width);
+    RAY_CLASS_SETTER(rectangle_class, "width", rectangle_set_width);
+    RAY_CLASS_GETTER(rectangle_class, "height", rectangle_get_height);
+    RAY_CLASS_SETTER(rectangle_class, "height", rectangle_set_height);
+    RAY_CLASS_METHOD(rectangle_class, "equals", rectangle_equals);
+    RAY_CLASS_METHOD(rectangle_class, "contains", rectangle_contains);
+    RAY_CLASS_METHOD(rectangle_class, "center", rectangle_center);
+    RAY_CLASS_METHOD(rectangle_class, "toString", rectangle_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Rectangle"), rectangle_class);
 
     set_native(vm, module_value, "open", native_open);
     set_native(vm, module_value, "close", native_close);
@@ -397,17 +1035,34 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_number(vm, keys, "mouseMiddle", 2);
     lt->table_set(vm, module_value, lt->make_string(vm, "keys"), keys);
 
-    lt_Value white = lt->make_table(vm);
-    set_number(vm, white, "r", 255);
-    set_number(vm, white, "g", 255);
-    set_number(vm, white, "b", 255);
-    lt->table_set(vm, module_value, lt->make_string(vm, "white"), white);
-
-    lt_Value black = lt->make_table(vm);
-    set_number(vm, black, "r", 0);
-    set_number(vm, black, "g", 0);
-    set_number(vm, black, "b", 0);
-    lt->table_set(vm, module_value, lt->make_string(vm, "black"), black);
+    lt_Value colors = lt->make_table(vm);
+    set_color(vm, colors, "lightgray", 200, 200, 200, 255);
+    set_color(vm, colors, "gray", 130, 130, 130, 255);
+    set_color(vm, colors, "darkgray", 80, 80, 80, 255);
+    set_color(vm, colors, "yellow", 253, 249, 0, 255);
+    set_color(vm, colors, "gold", 255, 203, 0, 255);
+    set_color(vm, colors, "orange", 255, 161, 0, 255);
+    set_color(vm, colors, "pink", 255, 109, 194, 255);
+    set_color(vm, colors, "red", 230, 41, 55, 255);
+    set_color(vm, colors, "maroon", 190, 33, 55, 255);
+    set_color(vm, colors, "green", 0, 228, 48, 255);
+    set_color(vm, colors, "lime", 0, 158, 47, 255);
+    set_color(vm, colors, "darkgreen", 0, 117, 44, 255);
+    set_color(vm, colors, "skyblue", 102, 191, 255, 255);
+    set_color(vm, colors, "blue", 0, 121, 241, 255);
+    set_color(vm, colors, "darkblue", 0, 82, 172, 255);
+    set_color(vm, colors, "purple", 200, 122, 255, 255);
+    set_color(vm, colors, "violet", 135, 60, 190, 255);
+    set_color(vm, colors, "darkpurple", 112, 31, 126, 255);
+    set_color(vm, colors, "beige", 211, 176, 131, 255);
+    set_color(vm, colors, "brown", 127, 106, 79, 255);
+    set_color(vm, colors, "darkbrown", 76, 63, 47, 255);
+    set_color(vm, colors, "white", 255, 255, 255, 255);
+    set_color(vm, colors, "black", 0, 0, 0, 255);
+    set_color(vm, colors, "blank", 0, 0, 0, 0);
+    set_color(vm, colors, "magenta", 255, 0, 255, 255);
+    set_color(vm, colors, "raywhite", 245, 245, 245, 255);
+    lt->table_set(vm, module_value, lt->make_string(vm, "colors"), colors);
 
     return module_value;
 }
