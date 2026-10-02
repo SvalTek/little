@@ -74,9 +74,9 @@ jobs:
           name: build-linux-x64
           path: .
       - name: Install native library build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev xvfb libgl1-mesa-dri libglx-mesa0
       - name: Run tests
-        run: task test
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" task test
 
   package-linux:
     name: Package Linux

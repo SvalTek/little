@@ -27,6 +27,10 @@ systems, or sweeping rewrites unless the user explicitly asks for that direction
 - `scripts/` contains runnable Little examples and should stay aligned with
   documented features.
 - `tests/e2e/` contains feature and behavior tests.
+- `tests/windowed/` contains display-dependent tests that create a real window.
+  `tests/run-e2e.ps1` runs them when it can open a window and skips them (with a
+  printed SKIP) when it cannot; CI runs the test job under `xvfb-run` so they
+  execute on Linux.
 - `tests/fuzz/` contains regression, crash, parser-edge, runtime-recovery, and
   semantic corner-case tests.
 

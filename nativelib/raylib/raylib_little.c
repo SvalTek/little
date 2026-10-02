@@ -96,6 +96,12 @@ typedef struct {
     double height;
 } LtRectangle;
 
+/* Fonts track ownership: raylib's default font must never be unloaded. */
+typedef struct {
+    Font font;
+    uint8_t owned;
+} LtFontData;
+
 static lt_Value vector2_class = LT_VALUE_NULL;
 static lt_Value vector3_class = LT_VALUE_NULL;
 static lt_Value color_class = LT_VALUE_NULL;
@@ -146,7 +152,7 @@ RAY_DATA_ACCESSOR(color_data, LtColor, color_class)
 RAY_DATA_ACCESSOR(rectangle_data, LtRectangle, rectangle_class)
 RAY_DATA_ACCESSOR(image_data, Image, image_class)
 RAY_DATA_ACCESSOR(texture_data, Texture2D, texture_class)
-RAY_DATA_ACCESSOR(font_data, Font, font_class)
+RAY_DATA_ACCESSOR(font_data, LtFontData, font_class)
 
 static void* allocate_native_data(lt_VM* vm, size_t size)
 {
@@ -362,8 +368,21 @@ RAY_NUMBER_GETTER(image_get_height, Image, image_data, height, "an Image")
 RAY_NUMBER_GETTER(texture_get_width, Texture2D, texture_data, width, "a Texture")
 RAY_NUMBER_GETTER(texture_get_height, Texture2D, texture_data, height, "a Texture")
 
-RAY_NUMBER_GETTER(font_get_base_size, Font, font_data, baseSize, "a Font")
-RAY_NUMBER_GETTER(font_get_glyph_count, Font, font_data, glyphCount, "a Font")
+static uint8_t font_get_base_size(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "baseSize getter expects no arguments!");
+    LtFontData* data = font_data(vm, lt->pop(vm), "Expected a Font!");
+    lt->push(vm, lt->make_number((double)data->font.baseSize));
+    return 1;
+}
+
+static uint8_t font_get_glyph_count(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "glyphCount getter expects no arguments!");
+    LtFontData* data = font_data(vm, lt->pop(vm), "Expected a Font!");
+    lt->push(vm, lt->make_number((double)data->font.glyphCount));
+    return 1;
+}
 
 static lt_Value make_boolean(uint8_t value)
 {
@@ -755,8 +774,8 @@ static void destroy_texture(void* data)
 
 static void destroy_font(void* data)
 {
-    Font* font = data;
-    if (font->texture.id > 0 && IsWindowReady()) UnloadFont(*font);
+    LtFontData* font = data;
+    if (font->owned && font->font.texture.id > 0 && IsWindowReady()) UnloadFont(font->font);
     free(font);
 }
 
@@ -783,11 +802,12 @@ static void attach_texture(lt_VM* vm, Texture2D source)
     lt->push(vm, instance);
 }
 
-static void attach_font(lt_VM* vm, Font source)
+static void attach_font(lt_VM* vm, Font source, uint8_t owned)
 {
     lt_Value instance = construct(vm, font_class, 0, 0);
-    Font* data = allocate_native_data(vm, sizeof(Font));
-    *data = source;
+    LtFontData* data = allocate_native_data(vm, sizeof(LtFontData));
+    data->font = source;
+    data->owned = owned;
     lt->instance_set_native_data(vm, instance, font_class, data);
     lt->push(vm, instance);
 }
@@ -857,7 +877,25 @@ static uint8_t native_load_font(lt_VM* vm, uint8_t argc)
     require_window(vm, "Expected ray.open before ray.loadFont!");
     Font source = LoadFontEx(lt->get_string(vm, path), size, 0, 0);
     if (source.texture.id == 0) lt->runtime_error(vm, "Failed to load ray font!");
-    attach_font(vm, source);
+    attach_font(vm, source, 1);
+    return 1;
+}
+
+static uint8_t native_default_font(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.defaultFont!");
+    require_window(vm, "Expected ray.open before ray.defaultFont!");
+    Font source = GetFontDefault();
+    if (source.texture.id == 0) lt->runtime_error(vm, "Ray default font is unavailable!");
+    attach_font(vm, source, 0);
+    return 1;
+}
+
+static uint8_t native_window_size(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.windowSize!");
+    require_window(vm, "Expected ray.open before ray.windowSize!");
+    lt->push(vm, make_vector2(vm, (double)GetScreenWidth(), (double)GetScreenHeight()));
     return 1;
 }
 
@@ -1005,11 +1043,11 @@ static uint8_t texture_to_string(lt_VM* vm, uint8_t argc)
 static uint8_t font_unload(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
-    Font* font = font_data(vm, lt->pop(vm), "Expected a Font!");
-    if (font->texture.id > 0)
+    LtFontData* font = font_data(vm, lt->pop(vm), "Expected a Font!");
+    if (font->owned && font->font.texture.id > 0)
     {
-        if (IsWindowReady()) UnloadFont(*font);
-        memset(font, 0, sizeof(Font));
+        if (IsWindowReady()) UnloadFont(font->font);
+        memset(&font->font, 0, sizeof(Font));
     }
     return 0;
 }
@@ -1020,12 +1058,12 @@ static uint8_t font_measure(lt_VM* vm, uint8_t argc)
     lt_Value spacing_value = lt->pop(vm);
     lt_Value size_value = lt->pop(vm);
     lt_Value text_value = lt->pop(vm);
-    Font* font = font_data(vm, lt->pop(vm), "Expected a Font!");
+    LtFontData* font = font_data(vm, lt->pop(vm), "Expected a Font!");
     expect_string(vm, text_value, "Expected text to be string!");
     expect_number(vm, size_value, "Expected a font size number!");
     expect_number(vm, spacing_value, "Expected a spacing number!");
-    if (font->texture.id == 0) lt->runtime_error(vm, "Ray font has been unloaded!");
-    Vector2 measured = MeasureTextEx(*font, lt->get_string(vm, text_value), (float)lt->get_number(size_value), (float)lt->get_number(spacing_value));
+    if (font->font.texture.id == 0) lt->runtime_error(vm, "Ray font has been unloaded!");
+    Vector2 measured = MeasureTextEx(font->font, lt->get_string(vm, text_value), (float)lt->get_number(size_value), (float)lt->get_number(spacing_value));
     lt->push(vm, make_vector2(vm, (double)measured.x, (double)measured.y));
     return 1;
 }
@@ -1038,13 +1076,13 @@ static uint8_t font_draw(lt_VM* vm, uint8_t argc)
     lt_Value size_value = lt->pop(vm);
     lt_Value position_value = lt->pop(vm);
     lt_Value text_value = lt->pop(vm);
-    Font* font = font_data(vm, lt->pop(vm), "Expected a Font!");
+    LtFontData* font = font_data(vm, lt->pop(vm), "Expected a Font!");
     expect_string(vm, text_value, "Expected text to be string!");
     expect_number(vm, size_value, "Expected a font size number!");
     expect_number(vm, spacing_value, "Expected a spacing number!");
     LtVector2* position = vector2_data(vm, position_value, "Expected a Vector2 position!");
     Color color = expect_color(vm, tint, "Expected a Color tint!");
-    if (font->texture.id == 0) lt->runtime_error(vm, "Ray font has been unloaded!");
+    if (font->font.texture.id == 0) lt->runtime_error(vm, "Ray font has been unloaded!");
     require_draw_target(vm);
     const char* source = lt->get_string(vm, text_value);
     char* copy = malloc(strlen(source) + 1);
@@ -1052,7 +1090,7 @@ static uint8_t font_draw(lt_VM* vm, uint8_t argc)
     memcpy(copy, source, strlen(source) + 1);
     RayTextExCommand* payload = allocate_native_data(vm, sizeof(RayTextExCommand));
     memset(payload, 0, sizeof(RayTextExCommand));
-    payload->font = *font;
+    payload->font = font->font;
     payload->position.x = (float)position->x;
     payload->position.y = (float)position->y;
     payload->size = (float)lt->get_number(size_value);
@@ -1068,9 +1106,9 @@ static uint8_t font_draw(lt_VM* vm, uint8_t argc)
 static uint8_t font_to_string(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
-    Font* font = font_data(vm, lt->pop(vm), "Expected a Font!");
+    LtFontData* font = font_data(vm, lt->pop(vm), "Expected a Font!");
     char text[48];
-    snprintf(text, sizeof(text), "font(%d)", font->baseSize);
+    snprintf(text, sizeof(text), "font(%d)", font->font.baseSize);
     lt->push(vm, lt->make_string(vm, text));
     return 1;
 }
@@ -1471,6 +1509,8 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_native(vm, module_value, "loadTexture", native_load_texture);
     set_native(vm, module_value, "loadTextureFromImage", native_load_texture_from_image);
     set_native(vm, module_value, "loadFont", native_load_font);
+    set_native(vm, module_value, "defaultFont", native_default_font);
+    set_native(vm, module_value, "windowSize", native_window_size);
     set_native(vm, module_value, "traceLog", native_trace_log);
 
     set_native(vm, module_value, "open", native_open);

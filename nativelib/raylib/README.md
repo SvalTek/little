@@ -31,11 +31,13 @@ On Linux the desktop build needs the GL/X11 development headers:
 sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 ```
 
-CI cannot open windows, so the e2e tests (`tests/e2e/native-raylib*.little`)
-assert the load surface, value types, CPU-side `Image` behavior, and error
-paths. Anything that needs a GL context (textures, fonts, drawing) is verified
-against a hidden window with `ray.open(..., { hidden: true })`; the runnable
-windowed example is `scripts/raylib/demo.little`.
+`tests/e2e/native-raylib*.little` cover the load surface, value types,
+CPU-side `Image` behavior, and error paths without needing a display.
+`tests/windowed/native-raylib-draw.little` opens a hidden window and renders a
+real frame (rect, text, textures, the default font, every draw variant), and
+`tests/run-e2e.ps1` runs it whenever it can create a window, skipping it
+otherwise; CI runs the Linux test job under `xvfb-run` so it executes there.
+`scripts/raylib/demo.little` is the runnable windowed example.
 
 ## Lifecycle
 
@@ -170,6 +172,11 @@ because the GPU objects died with the context.
 | `loadTexture(path)` | Texture from an image file (window required) |
 | `loadTextureFromImage(image)` | Texture from an `Image` (window required) |
 | `loadFont(path, size)` | Font from a `.ttf`/`.otf` file (window required) |
+| `defaultFont()` | raylib's built-in font (window required, never unloaded) |
+
+`defaultFont()` returns raylib's built-in font as a `Font` instance. It is owned
+by raylib rather than by the script, so `unload()` on it does nothing and
+collecting it never frees the built-in font.
 
 `texture:draw(position, tint)` draws the whole texture,
 `texture:drawRec(source, position, tint)` draws a source rectangle, and
@@ -193,11 +200,12 @@ rotation. `font:draw(text, position, size, spacing, tint)` and
 | `keyDown(code)` | Whether a key is held down |
 | `mousePressed(button)` | Whether a mouse button was pressed |
 | `mouse()` | Current mouse position as a `Vector2` |
+| `windowSize()` | Window client size as a `Vector2` (window required) |
 | `setFPS(n)` | Cap the frame rate |
 | `traceLog(level)` | Set the raylib log threshold (`ray.log.*`) |
 | `loadImage(path)`, `genImageColor(w, h, color)` | Create an `Image` |
 | `loadTexture(path)`, `loadTextureFromImage(image)` | Create a `Texture` |
-| `loadFont(path, size)` | Create a `Font` |
+| `loadFont(path, size)`, `defaultFont()` | Create a `Font` |
 | `Vector2`, `Vector3`, `Color`, `Rectangle` | Value type constructors |
 | `Image`, `Texture`, `Font` | Resource types (created by their loaders) |
 | `colors` | Named raylib palette (`lightgray` … `raywhite`, `blank`) |

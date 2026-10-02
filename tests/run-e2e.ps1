@@ -171,11 +171,55 @@ function Normalize([string]$Text) {
     return ($Text -replace "`r`n", "`n").TrimEnd()
 }
 
+# tests/windowed creates a real window. Probe once so headless environments skip
+# it instead of failing; CI runs the test job under xvfb-run, which makes the
+# probe succeed and the windowed tests run for real.
+$windowedDir = Join-Path $PSScriptRoot "windowed"
+$windowAvailable = $false
+if ((Test-Path $windowedDir) -and (Test-Path $exe)) {
+    New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+    $probeScript = Join-Path $buildDir "raylib-window-probe.little"
+    $probeOut = Join-Path $buildDir "raylib-window-probe.out"
+    $probeErr = Join-Path $buildDir "raylib-window-probe.err"
+    @'
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+ray.traceLog(ray.log.none)
+ray.open(16, 16, "probe", { hidden: true })
+io.print("window-ok")
+ray.close()
+'@ | Set-Content -Path $probeScript -Encoding utf8
+    try {
+        $probe = Start-Process -FilePath $exe -ArgumentList @($probeScript) -NoNewWindow -PassThru `
+            -RedirectStandardOutput $probeOut -RedirectStandardError $probeErr
+        if (!$probe.WaitForExit(30000)) {
+            try { $probe.Kill() } catch { }
+            $probe.WaitForExit()
+        }
+        if ((Test-Path $probeOut) -and ((Get-Content -Raw $probeOut) -match "window-ok")) {
+            $windowAvailable = $true
+        }
+    }
+    catch {
+        $windowAvailable = $false
+    }
+    Remove-Item -Force $probeScript, $probeOut, $probeErr -ErrorAction SilentlyContinue
+}
+
+if ($windowAvailable) {
+    Write-Host "Window available: running tests/windowed."
+}
+else {
+    Write-Host "SKIP tests/windowed: could not create a window (run under xvfb-run on headless Linux)."
+}
+
 $failed = 0
 $testDirs = @(
     (Join-Path $PSScriptRoot "e2e"),
     (Join-Path $PSScriptRoot "fuzz")
 )
+if ($windowAvailable) {
+    $testDirs += $windowedDir
+}
 $tests = foreach ($testDir in $testDirs) {
     if (Test-Path $testDir) {
         Get-ChildItem -Path $testDir -Filter "*.little"

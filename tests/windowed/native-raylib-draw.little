@@ -1,0 +1,58 @@
+; Requires a display: this one really creates a window and renders a frame.
+; tests/run-e2e.ps1 runs it under tests/windowed/ when a window can be opened.
+
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+ray.traceLog(ray.log.none)
+ray.open(64, 48, "windowed", { hidden: true })
+
+io.print(ray.windowSize():toString())
+
+var reopen = pcall(fn() { ray.open(1, 1, "again") })
+io.print(reopen.ok)
+io.print(string.contains(reopen.error, "already open"))
+
+var image = ray.genImageColor(8, 4, ray.colors.lime)
+var texture = ray.loadTextureFromImage(image)
+image:unload()
+io.print(typeof texture is ray.Texture)
+io.print(texture.width)
+io.print(texture.height)
+
+var font = ray.defaultFont()
+io.print(typeof font is ray.Font)
+io.print(font.baseSize > 0)
+io.print(font.glyphCount > 0)
+io.print(font:measure("hi", 20, 1).x > 0)
+io.print(font:toString())
+
+var frames = 0
+ray.on("start", fn() {
+    ray.setFPS(60)
+    io.print("started")
+})
+ray.on("update", fn(dt) {
+    frames = frames + 1
+    ray.clear(ray.colors.darkblue)
+    ray.rect(ray.Rectangle(1, 1, 10, 6), ray.colors.red)
+    ray.text("hi", ray.Vector2(2, 20), 10, ray.colors.white)
+    texture:draw(ray.Vector2(2, 2), ray.colors.white)
+    texture:drawRec(ray.Rectangle(0, 0, 4, 4), ray.Vector2(20, 2), ray.colors.white)
+    texture:drawPro(ray.Rectangle(0, 0, 8, 4), ray.Rectangle(30, 2, 16, 8), ray.Vector2(0, 0), 10, ray.colors.white)
+    font:draw("hi", ray.Vector2(2, 30), 16, 1, ray.colors.raywhite)
+    ray.close()
+})
+
+io.print(ray.update())
+io.print(frames is 1)
+
+font:unload()
+texture:unload()
+io.print(texture:toString())
+
+var closedSize = pcall(fn() { return ray.windowSize() })
+io.print(closedSize.ok)
+io.print(string.contains(closedSize.error, "ray.open"))
+
+ray.close()
+io.print("closed")
