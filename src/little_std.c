@@ -42,6 +42,7 @@ static uint8_t _ltstd_pcall(lt_VM* vm, uint8_t argc)
     uint16_t saved_depth = vm->depth;
     lt_Frame* saved_current = vm->current;
     uint32_t saved_native_roots = vm->native_roots.length;
+    uint32_t saved_temporary_roots = vm->temporary_roots.length;
     uint32_t saved_native_root_floor = vm->native_root_floor;
     void* saved_error_buf = vm->error_buf;
     uint8_t saved_trap_errors = vm->trap_errors;
@@ -76,6 +77,7 @@ static uint8_t _ltstd_pcall(lt_VM* vm, uint8_t argc)
     vm->depth = saved_depth;
     vm->current = saved_current;
     vm->native_roots.length = saved_native_roots;
+    vm->temporary_roots.length = saved_temporary_roots;
     vm->native_root_floor = saved_native_root_floor;
     vm->error_buf = saved_error_buf;
     vm->trap_errors = saved_trap_errors;
@@ -325,6 +327,7 @@ static uint8_t _ltstd_import(lt_VM* vm, uint8_t argc)
     uint16_t saved_depth = vm->depth;
     lt_Frame* saved_current = vm->current;
     uint32_t saved_native_roots = vm->native_roots.length;
+    uint32_t saved_temporary_roots = vm->temporary_roots.length;
     uint32_t saved_native_root_floor = vm->native_root_floor;
     void* saved_error_buf = vm->error_buf;
     uint8_t saved_trap_errors = vm->trap_errors;
@@ -351,6 +354,7 @@ static uint8_t _ltstd_import(lt_VM* vm, uint8_t argc)
         vm->depth = saved_depth;
         vm->current = saved_current;
         vm->native_roots.length = saved_native_roots;
+        vm->temporary_roots.length = saved_temporary_roots;
         vm->native_root_floor = saved_native_root_floor;
         vm->error_buf = saved_error_buf;
         vm->trap_errors = saved_trap_errors;
