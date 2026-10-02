@@ -13,12 +13,34 @@
 #define LT_NATIVE_EXPORT __attribute__((visibility("default")))
 #endif
 
-#define RAY_MAX_COMMANDS 4096
+#define RAY_MAX_COMMANDS 1024
 
 typedef enum {
     RAY_CMD_RECT,
-    RAY_CMD_TEXT
+    RAY_CMD_TEXT,
+    RAY_CMD_TEXTURE,
+    RAY_CMD_TEXTURE_REC,
+    RAY_CMD_TEXTURE_PRO,
+    RAY_CMD_TEXT_EX
 } RayCommandKind;
+
+/* Texture and font draws carry their larger arguments in a heap payload so the
+   fixed command buffer stays small. */
+typedef struct {
+    Texture2D texture;
+    Rectangle source;
+    Rectangle dest;
+    Vector2 origin;
+    Vector2 position;
+    float rotation;
+} RayTextureCommand;
+
+typedef struct {
+    Font font;
+    Vector2 position;
+    float size;
+    float spacing;
+} RayTextExCommand;
 
 typedef struct {
     RayCommandKind kind;
@@ -29,6 +51,7 @@ typedef struct {
     int size;
     Color color;
     char* text;
+    void* payload;
 } RayCommand;
 
 static const lt_Api* lt = 0;
@@ -77,6 +100,9 @@ static lt_Value vector2_class = LT_VALUE_NULL;
 static lt_Value vector3_class = LT_VALUE_NULL;
 static lt_Value color_class = LT_VALUE_NULL;
 static lt_Value rectangle_class = LT_VALUE_NULL;
+static lt_Value image_class = LT_VALUE_NULL;
+static lt_Value texture_class = LT_VALUE_NULL;
+static lt_Value font_class = LT_VALUE_NULL;
 
 static void expect_number(lt_VM* vm, lt_Value value, const char* message)
 {
@@ -118,6 +144,9 @@ RAY_DATA_ACCESSOR(vector2_data, LtVector2, vector2_class)
 RAY_DATA_ACCESSOR(vector3_data, LtVector3, vector3_class)
 RAY_DATA_ACCESSOR(color_data, LtColor, color_class)
 RAY_DATA_ACCESSOR(rectangle_data, LtRectangle, rectangle_class)
+RAY_DATA_ACCESSOR(image_data, Image, image_class)
+RAY_DATA_ACCESSOR(texture_data, Texture2D, texture_class)
+RAY_DATA_ACCESSOR(font_data, Font, font_class)
 
 static void* allocate_native_data(lt_VM* vm, size_t size)
 {
@@ -266,7 +295,7 @@ static uint8_t rectangle_constructor(lt_VM* vm, uint8_t argc)
     static uint8_t function_name(lt_VM* vm, uint8_t argc)                               \
     {                                                                                   \
         if (argc != 1) lt->runtime_error(vm, #field " getter expects no arguments!");    \
-        data_type* data = accessor(vm, lt->pop(vm), "Expected a " type_name "!");        \
+        data_type* data = accessor(vm, lt->pop(vm), "Expected " type_name "!");        \
         lt->push(vm, lt->make_number(data->field));                                      \
         return 1;                                                                        \
     }
@@ -278,7 +307,7 @@ static uint8_t rectangle_constructor(lt_VM* vm, uint8_t argc)
         lt_Value raw = lt->pop(vm);                                                       \
         expect_number(vm, raw, "Expected a number for " #field "!");                      \
         double value = lt->get_number(raw);                                               \
-        data_type* data = accessor(vm, lt->pop(vm), "Expected a " type_name "!");         \
+        data_type* data = accessor(vm, lt->pop(vm), "Expected " type_name "!");         \
         data->field = value;                                                              \
         return 0;                                                                          \
     }
@@ -297,17 +326,17 @@ static uint8_t rectangle_constructor(lt_VM* vm, uint8_t argc)
         return 0;                                                                          \
     }
 
-RAY_NUMBER_GETTER(vector2_get_x, LtVector2, vector2_data, x, "Vector2")
-RAY_NUMBER_SETTER(vector2_set_x, LtVector2, vector2_data, x, "Vector2")
-RAY_NUMBER_GETTER(vector2_get_y, LtVector2, vector2_data, y, "Vector2")
-RAY_NUMBER_SETTER(vector2_set_y, LtVector2, vector2_data, y, "Vector2")
+RAY_NUMBER_GETTER(vector2_get_x, LtVector2, vector2_data, x, "a Vector2")
+RAY_NUMBER_SETTER(vector2_set_x, LtVector2, vector2_data, x, "a Vector2")
+RAY_NUMBER_GETTER(vector2_get_y, LtVector2, vector2_data, y, "a Vector2")
+RAY_NUMBER_SETTER(vector2_set_y, LtVector2, vector2_data, y, "a Vector2")
 
-RAY_NUMBER_GETTER(vector3_get_x, LtVector3, vector3_data, x, "Vector3")
-RAY_NUMBER_SETTER(vector3_set_x, LtVector3, vector3_data, x, "Vector3")
-RAY_NUMBER_GETTER(vector3_get_y, LtVector3, vector3_data, y, "Vector3")
-RAY_NUMBER_SETTER(vector3_set_y, LtVector3, vector3_data, y, "Vector3")
-RAY_NUMBER_GETTER(vector3_get_z, LtVector3, vector3_data, z, "Vector3")
-RAY_NUMBER_SETTER(vector3_set_z, LtVector3, vector3_data, z, "Vector3")
+RAY_NUMBER_GETTER(vector3_get_x, LtVector3, vector3_data, x, "a Vector3")
+RAY_NUMBER_SETTER(vector3_set_x, LtVector3, vector3_data, x, "a Vector3")
+RAY_NUMBER_GETTER(vector3_get_y, LtVector3, vector3_data, y, "a Vector3")
+RAY_NUMBER_SETTER(vector3_set_y, LtVector3, vector3_data, y, "a Vector3")
+RAY_NUMBER_GETTER(vector3_get_z, LtVector3, vector3_data, z, "a Vector3")
+RAY_NUMBER_SETTER(vector3_set_z, LtVector3, vector3_data, z, "a Vector3")
 
 RAY_NUMBER_GETTER(color_get_r, LtColor, color_data, r, "Color")
 RAY_CHANNEL_SETTER(color_set_r, r)
@@ -318,14 +347,23 @@ RAY_CHANNEL_SETTER(color_set_b, b)
 RAY_NUMBER_GETTER(color_get_a, LtColor, color_data, a, "Color")
 RAY_CHANNEL_SETTER(color_set_a, a)
 
-RAY_NUMBER_GETTER(rectangle_get_x, LtRectangle, rectangle_data, x, "Rectangle")
-RAY_NUMBER_SETTER(rectangle_set_x, LtRectangle, rectangle_data, x, "Rectangle")
-RAY_NUMBER_GETTER(rectangle_get_y, LtRectangle, rectangle_data, y, "Rectangle")
-RAY_NUMBER_SETTER(rectangle_set_y, LtRectangle, rectangle_data, y, "Rectangle")
-RAY_NUMBER_GETTER(rectangle_get_width, LtRectangle, rectangle_data, width, "Rectangle")
-RAY_NUMBER_SETTER(rectangle_set_width, LtRectangle, rectangle_data, width, "Rectangle")
-RAY_NUMBER_GETTER(rectangle_get_height, LtRectangle, rectangle_data, height, "Rectangle")
-RAY_NUMBER_SETTER(rectangle_set_height, LtRectangle, rectangle_data, height, "Rectangle")
+RAY_NUMBER_GETTER(rectangle_get_x, LtRectangle, rectangle_data, x, "a Rectangle")
+RAY_NUMBER_SETTER(rectangle_set_x, LtRectangle, rectangle_data, x, "a Rectangle")
+RAY_NUMBER_GETTER(rectangle_get_y, LtRectangle, rectangle_data, y, "a Rectangle")
+RAY_NUMBER_SETTER(rectangle_set_y, LtRectangle, rectangle_data, y, "a Rectangle")
+RAY_NUMBER_GETTER(rectangle_get_width, LtRectangle, rectangle_data, width, "a Rectangle")
+RAY_NUMBER_SETTER(rectangle_set_width, LtRectangle, rectangle_data, width, "a Rectangle")
+RAY_NUMBER_GETTER(rectangle_get_height, LtRectangle, rectangle_data, height, "a Rectangle")
+RAY_NUMBER_SETTER(rectangle_set_height, LtRectangle, rectangle_data, height, "a Rectangle")
+
+RAY_NUMBER_GETTER(image_get_width, Image, image_data, width, "an Image")
+RAY_NUMBER_GETTER(image_get_height, Image, image_data, height, "an Image")
+
+RAY_NUMBER_GETTER(texture_get_width, Texture2D, texture_data, width, "a Texture")
+RAY_NUMBER_GETTER(texture_get_height, Texture2D, texture_data, height, "a Texture")
+
+RAY_NUMBER_GETTER(font_get_base_size, Font, font_data, baseSize, "a Font")
+RAY_NUMBER_GETTER(font_get_glyph_count, Font, font_data, glyphCount, "a Font")
 
 static lt_Value make_boolean(uint8_t value)
 {
@@ -657,11 +695,10 @@ static void clear_commands(void)
 {
     for (uint32_t i = 0; i < command_count; ++i)
     {
-        if (commands[i].kind == RAY_CMD_TEXT && commands[i].text)
-        {
-            free(commands[i].text);
-            commands[i].text = 0;
-        }
+        free(commands[i].text);
+        commands[i].text = 0;
+        free(commands[i].payload);
+        commands[i].payload = 0;
     }
     command_count = 0;
 }
@@ -672,27 +709,410 @@ static void require_draw_target(lt_VM* vm)
     if (command_count >= RAY_MAX_COMMANDS) lt->runtime_error(vm, "Too many ray draw commands in one frame!");
 }
 
+static RayCommand new_command(RayCommandKind kind)
+{
+    RayCommand command;
+    memset(&command, 0, sizeof(command));
+    command.kind = kind;
+    return command;
+}
+
 static void push_command(RayCommand command)
 {
     commands[command_count++] = command;
 }
 
+static uint8_t table_field_bool(lt_VM* vm, lt_Value table, const char* key, uint8_t fallback)
+{
+    lt_Value value = lt->table_get(vm, table, lt->make_string(vm, key));
+    if (LT_IS_NULL(value)) return fallback;
+    if (!LT_IS_BOOL(value))
+    {
+        char message[96];
+        snprintf(message, sizeof(message), "Expected ray window option %s to be boolean!", key);
+        lt->runtime_error(vm, message);
+    }
+    return value == LT_VALUE_TRUE ? 1 : 0;
+}
+
+/* ---------------- resource types: Image, Texture, Font ---------------- */
+
+static void destroy_image(void* data)
+{
+    Image* image = data;
+    if (image->data) UnloadImage(*image);
+    free(image);
+}
+
+static void destroy_texture(void* data)
+{
+    Texture2D* texture = data;
+    /* Unloading needs a live GL context; after ray.close the texture is already
+       gone with the context, so skip the raylib call. */
+    if (texture->id > 0 && IsWindowReady()) UnloadTexture(*texture);
+    free(texture);
+}
+
+static void destroy_font(void* data)
+{
+    Font* font = data;
+    if (font->texture.id > 0 && IsWindowReady()) UnloadFont(*font);
+    free(font);
+}
+
+static void require_window(lt_VM* vm, const char* message)
+{
+    if (!window_open) lt->runtime_error(vm, message);
+}
+
+static void attach_image(lt_VM* vm, Image source)
+{
+    lt_Value instance = construct(vm, image_class, 0, 0);
+    Image* data = allocate_native_data(vm, sizeof(Image));
+    *data = source;
+    lt->instance_set_native_data(vm, instance, image_class, data);
+    lt->push(vm, instance);
+}
+
+static void attach_texture(lt_VM* vm, Texture2D source)
+{
+    lt_Value instance = construct(vm, texture_class, 0, 0);
+    Texture2D* data = allocate_native_data(vm, sizeof(Texture2D));
+    *data = source;
+    lt->instance_set_native_data(vm, instance, texture_class, data);
+    lt->push(vm, instance);
+}
+
+static void attach_font(lt_VM* vm, Font source)
+{
+    lt_Value instance = construct(vm, font_class, 0, 0);
+    Font* data = allocate_native_data(vm, sizeof(Font));
+    *data = source;
+    lt->instance_set_native_data(vm, instance, font_class, data);
+    lt->push(vm, instance);
+}
+
+static uint8_t native_load_image(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a path for ray.loadImage!");
+    lt_Value path = lt->pop(vm);
+    expect_string(vm, path, "Expected ray image path to be string!");
+    Image source = LoadImage(lt->get_string(vm, path));
+    if (!IsImageValid(source)) lt->runtime_error(vm, "Failed to load ray image!");
+    attach_image(vm, source);
+    return 1;
+}
+
+static uint8_t native_gen_image_color(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected width, height, and a Color for ray.genImageColor!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value height_value = lt->pop(vm);
+    lt_Value width_value = lt->pop(vm);
+    expect_number(vm, width_value, "Expected ray image width to be number!");
+    expect_number(vm, height_value, "Expected ray image height to be number!");
+    int width = (int)lt->get_number(width_value);
+    int height = (int)lt->get_number(height_value);
+    if (width <= 0 || height <= 0) lt->runtime_error(vm, "Expected positive ray image dimensions!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.genImageColor!");
+    Image source = GenImageColor(width, height, color);
+    if (!IsImageValid(source)) lt->runtime_error(vm, "Failed to generate ray image!");
+    attach_image(vm, source);
+    return 1;
+}
+
+static uint8_t native_load_texture(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a path for ray.loadTexture!");
+    lt_Value path = lt->pop(vm);
+    expect_string(vm, path, "Expected ray texture path to be string!");
+    require_window(vm, "Expected ray.open before ray.loadTexture!");
+    Texture2D source = LoadTexture(lt->get_string(vm, path));
+    if (!IsTextureValid(source)) lt->runtime_error(vm, "Failed to load ray texture!");
+    attach_texture(vm, source);
+    return 1;
+}
+
+static uint8_t native_load_texture_from_image(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected an Image for ray.loadTextureFromImage!");
+    Image* image = image_data(vm, lt->pop(vm), "Expected an Image for ray.loadTextureFromImage!");
+    require_window(vm, "Expected ray.open before ray.loadTextureFromImage!");
+    if (!image->data) lt->runtime_error(vm, "Ray image has been unloaded!");
+    Texture2D source = LoadTextureFromImage(*image);
+    if (!IsTextureValid(source)) lt->runtime_error(vm, "Failed to create ray texture!");
+    attach_texture(vm, source);
+    return 1;
+}
+
+static uint8_t native_load_font(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a path and a size for ray.loadFont!");
+    lt_Value size_value = lt->pop(vm);
+    lt_Value path = lt->pop(vm);
+    expect_string(vm, path, "Expected ray font path to be string!");
+    expect_number(vm, size_value, "Expected ray font size to be number!");
+    int size = (int)lt->get_number(size_value);
+    if (size <= 0) lt->runtime_error(vm, "Expected a positive ray font size!");
+    require_window(vm, "Expected ray.open before ray.loadFont!");
+    Font source = LoadFontEx(lt->get_string(vm, path), size, 0, 0);
+    if (source.texture.id == 0) lt->runtime_error(vm, "Failed to load ray font!");
+    attach_font(vm, source);
+    return 1;
+}
+
+static uint8_t image_unload(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
+    Image* image = image_data(vm, lt->pop(vm), "Expected an Image!");
+    if (image->data)
+    {
+        UnloadImage(*image);
+        image->data = 0;
+        image->width = 0;
+        image->height = 0;
+        image->mipmaps = 0;
+        image->format = 0;
+    }
+    return 0;
+}
+
+static uint8_t image_export(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "export expects one path!");
+    lt_Value path = lt->pop(vm);
+    expect_string(vm, path, "Expected an export path string!");
+    Image* image = image_data(vm, lt->pop(vm), "Expected an Image!");
+    if (!image->data) lt->runtime_error(vm, "Ray image has been unloaded!");
+    lt->push(vm, ExportImage(*image, lt->get_string(vm, path)) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
+static uint8_t image_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    Image* image = image_data(vm, lt->pop(vm), "Expected an Image!");
+    char text[48];
+    snprintf(text, sizeof(text), "image(%dx%d)", image->width, image->height);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t texture_unload(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
+    Texture2D* texture = texture_data(vm, lt->pop(vm), "Expected a Texture!");
+    if (texture->id > 0)
+    {
+        if (IsWindowReady()) UnloadTexture(*texture);
+        texture->id = 0;
+        texture->width = 0;
+        texture->height = 0;
+        texture->mipmaps = 0;
+        texture->format = 0;
+    }
+    return 0;
+}
+
+static RayTextureCommand* make_texture_command(lt_VM* vm, Texture2D* texture)
+{
+    if (texture->id == 0) lt->runtime_error(vm, "Ray texture has been unloaded!");
+    require_draw_target(vm);
+    RayTextureCommand* payload = allocate_native_data(vm, sizeof(RayTextureCommand));
+    memset(payload, 0, sizeof(RayTextureCommand));
+    payload->texture = *texture;
+    return payload;
+}
+
+static void copy_rectangle(Rectangle* dest, LtRectangle* source)
+{
+    dest->x = (float)source->x;
+    dest->y = (float)source->y;
+    dest->width = (float)source->width;
+    dest->height = (float)source->height;
+}
+
+static uint8_t texture_draw(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "draw expects a Vector2 position and a Color!");
+    lt_Value tint = lt->pop(vm);
+    LtVector2* position = vector2_data(vm, lt->pop(vm), "Expected a Vector2 position!");
+    Texture2D* texture = texture_data(vm, lt->pop(vm), "Expected a Texture!");
+    Color color = expect_color(vm, tint, "Expected a Color tint!");
+    RayTextureCommand* payload = make_texture_command(vm, texture);
+    payload->position.x = (float)position->x;
+    payload->position.y = (float)position->y;
+    RayCommand command = new_command(RAY_CMD_TEXTURE);
+    command.color = color;
+    command.payload = payload;
+    push_command(command);
+    return 0;
+}
+
+static uint8_t texture_draw_rec(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "drawRec expects a source Rectangle, a Vector2 position, and a Color!");
+    lt_Value tint = lt->pop(vm);
+    LtVector2* position = vector2_data(vm, lt->pop(vm), "Expected a Vector2 position!");
+    LtRectangle* source = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle source!");
+    Texture2D* texture = texture_data(vm, lt->pop(vm), "Expected a Texture!");
+    Color color = expect_color(vm, tint, "Expected a Color tint!");
+    RayTextureCommand* payload = make_texture_command(vm, texture);
+    copy_rectangle(&payload->source, source);
+    payload->position.x = (float)position->x;
+    payload->position.y = (float)position->y;
+    RayCommand command = new_command(RAY_CMD_TEXTURE_REC);
+    command.color = color;
+    command.payload = payload;
+    push_command(command);
+    return 0;
+}
+
+static uint8_t texture_draw_pro(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 6) lt->runtime_error(vm, "drawPro expects a source Rectangle, a dest Rectangle, a Vector2 origin, a rotation, and a Color!");
+    lt_Value tint = lt->pop(vm);
+    lt_Value rotation_value = lt->pop(vm);
+    LtVector2* origin = vector2_data(vm, lt->pop(vm), "Expected a Vector2 origin!");
+    LtRectangle* dest = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle dest!");
+    LtRectangle* source = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle source!");
+    Texture2D* texture = texture_data(vm, lt->pop(vm), "Expected a Texture!");
+    expect_number(vm, rotation_value, "Expected a rotation number!");
+    Color color = expect_color(vm, tint, "Expected a Color tint!");
+    RayTextureCommand* payload = make_texture_command(vm, texture);
+    copy_rectangle(&payload->source, source);
+    copy_rectangle(&payload->dest, dest);
+    payload->origin.x = (float)origin->x;
+    payload->origin.y = (float)origin->y;
+    payload->rotation = (float)lt->get_number(rotation_value);
+    RayCommand command = new_command(RAY_CMD_TEXTURE_PRO);
+    command.color = color;
+    command.payload = payload;
+    push_command(command);
+    return 0;
+}
+
+static uint8_t texture_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    Texture2D* texture = texture_data(vm, lt->pop(vm), "Expected a Texture!");
+    char text[48];
+    snprintf(text, sizeof(text), "texture(%dx%d)", texture->width, texture->height);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t font_unload(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
+    Font* font = font_data(vm, lt->pop(vm), "Expected a Font!");
+    if (font->texture.id > 0)
+    {
+        if (IsWindowReady()) UnloadFont(*font);
+        memset(font, 0, sizeof(Font));
+    }
+    return 0;
+}
+
+static uint8_t font_measure(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "measure expects text, a size, and a spacing!");
+    lt_Value spacing_value = lt->pop(vm);
+    lt_Value size_value = lt->pop(vm);
+    lt_Value text_value = lt->pop(vm);
+    Font* font = font_data(vm, lt->pop(vm), "Expected a Font!");
+    expect_string(vm, text_value, "Expected text to be string!");
+    expect_number(vm, size_value, "Expected a font size number!");
+    expect_number(vm, spacing_value, "Expected a spacing number!");
+    if (font->texture.id == 0) lt->runtime_error(vm, "Ray font has been unloaded!");
+    Vector2 measured = MeasureTextEx(*font, lt->get_string(vm, text_value), (float)lt->get_number(size_value), (float)lt->get_number(spacing_value));
+    lt->push(vm, make_vector2(vm, (double)measured.x, (double)measured.y));
+    return 1;
+}
+
+static uint8_t font_draw(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 6) lt->runtime_error(vm, "draw expects text, a Vector2 position, a size, a spacing, and a Color!");
+    lt_Value tint = lt->pop(vm);
+    lt_Value spacing_value = lt->pop(vm);
+    lt_Value size_value = lt->pop(vm);
+    lt_Value position_value = lt->pop(vm);
+    lt_Value text_value = lt->pop(vm);
+    Font* font = font_data(vm, lt->pop(vm), "Expected a Font!");
+    expect_string(vm, text_value, "Expected text to be string!");
+    expect_number(vm, size_value, "Expected a font size number!");
+    expect_number(vm, spacing_value, "Expected a spacing number!");
+    LtVector2* position = vector2_data(vm, position_value, "Expected a Vector2 position!");
+    Color color = expect_color(vm, tint, "Expected a Color tint!");
+    if (font->texture.id == 0) lt->runtime_error(vm, "Ray font has been unloaded!");
+    require_draw_target(vm);
+    const char* source = lt->get_string(vm, text_value);
+    char* copy = malloc(strlen(source) + 1);
+    if (!copy) lt->runtime_error(vm, "Out of memory!");
+    memcpy(copy, source, strlen(source) + 1);
+    RayTextExCommand* payload = allocate_native_data(vm, sizeof(RayTextExCommand));
+    memset(payload, 0, sizeof(RayTextExCommand));
+    payload->font = *font;
+    payload->position.x = (float)position->x;
+    payload->position.y = (float)position->y;
+    payload->size = (float)lt->get_number(size_value);
+    payload->spacing = (float)lt->get_number(spacing_value);
+    RayCommand command = new_command(RAY_CMD_TEXT_EX);
+    command.color = color;
+    command.text = copy;
+    command.payload = payload;
+    push_command(command);
+    return 0;
+}
+
+static uint8_t font_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    Font* font = font_data(vm, lt->pop(vm), "Expected a Font!");
+    char text[48];
+    snprintf(text, sizeof(text), "font(%d)", font->baseSize);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
 static uint8_t native_open(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 3) lt->runtime_error(vm, "Expected width, height, and title for ray.open!");
+    if (argc != 3 && argc != 4) lt->runtime_error(vm, "Expected width, height, title, and optional window options for ray.open!");
+    lt_Value options = argc == 4 ? lt->pop(vm) : LT_VALUE_NULL;
     lt_Value title = lt->pop(vm);
     lt_Value height = lt->pop(vm);
     lt_Value width = lt->pop(vm);
     expect_number(vm, width, "Expected ray window width to be number!");
     expect_number(vm, height, "Expected ray window height to be number!");
     expect_string(vm, title, "Expected ray window title to be string!");
+    if (!LT_IS_NULL(options) && !LT_IS_TABLE(options)) lt->runtime_error(vm, "Expected a table of ray window options!");
     if (window_open) lt->runtime_error(vm, "Ray window is already open!");
+    unsigned int flags = 0;
+    if (LT_IS_TABLE(options))
+    {
+        if (table_field_bool(vm, options, "hidden", 0)) flags |= FLAG_WINDOW_HIDDEN;
+        if (table_field_bool(vm, options, "resizable", 0)) flags |= FLAG_WINDOW_RESIZABLE;
+        if (table_field_bool(vm, options, "vsync", 0)) flags |= FLAG_VSYNC_HINT;
+        if (table_field_bool(vm, options, "fullscreen", 0)) flags |= FLAG_FULLSCREEN_MODE;
+        if (table_field_bool(vm, options, "undecorated", 0)) flags |= FLAG_WINDOW_UNDECORATED;
+        if (table_field_bool(vm, options, "alwaysRun", 0)) flags |= FLAG_WINDOW_ALWAYS_RUN;
+    }
+    SetConfigFlags(flags);
     InitWindow((int)lt->get_number(width), (int)lt->get_number(height), lt->get_string(vm, title));
     if (!IsWindowReady()) lt->runtime_error(vm, "Failed to initialize the ray window!");
     window_open = 1;
     started = 0;
     clear_commands();
     has_clear = 0;
+    return 0;
+}
+
+static uint8_t native_trace_log(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a log level for ray.traceLog!");
+    lt_Value level = lt->pop(vm);
+    expect_number(vm, level, "Expected a ray log level number!");
+    SetTraceLogLevel((int)lt->get_number(level));
     return 0;
 }
 
@@ -770,13 +1190,31 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
     for (uint32_t i = 0; i < command_count; ++i)
     {
         RayCommand* command = &commands[i];
-        if (command->kind == RAY_CMD_RECT)
-            DrawRectangle(command->x, command->y, command->w, command->h, command->color);
-        else
+        RayTextureCommand* texture_command = command->payload;
+        switch (command->kind)
         {
+        case RAY_CMD_RECT:
+            DrawRectangle(command->x, command->y, command->w, command->h, command->color);
+            break;
+        case RAY_CMD_TEXT:
             DrawText(command->text, command->x, command->y, command->size, command->color);
-            free(command->text);
-            command->text = 0;
+            break;
+        case RAY_CMD_TEXTURE:
+            DrawTextureV(texture_command->texture, texture_command->position, command->color);
+            break;
+        case RAY_CMD_TEXTURE_REC:
+            DrawTextureRec(texture_command->texture, texture_command->source, texture_command->position, command->color);
+            break;
+        case RAY_CMD_TEXTURE_PRO:
+            DrawTexturePro(texture_command->texture, texture_command->source, texture_command->dest,
+                texture_command->origin, texture_command->rotation, command->color);
+            break;
+        case RAY_CMD_TEXT_EX: {
+            RayTextExCommand* text_command = command->payload;
+            DrawTextEx(text_command->font, command->text, text_command->position,
+                text_command->size, text_command->spacing, command->color);
+            break;
+        }
         }
     }
     EndDrawing();
@@ -803,15 +1241,12 @@ static uint8_t native_rect(lt_VM* vm, uint8_t argc)
     lt_Value bounds_value = lt->pop(vm);
     Color color = expect_color(vm, color_value, "Expected a Color for ray.rect!");
     LtRectangle* bounds = rectangle_data(vm, bounds_value, "Expected a Rectangle for ray.rect!");
-    RayCommand command;
-    command.kind = RAY_CMD_RECT;
+    RayCommand command = new_command(RAY_CMD_RECT);
     command.x = (int)bounds->x;
     command.y = (int)bounds->y;
     command.w = (int)bounds->width;
     command.h = (int)bounds->height;
-    command.size = 0;
     command.color = color;
-    command.text = 0;
     require_draw_target(vm);
     push_command(command);
     return 0;
@@ -831,12 +1266,9 @@ static uint8_t native_text(lt_VM* vm, uint8_t argc)
     LtVector2* position = vector2_data(vm, position_value, "Expected a Vector2 for ray.text!");
     Color color = expect_color(vm, color_value, "Expected a Color for ray.text!");
     require_draw_target(vm);
-    RayCommand command;
-    command.kind = RAY_CMD_TEXT;
+    RayCommand command = new_command(RAY_CMD_TEXT);
     command.x = (int)position->x;
     command.y = (int)position->y;
-    command.w = 0;
-    command.h = 0;
     command.size = size;
     command.color = color;
     const char* source = lt->get_string(vm, message);
@@ -1003,6 +1435,44 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     RAY_CLASS_METHOD(rectangle_class, "toString", rectangle_to_string);
     lt->table_set(vm, module_value, lt->make_string(vm, "Rectangle"), rectangle_class);
 
+    /* Resource types are created by their loaders, so they register no constructor. */
+    image_class = lt->class_create(vm, "Image");
+    lt->class_set_native_data_destroy(vm, image_class, destroy_image);
+    RAY_CLASS_GETTER(image_class, "width", image_get_width);
+    RAY_CLASS_GETTER(image_class, "height", image_get_height);
+    RAY_CLASS_METHOD(image_class, "unload", image_unload);
+    RAY_CLASS_METHOD(image_class, "export", image_export);
+    RAY_CLASS_METHOD(image_class, "toString", image_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Image"), image_class);
+
+    texture_class = lt->class_create(vm, "Texture");
+    lt->class_set_native_data_destroy(vm, texture_class, destroy_texture);
+    RAY_CLASS_GETTER(texture_class, "width", texture_get_width);
+    RAY_CLASS_GETTER(texture_class, "height", texture_get_height);
+    RAY_CLASS_METHOD(texture_class, "draw", texture_draw);
+    RAY_CLASS_METHOD(texture_class, "drawRec", texture_draw_rec);
+    RAY_CLASS_METHOD(texture_class, "drawPro", texture_draw_pro);
+    RAY_CLASS_METHOD(texture_class, "unload", texture_unload);
+    RAY_CLASS_METHOD(texture_class, "toString", texture_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Texture"), texture_class);
+
+    font_class = lt->class_create(vm, "Font");
+    lt->class_set_native_data_destroy(vm, font_class, destroy_font);
+    RAY_CLASS_GETTER(font_class, "baseSize", font_get_base_size);
+    RAY_CLASS_GETTER(font_class, "glyphCount", font_get_glyph_count);
+    RAY_CLASS_METHOD(font_class, "measure", font_measure);
+    RAY_CLASS_METHOD(font_class, "draw", font_draw);
+    RAY_CLASS_METHOD(font_class, "unload", font_unload);
+    RAY_CLASS_METHOD(font_class, "toString", font_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Font"), font_class);
+
+    set_native(vm, module_value, "loadImage", native_load_image);
+    set_native(vm, module_value, "genImageColor", native_gen_image_color);
+    set_native(vm, module_value, "loadTexture", native_load_texture);
+    set_native(vm, module_value, "loadTextureFromImage", native_load_texture_from_image);
+    set_native(vm, module_value, "loadFont", native_load_font);
+    set_native(vm, module_value, "traceLog", native_trace_log);
+
     set_native(vm, module_value, "open", native_open);
     set_native(vm, module_value, "close", native_close);
     set_native(vm, module_value, "on", native_on);
@@ -1034,6 +1504,17 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_number(vm, keys, "mouseRight", 1);
     set_number(vm, keys, "mouseMiddle", 2);
     lt->table_set(vm, module_value, lt->make_string(vm, "keys"), keys);
+
+    lt_Value log_levels = lt->make_table(vm);
+    set_number(vm, log_levels, "all", 0);
+    set_number(vm, log_levels, "trace", 1);
+    set_number(vm, log_levels, "debug", 2);
+    set_number(vm, log_levels, "info", 3);
+    set_number(vm, log_levels, "warning", 4);
+    set_number(vm, log_levels, "error", 5);
+    set_number(vm, log_levels, "fatal", 6);
+    set_number(vm, log_levels, "none", 7);
+    lt->table_set(vm, module_value, lt->make_string(vm, "log"), log_levels);
 
     lt_Value colors = lt->make_table(vm);
     set_color(vm, colors, "lightgray", 200, 200, 200, 255);

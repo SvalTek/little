@@ -32,8 +32,10 @@ sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev
 ```
 
 CI cannot open windows, so the e2e tests (`tests/e2e/native-raylib*.little`)
-only assert the load surface, value types, and error paths. Windowed behavior
-is exercised manually with `scripts/raylib/demo.little`.
+assert the load surface, value types, CPU-side `Image` behavior, and error
+paths. Anything that needs a GL context (textures, fonts, drawing) is verified
+against a hidden window with `ray.open(..., { hidden: true })`; the runnable
+windowed example is `scripts/raylib/demo.little`.
 
 ## Lifecycle
 
@@ -63,8 +65,32 @@ ray.close()
 `update` callback, replays them inside `BeginDrawing`/`EndDrawing`, polls
 Little async work (`lt->poll`), and returns whether the window is still open.
 A callback that calls `close()` ends the loop cleanly; the frame is not drawn.
-Draw helpers only buffer commands for the current frame (cap 4096); windows and
+Draw helpers only buffer commands for the current frame (cap 1024); windows and
 GL calls all stay on the calling thread.
+
+`open` accepts an optional fourth argument, a table of window options applied
+before the window is created:
+
+```js
+ray.open(800, 450, "demo", { hidden: true, resizable: true, vsync: true })
+```
+
+| Option | Effect |
+| --- | --- |
+| `hidden` | Create the window hidden (useful for offscreen work) |
+| `resizable` | Allow the user to resize the window |
+| `vsync` | Enable vertical sync |
+| `fullscreen` | Start in fullscreen |
+| `undecorated` | Remove the window frame |
+| `alwaysRun` | Keep rendering while minimized or unfocused |
+
+A runtime error raised inside a `start` or `update` callback is reported but
+does not stop the loop; the callback aborts for that frame and the next
+`update()` continues. Scripts that drive the loop must therefore be careful
+that an error cannot leave the window open forever.
+
+The library emits raylib log lines on stdout. Tests and other output-sensitive
+scripts should call `ray.traceLog(ray.log.none)` (or `ray.log.warning`) first.
 
 ## Value types
 
@@ -107,11 +133,56 @@ Color channels are clamped to `0`-`255`. `mul` is component-wise; `scale`
 takes a number. `toString` formats as `(x, y)`, `(x, y, z)`, `(x, y, w, h)`, or
 `rgba(r, g, b, a)`.
 
+## Resources
+
+`Image`, `Texture`, and `Font` wrap raylib's resource structs. They are created
+by loader functions rather than by calling the class, and each instance owns
+its raylib object: the payload is released when the instance is unloaded or
+collected, so no explicit free is required.
+
+```js
+var image = ray.genImageColor(16, 16, ray.colors.skyblue)   ; CPU only
+var texture = ray.loadTextureFromImage(image)               ; needs a window
+image:unload()                                              ; optional
+
+texture:draw(ray.Vector2(10, 10), ray.colors.white)
+
+var font = ray.loadFont("assets/Inter.ttf", 32)
+font:draw("hello", ray.Vector2(10, 40), 24, 1, ray.colors.white)
+io.print(font:measure("hello", 24, 1):toString())
+```
+
+`Image` lives in CPU memory, so `loadImage` and `genImageColor` work without a
+window. `Texture` and `Font` need a live GL context: loading them without
+`ray.open` raises, and `unload()` on a closed window simply drops the handle,
+because the GPU objects died with the context.
+
+| Type | Fields | Methods |
+| --- | --- | --- |
+| `Image` | `width`, `height` | `unload`, `export`, `toString` |
+| `Texture` | `width`, `height` | `draw`, `drawRec`, `drawPro`, `unload`, `toString` |
+| `Font` | `baseSize`, `glyphCount` | `measure`, `draw`, `unload`, `toString` |
+
+| Loader | Source |
+| --- | --- |
+| `loadImage(path)` | Image file from disk |
+| `genImageColor(width, height, color)` | Generated solid image |
+| `loadTexture(path)` | Texture from an image file (window required) |
+| `loadTextureFromImage(image)` | Texture from an `Image` (window required) |
+| `loadFont(path, size)` | Font from a `.ttf`/`.otf` file (window required) |
+
+`texture:draw(position, tint)` draws the whole texture,
+`texture:drawRec(source, position, tint)` draws a source rectangle, and
+`texture:drawPro(source, dest, origin, rotation, tint)` draws with scaling and
+rotation. `font:draw(text, position, size, spacing, tint)` and
+`font:measure(text, size, spacing)` mirror `DrawTextEx`/`MeasureTextEx`;
+`measure` returns a `Vector2`.
+
 ## API
 
 | Little API | Meaning |
 | --- | --- |
-| `open(width, height, title)` | Open the single process window |
+| `open(width, height, title [, options])` | Open the single process window |
 | `close()` | Close the window if open |
 | `on("start" \| "update", fn)` | Register lifecycle callbacks |
 | `update()` | Run one frame; returns `false` when the window should close |
@@ -123,9 +194,15 @@ takes a number. `toString` formats as `(x, y)`, `(x, y, z)`, `(x, y, w, h)`, or
 | `mousePressed(button)` | Whether a mouse button was pressed |
 | `mouse()` | Current mouse position as a `Vector2` |
 | `setFPS(n)` | Cap the frame rate |
+| `traceLog(level)` | Set the raylib log threshold (`ray.log.*`) |
+| `loadImage(path)`, `genImageColor(w, h, color)` | Create an `Image` |
+| `loadTexture(path)`, `loadTextureFromImage(image)` | Create a `Texture` |
+| `loadFont(path, size)` | Create a `Font` |
 | `Vector2`, `Vector3`, `Color`, `Rectangle` | Value type constructors |
+| `Image`, `Texture`, `Font` | Resource types (created by their loaders) |
 | `colors` | Named raylib palette (`lightgray` … `raywhite`, `blank`) |
 | `keys` | Key/mouse code table (`space`, `enter`, `escape`, `left/right/up/down`, `wasd`, `mouseLeft/Right/Middle`) |
+| `log` | Trace log levels (`all` … `none`) |
 | `version` | Vendored raylib version string |
 
 One window per process: loading the library into a second VM is rejected,

@@ -1,0 +1,60 @@
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+ray.traceLog(ray.log.none)
+
+; Images live in CPU memory, so they work without a window.
+var image = ray.genImageColor(4, 3, ray.colors.red)
+io.print(typeof image is ray.Image)
+io.print(type image)
+io.print(image.width)
+io.print(image.height)
+io.print(image:toString())
+io.print(image:export("build/raylib-image.png"))
+
+var reloaded = ray.loadImage("build/raylib-image.png")
+io.print(reloaded.width)
+io.print(reloaded.height)
+reloaded:unload()
+io.print(reloaded:toString())
+io.print(reloaded.width)
+reloaded:unload()
+
+; Textures and fonts need a live GL context.
+var noTexture = pcall(fn() { return ray.loadTexture("build/raylib-image.png") })
+io.print(noTexture.ok)
+io.print(string.contains(noTexture.error, "ray.open"))
+
+var noFromImage = pcall(fn() { return ray.loadTextureFromImage(image) })
+io.print(noFromImage.ok)
+io.print(string.contains(noFromImage.error, "ray.open"))
+
+var noFont = pcall(fn() { return ray.loadFont("build/missing.ttf", 16) })
+io.print(noFont.ok)
+io.print(string.contains(noFont.error, "ray.open"))
+
+var missingImage = pcall(fn() { return ray.loadImage("build/missing-image.png") })
+io.print(missingImage.ok)
+
+var badImageSize = pcall(fn() { return ray.genImageColor(0, 3, ray.colors.red) })
+io.print(badImageSize.ok)
+
+var badImageColor = pcall(fn() { return ray.genImageColor(4, 3, "red") })
+io.print(badImageColor.ok)
+
+var badFromImage = pcall(fn() { return ray.loadTextureFromImage({ x: 1 }) })
+io.print(badFromImage.ok)
+
+; Resource classes are created by their loaders, not by calling the class.
+var emptyImage = ray.Image()
+var emptyUse = pcall(fn() { return emptyImage.width })
+io.print(emptyUse.ok)
+io.print(string.contains(emptyUse.error, "Expected an Image"))
+
+io.print(ray.log.none is 7)
+
+var badLog = pcall(fn() { return ray.traceLog("quiet") })
+io.print(badLog.ok)
+
+var badOptions = pcall(fn() { return ray.open(10, 10, "title", "nope") })
+io.print(badOptions.ok)
+io.print(string.contains(badOptions.error, "options"))
