@@ -1,0 +1,36 @@
+; Raylib native-library demo. Needs a display; not run by scripts/run.ps1.
+;
+; Build first:
+;   task build:nativelibs
+;
+; Then run:
+;   build/little.exe scripts/raylib/demo.little
+
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+ray.open(800, 450, "little + raylib")
+
+var x = 10.0
+
+ray.on("start", fn() {
+    ray.setFPS(60)
+    io.print("raylib " + ray.version)
+})
+
+ray.on("update", fn(dt) {
+    x = x + 120.0 * dt
+    if x > 680.0 {
+        x = 10.0
+    }
+    ray.clear({ r: 20, g: 20, b: 30 })
+    ray.rect(x, 200, 120, 40, { r: 255, g: 100, b: 50 })
+    ray.text("little + raylib", 10, 60, 20, ray.white)
+    if ray.keyPressed(ray.keys.escape) {
+        ray.close()
+    }
+})
+
+while ray.update() {
+}
+
+ray.close()

@@ -4,6 +4,8 @@ dist/
 vendor/*
 !vendor/webui/
 !vendor/webui/**
+!vendor/raylib/
+!vendor/raylib/**
 .env
 !.env.example
 tests/native/reenter.dll

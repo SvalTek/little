@@ -38,6 +38,8 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: go-task/setup-task@v2
+      - name: Install native library build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
       - name: Build CLI
         run: task build
       - name: Build release CLI
@@ -71,6 +73,8 @@ jobs:
         with:
           name: build-linux-x64
           path: .
+      - name: Install native library build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
       - name: Run tests
         run: task test
 

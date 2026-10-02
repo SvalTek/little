@@ -153,6 +153,14 @@ if (!$SkipBuild) {
             throw "Native library fixture build failed with exit code $LASTEXITCODE"
         }
     }
+
+    $raylibVendor = Join-Path $repo "vendor/raylib/src"
+    if (Test-Path $raylibVendor) {
+        & (Join-Path $repo "nativelib/raylib/build.ps1") -Compiler $Compiler -IncludeFlags $includeFlags
+    }
+    else {
+        Write-Warning "vendor/raylib is not initialized; the native-raylib e2e test will fail. Run 'git submodule update --init vendor/raylib'."
+    }
 }
 
 function Normalize([string]$Text) {

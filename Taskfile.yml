@@ -97,12 +97,17 @@ tasks:
       - pwsh -ExecutionPolicy Bypass -File ./nativelib/build.ps1
     sources:
       - nativelib/**/*.c
+      - nativelib/raylib/build.ps1
       - src/*.h
       - vendor/webui/**
+      - vendor/raylib/src/**
     generates:
       - nativelib/json/build/json.dll
       - nativelib/json/build/json.so
       - nativelib/json/build/json.dylib
+      - nativelib/raylib/build/raylib.dll
+      - nativelib/raylib/build/raylib.so
+      - nativelib/raylib/build/raylib.dylib
 
   sizes:
     desc: Build release-size variants and print artifact sizes
