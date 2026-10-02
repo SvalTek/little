@@ -93,7 +93,7 @@ var ephemeralClass = NativeBox
 var ephemeral = ephemeralClass(12)
 native.dropNativeClass()
 native.NativeBox = null
-var clearedClassUse = pcall(fn() { return native.rawNativeValue(OtherBox()) })
+var clearedClassUse = pcall(fn() { return native.rawNativeValue(ephemeral) })
 io.print(not clearedClassUse.ok)
 ephemeralClass = null
 ephemeral = null
