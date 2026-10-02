@@ -200,10 +200,9 @@ void (*instance_clear_native_data)(lt_VM* vm, lt_Value instance);
 members before returning it from `ltopen`, usually by storing the class in the
 module table. Native class members follow Little's class rules: names must be
 Little identifiers, same-name members conflict except for a getter/setter pair,
-and public inherited members require `override` with the same member kind. A
-class created by this API has no superclass, and native-to-native inheritance
-is not supported, so `is_override` must be false for classes created by this
-API.
+and public inherited members require `override` with the same member kind.
+Native-to-native inheritance is not supported, so `is_override` must be false
+for classes created by this API.
 Constructors do not take visibility or override flags. Registration errors are
 runtime errors.
 

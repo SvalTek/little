@@ -38,6 +38,8 @@ class OverrideBox extends NativeBox {
 }
 
 var box = DeepBox(5)
+class OtherBox {
+}
 io.print(typeof box is DeepBox)
 io.print(type box)
 io.print(box.value)
@@ -50,6 +52,8 @@ var privateCall = pcall(fn() { return box:hidden() })
 io.print(not privateCall.ok)
 var badReceiver = pcall(fn() { return native.rawNativeValue({}) })
 io.print(not badReceiver.ok)
+var wrongNativeClass = pcall(fn() { return native.rawNativeValue(OtherBox()) })
+io.print(not wrongNativeClass.ok)
 var duplicateRegistration = pcall(native.tryDuplicateRegistration)
 io.print(not duplicateRegistration.ok)
 var reservedRegistration = pcall(native.tryReservedRegistration)
@@ -89,10 +93,8 @@ var ephemeralClass = NativeBox
 var ephemeral = ephemeralClass(12)
 native.dropNativeClass()
 native.NativeBox = null
-class OtherBox {
-}
-var staleClassUse = pcall(fn() { return native.rawNativeValue(OtherBox()) })
-io.print(not staleClassUse.ok)
+var clearedClassUse = pcall(fn() { return native.rawNativeValue(OtherBox()) })
+io.print(not clearedClassUse.ok)
 ephemeralClass = null
 ephemeral = null
 box = null
