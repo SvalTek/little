@@ -435,6 +435,9 @@ typedef struct lt_SharedObject lt_SharedObject;
 typedef struct lt_Api lt_Api;
 
 typedef uint8_t(*lt_NativeFn)(lt_VM* vm, uint8_t argc);
+/* Called during instance finalization. Must only release native resources; it
+   must not call back into Little, allocate VM values, or trigger collection. */
+typedef void(*lt_NativeDataDestroyFn)(void* data);
 
 /* A host poll hook is called by lt_poll on the VM's owning thread. Return
    LT_POLL_WORK when it handled input, LT_POLL_PENDING while it needs the
@@ -447,6 +450,8 @@ typedef enum {
 
 typedef lt_PollResult(*lt_PollHook)(lt_VM* vm, void* context);
 
+/* Internal heap representation. Native library ABI is provided by lt_Api;
+   consumers must not depend on lt_Object's size or union layout. */
 typedef struct lt_Object {
 	lt_ObjectType type;
 
@@ -512,12 +517,16 @@ typedef struct lt_Object {
 			lt_Table private_setters;
 			lt_Value constructor;
 			struct lt_Object* superclass;
+			lt_NativeDataDestroyFn native_data_destroy;
+			uint8_t is_native_class;
 		} class_def;
 		struct
 		{
 			struct lt_Object* klass;
 			lt_Table public_fields;
 			lt_Table private_fields;
+			void* native_data;
+			lt_NativeDataDestroyFn native_data_destroy;
 		} instance;
 		lt_Value cell;
 		void* ptr;
@@ -596,6 +605,9 @@ struct lt_VM {
 	char* error_trap;
 	uint8_t trap_errors;
 	uint8_t generate_debug;
+
+	/* Appended to preserve offsets of fields exposed by earlier headers. */
+	lt_Buffer temporary_roots;
 };
 
 lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error);
@@ -665,6 +677,17 @@ lt_Value lt_make_native(lt_VM* vm, lt_NativeFn fn);
 lt_Value lt_make_ptr(lt_VM* vm, void* ptr);
 void* lt_get_ptr(lt_Value ptr);
 
+lt_Value lt_class_create(lt_VM* vm, const char* name);
+void lt_class_set_constructor(lt_VM* vm, lt_Value klass, lt_NativeFn fn);
+void lt_class_add_method(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override);
+void lt_class_add_getter(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override);
+void lt_class_add_setter(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override);
+void lt_class_set_native_data_destroy(lt_VM* vm, lt_Value klass, lt_NativeDataDestroyFn destroy);
+void lt_instance_set_native_data(lt_VM* vm, lt_Value instance, lt_Value native_class, void* data);
+void* lt_instance_get_native_data(lt_VM* vm, lt_Value instance, lt_Value native_class);
+void lt_instance_dispose_native_data(lt_VM* vm, lt_Value instance);
+void lt_instance_clear_native_data(lt_VM* vm, lt_Value instance);
+
 #define LT_API_VERSION 3
 
 struct lt_Api {
@@ -713,6 +736,18 @@ struct lt_Api {
 	void (*root)(lt_VM* vm, lt_Value value);
 	void (*unroot)(lt_VM* vm, lt_Value value);
 	uint8_t (*equals)(lt_Value a, lt_Value b);
+	/* API v3 addendum: native-backed classes and instance payloads. */
+	lt_Value (*class_create)(lt_VM* vm, const char* name);
+	void (*class_set_constructor)(lt_VM* vm, lt_Value klass, lt_NativeFn fn);
+	void (*class_add_method)(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override);
+	void (*class_add_getter)(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override);
+	void (*class_add_setter)(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override);
+	void (*class_set_native_data_destroy)(lt_VM* vm, lt_Value klass, lt_NativeDataDestroyFn destroy);
+	void (*instance_set_native_data)(lt_VM* vm, lt_Value instance, lt_Value native_class, void* data);
+	void* (*instance_get_native_data)(lt_VM* vm, lt_Value instance, lt_Value native_class);
+	void (*instance_dispose_native_data)(lt_VM* vm, lt_Value instance);
+	void (*instance_clear_native_data)(lt_VM* vm, lt_Value instance);
+
 	/* Roots retained beyond the current native callback, until explicitly removed. */
 	void (*root_persistent)(lt_VM* vm, lt_Value value);
 	void (*unroot_persistent)(lt_VM* vm, lt_Value value);

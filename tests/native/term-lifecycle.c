@@ -8,6 +8,8 @@ lt_Value ltopen(lt_VM* vm, const lt_Api* api);
 void lt_term_shutdown(void);
 void lt_term_test_set_active_poll_hook(lt_VM* vm, uint32_t poll_hook);
 void lt_term_test_set_callback(lt_VM* vm, lt_Value callback);
+lt_PollResult lt_term_test_poll(lt_VM* vm);
+uint32_t lt_term_test_key_reads(void);
 
 static lt_VM test_vms[24];
 static lt_VM* removed_vm;
@@ -108,17 +110,22 @@ int main(void)
     persistent_roots = 0;
     persistent_unroots = 0;
     lt_term_test_set_active_poll_hook(&test_vms[0], 73);
+    if (lt_term_test_poll(&test_vms[0]) != LT_POLL_IDLE || lt_term_test_key_reads() != 0)
+    {
+        fprintf(stderr, "terminal polling consumed input without a callback\n");
+        return 3;
+    }
     lt_term_test_set_callback(&test_vms[0], LT_VALUE_TRUE);
     lt_term_shutdown();
     if (removed_vm != &test_vms[0] || removed_hook != 73)
     {
         fprintf(stderr, "terminal shutdown did not unregister its poll hook\n");
-        return 3;
+        return 4;
     }
     if (persistent_roots != 1 || persistent_unroots != 1)
     {
         fprintf(stderr, "terminal shutdown did not release its persistent callback root\n");
-        return 4;
+        return 5;
     }
 
     return 0;

@@ -36,6 +36,9 @@ typedef struct
 
 static const lt_Api* lt = 0;
 static TermState state;
+#ifdef LT_TERM_TESTING
+static uint32_t lt_term_test_key_read_count;
+#endif
 
 /* Per-VM module association.  Each VM that loads the module gets its own
    table; the table is recorded here and bound into `state.module` only when
@@ -202,8 +205,13 @@ static lt_Value make_event(lt_VM* vm, int key)
  */
 static int next_key(void)
 {
+#ifdef LT_TERM_TESTING
+    ++lt_term_test_key_read_count;
+    return ERR;
+#else
     timeout(0);
     return getch();
+#endif
 }
 
 /**
@@ -337,9 +345,9 @@ static lt_PollResult term_poll_hook(lt_VM* vm, void* context)
 {
     TermState* terminal = context;
     int key;
-    if (!terminal->active || terminal->vm != vm) return LT_POLL_IDLE;
+    if (!terminal->active || terminal->vm != vm || !terminal->callback_set) return LT_POLL_IDLE;
     key = next_key();
-    if (key == ERR) return terminal->callback_set ? LT_POLL_PENDING : LT_POLL_IDLE;
+    if (key == ERR) return LT_POLL_PENDING;
     if (terminal->callback_set)
     {
         uint8_t saved_trap = vm->trap_errors;
@@ -817,6 +825,16 @@ void lt_term_test_set_active_poll_hook(lt_VM* vm, uint32_t poll_hook)
     state.module = LT_VALUE_NULL;
     state.active = 1;
     state.poll_hook = poll_hook;
+}
+
+lt_PollResult lt_term_test_poll(lt_VM* vm)
+{
+    return term_poll_hook(vm, &state);
+}
+
+uint32_t lt_term_test_key_reads(void)
+{
+    return lt_term_test_key_read_count;
 }
 
 void lt_term_test_set_callback(lt_VM* vm, lt_Value callback)

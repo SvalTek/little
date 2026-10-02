@@ -167,6 +167,10 @@ if (!$SkipBuild) {
         @{
             Source = Join-Path $repo "tests/native/rooting.c"
             Output = Join-Path $repo "tests/native/rooting$nativeExt"
+        },
+        @{
+            Source = Join-Path $repo "tests/native/native-class.c"
+            Output = Join-Path $repo "tests/native/native-class$nativeExt"
         }
     )
     $sharedLibraryFlag = if ($IsMacOS) { "-dynamiclib" } else { "-shared" }

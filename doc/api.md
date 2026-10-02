@@ -159,17 +159,15 @@ The table includes value constructors/accessors, table and array helpers,
 with asynchronous host APIs should use those function pointers rather than
 linking against VM symbols or reading VM stack/frame internals.
 
-Members were appended to `lt_Api` after `poll_now`. They are additive and
-do not require a new `LT_API_VERSION`: the `size` field remains the compatibility
-gate, so an older host hands back a table whose `size` is smaller than the
-library's `sizeof(lt_Api)` and the load is rejected by the standard guard.
+Members appended to `lt_Api` after `poll_now` are additive and do not require a
+new `LT_API_VERSION`: the `size` field remains the compatibility gate, so an
+older host hands back a table whose `size` is smaller than the library's
+`sizeof(lt_Api)` and the load is rejected by the standard guard.
 
 ```c
 void (*root)(lt_VM* vm, lt_Value value);
 void (*unroot)(lt_VM* vm, lt_Value value);
 uint8_t (*equals)(lt_Value a, lt_Value b);
-void (*root_persistent)(lt_VM* vm, lt_Value value);
-void (*unroot_persistent)(lt_VM* vm, lt_Value value);
 ```
 
 `root` keeps any `lt_Value` alive during the current native callback, including
@@ -188,6 +186,71 @@ and shutdown. Non-object values do not need rooting.
 
 `equals` exposes the language's value equality operation to native libraries,
 so they can compare values without linking against the host executable.
+
+API v3 also appends the native-backed class functions below. Native libraries
+must use the passed API table and check that it is API v3. Within API v3, the
+table's `size` determines whether these appended members are available. These
+class entries follow `equals`; the persistent-root entries follow the class
+entries in the `lt_Api` layout.
+
+```c
+lt_Value (*class_create)(lt_VM* vm, const char* name);
+void (*class_set_constructor)(lt_VM* vm, lt_Value klass, lt_NativeFn fn);
+void (*class_add_method)(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override);
+void (*class_add_getter)(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override);
+void (*class_add_setter)(lt_VM* vm, lt_Value klass, const char* name, lt_NativeFn fn, lt_Visibility visibility, uint8_t is_override);
+void (*class_set_native_data_destroy)(lt_VM* vm, lt_Value klass, lt_NativeDataDestroyFn destroy);
+void (*instance_set_native_data)(lt_VM* vm, lt_Value instance, lt_Value native_class, void* data);
+void* (*instance_get_native_data)(lt_VM* vm, lt_Value instance, lt_Value native_class);
+void (*instance_dispose_native_data)(lt_VM* vm, lt_Value instance);
+void (*instance_clear_native_data)(lt_VM* vm, lt_Value instance);
+```
+
+```c
+void (*root_persistent)(lt_VM* vm, lt_Value value);
+void (*unroot_persistent)(lt_VM* vm, lt_Value value);
+```
+
+`class_create` creates a callable Little class with no superclass. Register its
+members before returning it from `ltopen`, usually by storing the class in the
+module table. Native class members follow Little's class rules: names must be
+Little identifiers, same-name members conflict except for a getter/setter pair,
+and public inherited members require `override` with the same member kind.
+Native-to-native inheritance is not supported, so `is_override` must be false
+for classes created by this API.
+Constructors do not take visibility or override flags. Registration errors are
+runtime errors.
+
+Native callbacks use the usual `lt_NativeFn` stack convention. A constructor or
+method receives the instance as its first argument, a getter receives only the
+instance, and a setter receives the instance followed by the assigned value.
+Methods and constructors accept the user arguments provided by the call; the
+native callback validates its argument count. Registered callbacks execute as
+class-owned members, so Little's normal public/private lookup rules apply.
+
+Each instance has one native payload. `instance_set_native_data` attaches a
+non-null pointer once, requires that class to have a destroy callback, and
+requires the supplied native class to appear anywhere in the instance's
+superclass chain. This supports Little subclasses at any
+depth. The native class's destroy callback is copied to the instance when data
+is attached, so collection does not need to look up a class object to finalize
+the payload. The destroy callback runs at most once, when the instance is
+collected or the VM is destroyed. Loaded libraries remain open during VM
+finalization. The callback runs during collection while the heap is being
+swept. It must only release native resources: it must not call Little or any
+`lt_Api` function, allocate VM values, or trigger collection. This restriction
+also applies when `instance_dispose_native_data` invokes the callback.
+
+`instance_get_native_data` performs the same ancestry check and returns `NULL`
+after the payload has been cleared. `instance_dispose_native_data` calls the
+registered destroy callback and clears the payload. Use
+`instance_clear_native_data` when the native resource has already been
+destroyed elsewhere; it clears the pointer without calling the callback.
+
+`lt_Object` is a VM heap representation, not part of the `lt_Api` ABI. Native
+libraries must not allocate it, depend on its size, or read its union fields.
+Use the `LT_IS_*` macros for value type checks and the `lt_Api` functions for
+all other VM operations.
 
 A `lt_Value` held only in a C local is **not** a GC root. Use these functions
 for values that must survive a re-entrant VM call (`lt->exec`, `lt->poll`, or
@@ -273,6 +336,7 @@ lt_Value lt_make_table(lt_VM* vm);
 lt_Value lt_make_array(lt_VM* vm);
 lt_Value lt_make_native(lt_VM* vm, lt_NativeFn fn);
 lt_Value lt_make_ptr(lt_VM* vm, void* ptr);
+lt_Value lt_class_create(lt_VM* vm, const char* name);
 ```
 
 Some values can be easily retrieved as well:

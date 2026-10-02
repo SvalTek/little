@@ -39,10 +39,18 @@ Construction order is:
 
 1. Allocate a new instance.
 2. Run superclass field initializers, then this class's field initializers, each in class-body order.
-3. Run this class's `constructor(...)`, if present. If a subclass has no constructor, the superclass constructor is called with the original arguments.
+3. Run this class's `constructor(...)`, if present. Otherwise, the nearest ancestor constructor is called with the original arguments.
 4. Return the instance.
 
 Constructors are named `constructor(...)`. There is no `new` keyword. A constructor cannot be marked `public` or `private`.
+
+A native library can create and return a Little class through `lt_Api`. Native
+instances use the same class identity and property dispatch as Little-defined
+instances; `type` reports `"instance"`, and `typeof` returns the class object.
+The native constructor receives the instance followed by the user's arguments.
+The library can attach one native payload to that instance and provide a
+cleanup callback that runs when the payload is disposed or the instance is
+collected.
 
 ## Inheritance
 
@@ -71,9 +79,16 @@ class Dog extends Animal {
 
 The superclass must be named directly. Dynamic superclass expressions are not supported.
 
+A Little class may extend a native-backed class, including through multiple
+levels of Little subclasses. The instance keeps the native payload from its
+native base class. Native classes created by `lt_Api` have no superclass, and
+native class-to-native-class inheritance is not supported.
+
 Inherited public methods, getters, setters, and fields participate in lookup. A subclass member that shares a public inherited name is an error unless it is an explicit `override`, and `override` must match an inherited member of the same kind. Fields cannot be marked `override`.
 
-Inside a constructor, `super(...)` calls the superclass constructor for the current instance. Inside methods and constructors, `super.method(...)` calls an inherited public method with the current instance as `this`.
+Inside a constructor, `super(...)` calls the nearest ancestor constructor for
+the current instance. Inside methods and constructors, `super.method(...)`
+calls an inherited public method with the current instance as `this`.
 
 ## Public And Private Members
 
@@ -103,6 +118,10 @@ io.print(box:read()) ; hidden
 ```
 
 This is runtime-enforced privacy for Little code. It is not intended as a security boundary against native C API code.
+
+Native methods and accessors registered with `lt_Api` also follow the class's
+visibility rules. A native method declared private is not found by outside
+Little code, and native callbacks run with their declaring class context.
 
 Private members are class-private, not inherited-private. A subclass may declare a private member with the same name as a superclass private member; superclass methods see the superclass private member, and subclass methods see the subclass private member.
 
@@ -223,6 +242,11 @@ Rules:
 * Duplicate getters with the same visibility/name are errors.
 * Duplicate setters with the same visibility/name are errors.
 * No class members may share a name, except one getter and one setter for the same property.
+
+Native getters receive the instance as their only callback argument. Native
+setters receive the instance followed by the assigned value. As with other
+native callbacks, the C function is responsible for validating its argument
+count.
 
 Private accessors follow the same privacy rule as private fields and methods:
 
