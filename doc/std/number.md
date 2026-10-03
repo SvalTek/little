@@ -23,7 +23,10 @@ number.from(true)      ; null
 ```
 
 It never raises: anything that is not a number returns `null`, so a script can
-test a string without trapping.
+test a string without trapping. `"inf"` and `"-inf"` are accepted, because
+`string.from` produces them; `"nan"` is not, because a NaN cannot be stored (see
+the constants below), and neither are `strtod`'s payload forms such as
+`"nan(0x5000000000001)"`, whose bits can look like a value tag.
 
 `number.toBase(value, base [, prefix])` renders a whole number in a base from 2
 to 36. With `prefix` true, base 16 and base 2 emit `0x` and `0b`, so the result

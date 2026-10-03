@@ -7,9 +7,8 @@
 #include <string.h>
 
 /* number is about the number type itself: coercion, formatting, predicates,
-   ranges, bit operations, and limits. Arithmetic lives in math, and the two do
-   not overlap. Bit operations exist because the language has no bitwise
-   operators, so these are the only way to reach them. */
+   ranges, and limits. Arithmetic lives in math and bitwise work in bit, so the
+   three modules do not overlap. */
 
 #define LT_NUMBER_LIMIT 9007199254740991.0   /* 2^53 - 1, the largest exact integer */
 
@@ -24,6 +23,23 @@ static double _lt_number_pop(lt_VM* vm, const char* name)
     char message[96];
     snprintf(message, sizeof(message), "Expected argument to number.%s to be number!", name);
     return _lt_number_expect(vm, lt_pop(vm), message);
+}
+
+/* Discrete parameters (bases, decimal places) must be whole numbers: a
+   fractional value would be silently truncated by the cast, changing its
+   meaning, and roundTo would raise ten to a fractional power. The comparison
+   form also rejects NaN, which fails every comparison. */
+static double _lt_number_whole(lt_VM* vm, lt_Value value, const char* name, double minimum, double maximum)
+{
+    char message[128];
+    snprintf(message, sizeof(message), "Expected argument to number.%s to be number!", name);
+    double number = _lt_number_expect(vm, value, message);
+    if (!(number >= minimum && number <= maximum) || number != floor(number))
+    {
+        snprintf(message, sizeof(message), "Expected number.%s between %g and %g, as a whole number!", name, minimum, maximum);
+        lt_runtime_error(vm, message);
+    }
+    return number;
 }
 
 /* Shared by number.from: skips surrounding whitespace and reports where the
@@ -115,12 +131,16 @@ static uint8_t _lt_number_from(lt_VM* vm, uint8_t argc)
     else
     {
         /* strtod handles the fraction and exponent, but it accepts prefixes
-           such as "inf" and "nan" too; those round-trip through string.from,
-           so they are accepted here for the same reason. The sign was stripped
-           above, so it is reapplied here rather than passed through. */
+           such as "inf" and "nan" too. Infinity round-trips through
+           string.from, so it is accepted; NaN is not, because the boxed value
+           representation tags non-numbers with the quiet-NaN pattern, so a
+           stored NaN is indistinguishable from a tag - and strtod also accepts
+           implementation-defined payloads such as "nan(0x5000000000001)",
+           whose bits can look like a tag and be dereferenced. The sign was
+           stripped above, so it is reapplied here rather than passed through. */
         char* end = 0;
         parsed = sign * strtod(text, &end);
-        if (end != limit)
+        if (end != limit || isnan(parsed))
         {
             lt_push(vm, LT_VALUE_NULL);
             return 1;
@@ -142,8 +162,7 @@ static uint8_t _lt_number_format(lt_VM* vm, uint8_t argc)
     char message[96];
     snprintf(message, sizeof(message), "Expected argument to number.format to be number!");
     double number = _lt_number_expect(vm, value, message);
-    double decimals = _lt_number_expect(vm, decimals_value, "Expected number.format decimals to be number!");
-    if (!(decimals >= 0 && decimals <= 32)) lt_runtime_error(vm, "Expected number.format decimals between 0 and 32!");
+    double decimals = _lt_number_whole(vm, decimals_value, "format", 0, 32);
     if (!LT_IS_BOOL(separators)) lt_runtime_error(vm, "Expected number.format separators to be boolean!");
 
     char buffer[512];
@@ -190,8 +209,7 @@ static uint8_t _lt_number_tobase(lt_VM* vm, uint8_t argc)
     lt_Value base_value = lt_pop(vm);
     lt_Value value = lt_pop(vm);
     double number = _lt_number_expect(vm, value, "Expected argument to number.toBase to be number!");
-    double base = _lt_number_expect(vm, base_value, "Expected number.toBase base to be number!");
-    if (!(base >= 2 && base <= 36)) lt_runtime_error(vm, "Expected number.toBase base between 2 and 36!");
+    double base = _lt_number_whole(vm, base_value, "toBase", 2, 36);
     if (!LT_IS_BOOL(prefix)) lt_runtime_error(vm, "Expected number.toBase prefix to be boolean!");
     if (!isfinite(number) || number != floor(number)) lt_runtime_error(vm, "Expected number.toBase value to be a whole number!");
 
@@ -257,6 +275,14 @@ static uint8_t _lt_number_isclose(lt_VM* vm, uint8_t argc)
         lt_push(vm, LT_VALUE_TRUE);
         return 1;
     }
+    /* An infinite operand makes both the difference and the scaled tolerance
+       infinite, and INFINITY <= INFINITY would report unrelated values as
+       close, so anything non-finite is simply not close. */
+    if (!isfinite(a) || !isfinite(b))
+    {
+        lt_push(vm, LT_VALUE_FALSE);
+        return 1;
+    }
     double difference = fabs(a - b);
     double scale = fmax(fabs(a), fabs(b));
     double tolerance = epsilon * (scale > 1 ? scale : 1);
@@ -276,10 +302,17 @@ static uint8_t _lt_number_trunc(lt_VM* vm, uint8_t argc)
 static uint8_t _lt_number_roundto(lt_VM* vm, uint8_t argc)
 {
     if (argc != 2) lt_runtime_error(vm, "Expected a number and decimals to number.roundTo!");
-    double decimals = _lt_number_pop(vm, "roundTo");
+    double decimals = _lt_number_whole(vm, lt_pop(vm), "roundTo", 0, 15);
     double value = _lt_number_pop(vm, "roundTo");
-    if (!(decimals >= 0 && decimals <= 15)) lt_runtime_error(vm, "Expected number.roundTo decimals between 0 and 15!");
     double scale = pow(10.0, decimals);
+    /* Scaling first can overflow for very large values, which have no
+       fractional part at this precision anyway, so they are returned as-is
+       rather than turned into infinity. */
+    if (!isfinite(value * scale))
+    {
+        lt_push(vm, LT_VALUE_NUMBER(value));
+        return 1;
+    }
     lt_push(vm, LT_VALUE_NUMBER(round(value * scale) / scale));
     return 1;
 }
@@ -300,6 +333,8 @@ static uint8_t _lt_number_wrap(lt_VM* vm, uint8_t argc)
     double maximum = _lt_number_pop(vm, "wrap");
     double minimum = _lt_number_pop(vm, "wrap");
     double value = _lt_number_pop(vm, "wrap");
+    if (!isfinite(value) || !isfinite(minimum) || !isfinite(maximum))
+        lt_runtime_error(vm, "Expected number.wrap arguments to be finite!");
     if (!(maximum > minimum)) lt_runtime_error(vm, "Expected number.wrap maximum to be greater than minimum!");
     double span = maximum - minimum;
     double wrapped = fmod(value - minimum, span);
@@ -313,6 +348,7 @@ static uint8_t _lt_number_pingpong(lt_VM* vm, uint8_t argc)
     if (argc != 2) lt_runtime_error(vm, "Expected a number and a length to number.pingPong!");
     double length = _lt_number_pop(vm, "pingPong");
     double value = _lt_number_pop(vm, "pingPong");
+    if (!isfinite(value) || !isfinite(length)) lt_runtime_error(vm, "Expected number.pingPong arguments to be finite!");
     if (!(length > 0)) lt_runtime_error(vm, "Expected number.pingPong length to be positive!");
     double span = length * 2;
     double wrapped = fmod(value, span);

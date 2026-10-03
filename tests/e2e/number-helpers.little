@@ -55,3 +55,37 @@ io.print(number.infinity > 1000000)
 io.print(number.epsilon > 0)
 io.print(number.maxSafeInteger)
 io.print(number.minSafeInteger)
+
+; NaN cannot be stored in the boxed value representation, so it is rejected
+; rather than returned - including strtod's implementation-defined payloads,
+; whose bits can look like a value tag. Infinity round-trips, so it is kept.
+io.print(number.from("nan") is null)
+io.print(number.from("nan(0x5000000000001)") is null)
+io.print(number.from("inf"))
+io.print(number.from("-inf"))
+
+; An infinite operand is never close to a finite one, and the scaled tolerance
+; would otherwise make INFINITY <= INFINITY succeed.
+io.print(number.isClose(number.infinity, 1))
+io.print(number.isClose(number.infinity, 0 - number.infinity))
+io.print(number.isClose(number.infinity, number.infinity))
+
+; Bases and decimal places are whole numbers: a fractional value would be
+; silently truncated by the cast, changing its meaning.
+var fractionalBase = pcall(fn() { return number.toBase(10, 2.5) })
+io.print(fractionalBase.ok)
+var fractionalDecimals = pcall(fn() { return number.format(1.5, 2.5) })
+io.print(fractionalDecimals.ok)
+var fractionalRound = pcall(fn() { return number.roundTo(1.23456, 1.5) })
+io.print(fractionalRound.ok)
+
+; An infinite input has no meaningful wrap, and fmod would leak a NaN into the
+; value representation, so the arguments must be finite.
+var infiniteWrap = pcall(fn() { return number.wrap(number.infinity, 0, 10) })
+io.print(infiniteWrap.ok)
+var infinitePingPong = pcall(fn() { return number.pingPong(number.infinity, 10) })
+io.print(infinitePingPong.ok)
+
+; Scaling before rounding can overflow for a very large value, which has no
+; fractional part at that precision, so the result stays finite.
+io.print(number.roundTo(1e308, 2) > 1e307)

@@ -15,7 +15,10 @@ static uint32_t _lt_bit_pop(lt_VM* vm, const char* name)
     lt_Value value = lt_pop(vm);
     if (!LT_IS_NUMBER(value)) lt_runtime_error(vm, message);
     double number = LT_GET_NUMBER(value);
-    if (!isfinite(number) || number != floor(number) || fabs(number) > 2147483648.0)
+    /* The bound is asymmetric on purpose: -2147483648 is a valid int32_t and is
+       what shl(1, 31) returns, while +2147483648 is not representable and
+       converting it is undefined. */
+    if (!isfinite(number) || number != floor(number) || number > 2147483647.0 || number < -2147483648.0)
         lt_runtime_error(vm, "Expected bit operation argument to be a 32-bit whole number!");
     return (uint32_t)(int32_t)number;
 }
@@ -71,7 +74,9 @@ static uint8_t _lt_bit_shr(lt_VM* vm, uint8_t argc)
     if (argc != 2) lt_runtime_error(vm, "Expected a value and a shift to bit.shr!");
     uint32_t shift = _lt_bit_index(vm, "shr");
     uint32_t value = _lt_bit_pop(vm, "shr");
-    lt_push(vm, LT_VALUE_NUMBER((double)(value >> shift)));
+    /* Cast back to signed so every bit helper returns a value in the same
+       domain and one result can feed the next: shr(-1, 0) is -1. */
+    lt_push(vm, LT_VALUE_NUMBER((double)(int32_t)(value >> shift)));
     return 1;
 }
 

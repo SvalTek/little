@@ -690,6 +690,12 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						number = strtod(start, &end);
 
 						if (end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse number!");
+						/* A second exponent stops the scan without leaving the
+						   token short, so it has to be rejected here or the
+						   literal silently splits into a number and an
+						   identifier. */
+						if ((*current == 'e' || *current == 'E') && has_exponent)
+							_lt_tokenize_error(vm, t.module, line, col, "Can't have multiple exponents in number literal!");
 					}
 
 					lt_Literal newlit;

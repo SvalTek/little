@@ -1,0 +1,2 @@
+; A second exponent must not silently split the literal.
+io.print(1e2e3)
