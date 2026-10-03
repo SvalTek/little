@@ -1,0 +1,21 @@
+; Traceback frames report each frame's call site, and an error raised by a
+; native function reports the script location that called it instead of
+; `unknown|0:0`.
+
+fn inner(value) {
+    return value + "text"
+}
+
+fn outer(value) {
+    return inner(value)
+}
+
+io.print(pcall(fn() { return outer(1) }).error)
+
+fn nativeCall(value) {
+    return array.len(value)
+}
+
+io.print(pcall(fn() { return nativeCall(3) }).error)
+
+io.print("done")

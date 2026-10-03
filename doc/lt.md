@@ -476,6 +476,26 @@ else {
 }
 ```
 
+A runtime error is reported as `<module>|<line>:<col>: <message>` followed by a
+`traceback:` list. Each entry is the location of the call that frame is currently
+executing, so the list runs from the innermost call outwards:
+
+```text
+module|6:17: Expected arithmetic operands to be numbers!
+traceback:
+(module|6:17)
+(module|10:17)
+(module|13:35)
+(native|pcall)
+(module|13:15)
+```
+
+Native functions have no source location, so they appear as `(native)`, or as
+`(native|name)` when their name is known: a native is named after the key it is
+first registered under, qualified by its module or class, such as `import`,
+`array.len`, or `NativeBox.dispose`. When the innermost frame is native, the
+error's own location is the nearest frame that has source information.
+
 ---
 ## Limits
 Little has fixed VM stack and parser/compiler limits by design. See `doc/limits.md` for the current defaults, including stack depth, call depth, argument counts, branch-chain limits, and multi-return limits.

@@ -1,0 +1,15 @@
+module|6:17: Expected arithmetic operands to be numbers!
+traceback:
+(module|6:17)
+(module|10:17)
+(module|13:35)
+(native|pcall)
+(module|13:15)
+module|16:21: Expected argument to array.len to be array!
+traceback:
+(native|array.len)
+(module|16:21)
+(module|19:40)
+(native|pcall)
+(module|19:15)
+done

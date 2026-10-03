@@ -95,6 +95,14 @@ native.dropNativeClass()
 native.NativeBox = null
 var clearedClassUse = pcall(fn() { return native.rawNativeValue(ephemeral) })
 io.print(not clearedClassUse.ok)
+
+; Native class members are closures wrapping a native function; a traceback for
+; one names the member qualified with its class.
+var badConstructor = pcall(fn() { return NativeBox() })
+io.print(string.contains(badConstructor.error, "(native|NativeBox.constructor)"))
+var badMethod = pcall(fn() { return box:dispose(1) })
+io.print(string.contains(badMethod.error, "(native|NativeBox.dispose)"))
+
 ephemeralClass = null
 ephemeral = null
 box = null

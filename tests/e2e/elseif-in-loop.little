@@ -1,0 +1,61 @@
+; A taken elseif inside a loop must continue the loop, not leave it. The
+; compiler used to emit a bare `JMP 0` for the last branch of an if-chain, which
+; the enclosing loop's post-pass rewrote as its own `break` placeholder, so the
+; rest of the loop body was skipped and the loop exited.
+
+var n = 0
+var hits = 0
+while n < 20 {
+    if n > 100 {
+        hits = hits + 1000
+    }
+    elseif n > 2 {
+        hits = hits + 100
+    }
+    hits = hits + 1
+    n = n + 1
+}
+io.print(n)
+io.print(hits)
+
+; The first branch and the else branch still work, and still fall through.
+var a = 0
+var b = 0
+while a < 6 {
+    if a > 3 {
+        b = b + 10
+    }
+    elseif a > 1 {
+        b = b + 100
+    }
+    else {
+        b = b + 1000
+    }
+    b = b + 1
+    a = a + 1
+}
+io.print(a)
+io.print(b)
+
+; break still leaves the loop.
+var c = 0
+while c < 10 {
+    c = c + 1
+    if c is 3 {
+        break
+    }
+}
+io.print(c)
+
+; A chain inside a for-loop body behaves the same way.
+var seen = 0
+for item in array.each([ 1, 2, 3, 4 ]) {
+    if item > 3 {
+        seen = seen + 1000
+    }
+    elseif item > 1 {
+        seen = seen + 10
+    }
+    seen = seen + 1
+}
+io.print(seen)
