@@ -1,0 +1,57 @@
+; number covers the number type: coercion, formatting, predicates, ranges, and
+; limits. Arithmetic lives in math, and the two do not overlap.
+
+io.print(number.from("42"))
+io.print(number.from("  3.5  "))
+io.print(number.from("+7"))
+io.print(number.from("-2.5"))
+io.print(number.from("1e3"))
+io.print(number.from("0xFF"))
+io.print(number.from("0b1010"))
+io.print(number.from("-0x10"))
+io.print(number.from(7))
+io.print(number.from("abc") is null)
+io.print(number.from("42x") is null)
+io.print(number.from("") is null)
+io.print(number.from("   ") is null)
+io.print(number.from(true) is null)
+io.print(number.from(null) is null)
+io.print(number.from([ 1 ]) is null)
+
+; string.from is the plain coercion, number.format is the precision-controlled
+; one, and toBase renders in a base that number.from can read back.
+io.print(string.from(42))
+io.print(number.format(3.14159, 2))
+io.print(number.format(42, 0))
+io.print(number.format(1234567, 0, true))
+io.print(number.format(-1234.5, 2, true))
+io.print(number.toBase(255, 16, true))
+io.print(number.toBase(10, 2, true))
+io.print(number.toBase(-255, 16))
+io.print(number.from(number.toBase(255, 16, true)))
+io.print(number.from(number.toBase(10, 2, true)))
+io.print(number.from(string.from(3.5)))
+
+io.print(number.isInteger(3))
+io.print(number.isInteger(3.5))
+io.print(number.isSafeInteger(9007199254740991))
+io.print(number.isSafeInteger(9007199254740992))
+io.print(number.isClose(0.1 + 0.2, 0.3))
+io.print(number.isClose(1, 2))
+io.print(number.isClose(1, 1.0000000001, 1e-3))
+
+; trunc is not floor: it goes towards zero.
+io.print(number.trunc(-1.5))
+io.print(math.floor(-1.5))
+io.print(number.roundTo(3.14159, 2))
+io.print(number.snap(17, 5))
+io.print(number.wrap(-1, 0, 10))
+io.print(number.wrap(12, 0, 10))
+io.print(number.pingPong(12, 10))
+io.print(number.pingPong(3, 10))
+io.print(number.map(5, 0, 10, 0, 100))
+
+io.print(number.infinity > 1000000)
+io.print(number.epsilon > 0)
+io.print(number.maxSafeInteger)
+io.print(number.minSafeInteger)

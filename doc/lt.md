@@ -145,7 +145,7 @@ Expressions consist of all literals and operators.
 ---
 ### Literals
 * `null` is both a type and a literal value
-* `number` literals are decimal number strings like `123`, `0.5`, and `123.123`, or hexadecimal integer strings like `0xff` and `0X10`. Hex literals are normal numbers, not strings or byte arrays.
+* `number` literals are decimal number strings like `123`, `0.5`, and `123.123`, optionally with an exponent (`1e3`, `1.5e-2`, `2.5E2`), or hexadecimal or binary integer strings like `0xff` and `0b1010`. Hex and binary literals are normal numbers, not strings or byte arrays.
 * `boolean` literals are either `true` or `false`
 * `string` literals are any double-quoted strings - `"hello world!"`, `"i love apples"`. Supported escapes are `\n`, `\r`, `\t`, `\"`, and `\\`.
 * `array` literals are a list of values between brackets - `[ 1, true, null, "banana" ]`

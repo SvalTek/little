@@ -64,6 +64,8 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_loadlib.c") `
         (Join-Path $repo "src/little_std_io.c") `
         (Join-Path $repo "src/little_std_math.c") `
+        (Join-Path $repo "src/little_std_number.c") `
+        (Join-Path $repo "src/little_std_bit.c") `
         (Join-Path $repo "src/little_std_array.c") `
         (Join-Path $repo "src/little_std_table.c") `
         (Join-Path $repo "src/little_std_string.c") `
@@ -93,6 +95,8 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_loadlib.c") `
         (Join-Path $repo "src/little_std_io.c") `
         (Join-Path $repo "src/little_std_math.c") `
+        (Join-Path $repo "src/little_std_number.c") `
+        (Join-Path $repo "src/little_std_bit.c") `
         (Join-Path $repo "src/little_std_array.c") `
         (Join-Path $repo "src/little_std_table.c") `
         (Join-Path $repo "src/little_std_string.c") `

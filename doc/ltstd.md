@@ -5,6 +5,8 @@ The Little standard library is divided into modules. Embedders can load the norm
 - [core](std/core.md) - `pcall`, `unpack`, `import`, and `loadLibrary`
 - [io](std/io.md)
 - [math](std/math.md)
+- [number](std/number.md)
+- [bit](std/bit.md)
 - [array](std/array.md)
 - [table](std/table.md)
 - [string](std/string.md)
