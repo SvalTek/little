@@ -30,14 +30,21 @@ false
 true
 false
 true
-started
+true
+true
+true
 false
 true
 true
 true
 true
+32.000000
+24.000000
+rgba(0, 82, 172, 255)
 false
 true
 model(0 meshes, 0 materials)
 renderTexture(0x0)
 closed
+mesh(0 vertices, 0 triangles)
+model(0 meshes, 0 materials)

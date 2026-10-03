@@ -29,6 +29,8 @@ typedef enum {
     RAY_CMD_TEXT_EX,
     RAY_CMD_SHAPE,
     RAY_CMD_SHAPE3D,
+    RAY_CMD_CLEAR,
+    RAY_CMD_SCREENSHOT,
     RAY_CMD_BEGIN_2D,
     RAY_CMD_END_2D,
     RAY_CMD_BEGIN_3D,
@@ -151,8 +153,6 @@ static lt_Value start_callback = LT_VALUE_NULL;
 static lt_Value update_callback = LT_VALUE_NULL;
 static uint8_t window_open = 0;
 static uint8_t started = 0;
-static uint8_t has_clear = 0;
-static Color clear_color = { 0, 0, 0, 255 };
 static RayCommand commands[RAY_MAX_COMMANDS];
 static uint32_t command_count = 0;
 
@@ -1003,29 +1003,40 @@ static void unload_font_payload(LtFontData* font)
 {
     if (font->owned && font->font.texture.id > 0)
     {
-        if (IsWindowReady()) UnloadFont(font->font);
+        /* UnloadFont frees the glyph and rectangle arrays along with the atlas
+           texture, so with the context gone only the id has to be dropped. */
+        if (!IsWindowReady()) font->font.texture.id = 0;
+        UnloadFont(font->font);
         memset(&font->font, 0, sizeof(Font));
     }
 }
 
-/* raylib uploads a mesh as soon as it generates or loads it, so unloading needs
-   a live context; after the window closes the GPU buffers died with it,
-   exactly like textures and fonts. */
+/* UnloadMesh frees the CPU arrays and the GPU buffers together, and raylib
+   uploads a mesh as soon as it generates or loads it. After ray.close the GPU
+   buffers are already gone with the context, so drop the GL handle first and
+   let the call release the CPU side; skipping it would leak the vertex data. */
 static void unload_mesh_payload(LtMeshData* mesh)
 {
     if (mesh->owned && mesh->mesh.vertexCount > 0)
     {
-        if (IsWindowReady()) UnloadMesh(mesh->mesh);
+        if (!IsWindowReady()) mesh->mesh.vaoId = 0;
+        UnloadMesh(mesh->mesh);
         memset(&mesh->mesh, 0, sizeof(Mesh));
         mesh->owned = 0;
     }
 }
 
+/* UnloadModel walks its meshes, so clear their GL handles when the context is
+   gone and let it release the CPU-side meshes, material maps, and arrays. */
 static void unload_model_payload(LtModelData* model)
 {
     if (model->owned && model->model.meshCount > 0)
     {
-        if (IsWindowReady()) UnloadModel(model->model);
+        if (!IsWindowReady())
+        {
+            for (int i = 0; i < model->model.meshCount; ++i) model->model.meshes[i].vaoId = 0;
+        }
+        UnloadModel(model->model);
         memset(&model->model, 0, sizeof(Model));
         model->owned = 0;
     }
@@ -1275,6 +1286,23 @@ static uint8_t image_export(lt_VM* vm, uint8_t argc)
     Image* image = image_data(vm, lt->pop(vm), "Expected an Image!");
     if (!image->data) lt->runtime_error(vm, "Ray image has been unloaded!");
     lt->push(vm, ExportImage(*image, lt->get_string(vm, path)) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
+static uint8_t image_color_at(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "colorAt expects an x and a y!");
+    lt_Value y_value = lt->pop(vm);
+    lt_Value x_value = lt->pop(vm);
+    Image* image = image_data(vm, lt->pop(vm), "Expected an Image!");
+    expect_number(vm, x_value, "Expected a colorAt x number!");
+    expect_number(vm, y_value, "Expected a colorAt y number!");
+    if (!image->data) lt->runtime_error(vm, "Ray image has been unloaded!");
+    int x = (int)lt->get_number(x_value);
+    int y = (int)lt->get_number(y_value);
+    if (x < 0 || y < 0 || x >= image->width || y >= image->height) lt->runtime_error(vm, "Expected colorAt coordinates inside the image!");
+    Color color = GetImageColor(*image, x, y);
+    lt->push(vm, make_color(vm, color.r, color.g, color.b, color.a));
     return 1;
 }
 
@@ -1866,6 +1894,18 @@ static uint8_t render_texture_draw_pro(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+static uint8_t render_texture_image(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "image expects no arguments!");
+    RenderTexture* target = render_texture_data(vm, lt->pop(vm), "Expected a RenderTexture!");
+    if (target->id == 0) lt->runtime_error(vm, "Ray render texture has been unloaded!");
+    require_window(vm, "Expected ray.open before RenderTexture:image!");
+    Image source = LoadImageFromTexture(target->texture);
+    if (!IsImageValid(source)) lt->runtime_error(vm, "Failed to read the ray render texture!");
+    attach_image(vm, source);
+    return 1;
+}
+
 static uint8_t render_texture_unload(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
@@ -2372,14 +2412,19 @@ static uint8_t native_end_mode3d(lt_VM* vm, uint8_t argc)
 static uint8_t native_begin_texture_mode(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt->runtime_error(vm, "Expected a RenderTexture for ray.beginTextureMode!");
-    RenderTexture* target = render_texture_data(vm, lt->pop(vm), "Expected a RenderTexture for ray.beginTextureMode!");
+    lt_Value instance = lt->pop(vm);
+    RenderTexture* target = render_texture_data(vm, instance, "Expected a RenderTexture for ray.beginTextureMode!");
     require_draw_target(vm);
     if (target->id == 0) lt->runtime_error(vm, "Ray render texture has been unloaded!");
     RenderTexture* payload = allocate_native_data(vm, sizeof(RenderTexture));
     *payload = *target;
     RayCommand command = new_command(RAY_CMD_BEGIN_TEXTURE);
+    command.resource = instance;
     command.payload = payload;
     push_command(command);
+    /* The framebuffer has to outlive the callback, like a queued draw's
+       resource, so hold the instance until the frame is replayed. */
+    queue_resource(vm, instance);
     texture_depth++;
     return 0;
 }
@@ -3087,7 +3132,16 @@ static uint8_t native_screenshot(lt_VM* vm, uint8_t argc)
     lt_Value path = lt->pop(vm);
     expect_string(vm, path, "Expected a screenshot path string!");
     require_window(vm, "Expected ray.open before ray.screenshot!");
-    TakeScreenshot(lt->get_string(vm, path));
+    require_draw_target(vm);
+    /* The frame is replayed after the callback returns, so the capture has to
+       be queued too; taking it here would read a stale back buffer. */
+    const char* source = lt->get_string(vm, path);
+    char* copy = malloc(strlen(source) + 1);
+    if (!copy) lt->runtime_error(vm, "Out of memory!");
+    memcpy(copy, source, strlen(source) + 1);
+    RayCommand command = new_command(RAY_CMD_SCREENSHOT);
+    command.text = copy;
+    push_command(command);
     return 0;
 }
 
@@ -3119,7 +3173,6 @@ static uint8_t native_open(lt_VM* vm, uint8_t argc)
     window_open = 1;
     started = 0;
     clear_commands(vm);
-    has_clear = 0;
     return 0;
 }
 
@@ -3140,7 +3193,6 @@ static uint8_t native_close(lt_VM* vm, uint8_t argc)
         CloseWindow();
         window_open = 0;
         clear_commands(vm);
-        has_clear = 0;
     }
     return 0;
 }
@@ -3173,7 +3225,6 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
     if (WindowShouldClose())
     {
         clear_commands(vm);
-        has_clear = 0;
         lt->push(vm, LT_VALUE_FALSE);
         return 1;
     }
@@ -3195,7 +3246,6 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
     if (!window_open)
     {
         clear_commands(vm);
-        has_clear = 0;
         lt->push(vm, LT_VALUE_FALSE);
         return 1;
     }
@@ -3215,9 +3265,9 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
         lt->runtime_error(vm, "Expected ray.endTextureMode before the frame ends!");
     }
     BeginDrawing();
-    if (has_clear) ClearBackground(clear_color);
-    else ClearBackground(BLACK);
-    has_clear = 0;
+    /* The frame starts black; ray.clear queues a clear of its own, so a script
+       that clears inside a render target clears that target, not the screen. */
+    ClearBackground(BLACK);
     for (uint32_t i = 0; i < command_count; ++i)
     {
         RayCommand* command = &commands[i];
@@ -3346,6 +3396,12 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
             }
             break;
         }
+        case RAY_CMD_CLEAR:
+            ClearBackground(command->color);
+            break;
+        case RAY_CMD_SCREENSHOT:
+            TakeScreenshot(command->text);
+            break;
         case RAY_CMD_BEGIN_3D:
             BeginMode3D(*(Camera3D*)command->payload);
             break;
@@ -3391,8 +3447,11 @@ static uint8_t native_clear(lt_VM* vm, uint8_t argc)
     if (argc != 1) lt->runtime_error(vm, "Expected a Color for ray.clear!");
     lt_Value color = lt->pop(vm);
     if (!window_open) lt->runtime_error(vm, "Expected ray.open before ray.clear!");
-    clear_color = expect_color(vm, color, "Expected a Color for ray.clear!");
-    has_clear = 1;
+    Color clear = expect_color(vm, color, "Expected a Color for ray.clear!");
+    require_draw_target(vm);
+    RayCommand command = new_command(RAY_CMD_CLEAR);
+    command.color = clear;
+    push_command(command);
     return 0;
 }
 
@@ -3670,6 +3729,7 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     RAY_CLASS_GETTER(image_class, "height", image_get_height);
     RAY_CLASS_METHOD(image_class, "unload", image_unload);
     RAY_CLASS_METHOD(image_class, "export", image_export);
+    RAY_CLASS_METHOD(image_class, "colorAt", image_color_at);
     RAY_CLASS_METHOD(image_class, "toString", image_to_string);
     lt->table_set(vm, module_value, lt->make_string(vm, "Image"), image_class);
 
@@ -3771,6 +3831,7 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     RAY_CLASS_GETTER(render_texture_class, "height", render_texture_get_height);
     RAY_CLASS_METHOD(render_texture_class, "draw", render_texture_draw);
     RAY_CLASS_METHOD(render_texture_class, "drawPro", render_texture_draw_pro);
+    RAY_CLASS_METHOD(render_texture_class, "image", render_texture_image);
     RAY_CLASS_METHOD(render_texture_class, "unload", render_texture_unload);
     RAY_CLASS_METHOD(render_texture_class, "toString", render_texture_to_string);
     lt->table_set(vm, module_value, lt->make_string(vm, "RenderTexture"), render_texture_class);

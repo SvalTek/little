@@ -76,7 +76,9 @@ polled without sleeping (`poll_now`), so a pending `setTimeout` never stalls the
 frame; the return value reflects the window state *after* polling, so a timer
 callback that calls `close()` ends the loop cleanly. Draw helpers only buffer
 commands for the current frame (cap 1024); windows and GL calls all stay on the
-calling thread.
+calling thread. `clear` and `screenshot` are queued the same way, so a clear
+lands inside whatever render target is active where it was called, and a
+screenshot captures the frame it was queued in rather than a stale buffer.
 
 A frame whose draw commands leave `beginMode2D`, `beginMode3D`, or
 `beginTextureMode` unclosed is rejected before anything is drawn.
@@ -235,7 +237,7 @@ than raising, so keep the name if the internals are ever reshuffled.
 
 | Type | Fields | Methods |
 | --- | --- | --- |
-| `Image` | `width`, `height` | `unload`, `export`, `toString` |
+| `Image` | `width`, `height` | `unload`, `export`, `colorAt`, `toString` |
 | `Texture` | `width`, `height` | `draw`, `drawRec`, `drawPro`, `unload`, `toString` |
 | `Font` | `baseSize`, `glyphCount` | `measure`, `draw`, `unload`, `toString` |
 
@@ -251,6 +253,10 @@ than raising, so keep the name if the internals are ever reshuffled.
 `defaultFont()` returns raylib's built-in font as a `Font` instance. It is owned
 by raylib rather than by the script, so `unload()` on it does nothing and
 collecting it never frees the built-in font.
+
+`image:colorAt(x, y)` returns one pixel as a `Color`. It needs a loaded image
+and coordinates inside its bounds, and it is how a script inspects what a
+render pass produced.
 
 `texture:draw(position, tint)` draws the whole texture,
 `texture:drawRec(source, position, tint)` draws a source rectangle, and
@@ -285,7 +291,7 @@ target:draw(ray.Vector2(0, 0), ray.colors.white)
 | --- | --- | --- |
 | `Mesh` | `vertexCount`, `triangleCount` | `unload`, `toString` |
 | `Model` | `meshCount`, `materialCount` | `draw`, `drawEx`, `drawWires`, `drawWiresEx`, `unload`, `toString` |
-| `RenderTexture` | `width`, `height` | `draw`, `drawPro`, `unload`, `toString` |
+| `RenderTexture` | `width`, `height` | `draw`, `drawPro`, `image`, `unload`, `toString` |
 
 | Loader | Source |
 | --- | --- |
@@ -308,7 +314,9 @@ variants.
 
 Render textures are stored bottom-up, so `draw(position, tint)` and
 `drawPro(dest, origin, rotation, tint)` flip the source for you; `drawPro`
-scales the whole target into `dest`.
+scales the whole target into `dest`. `image()` reads the target's colour
+attachment back into an `Image`, following the same layout, so the last row of
+that image is the top of the rendered scene.
 
 `beginTextureMode` and `beginMode3D` nest, so a frame can render a 3D scene into
 a texture and then draw that texture on screen. All three modes must be balanced
@@ -364,7 +372,7 @@ These helpers are pure math and need no window.
 | `setWindowTitle(title)` | Change the window title |
 | `setWindowSize(width, height)` | Resize the window (the platform may clamp small sizes) |
 | `toggleFullscreen()` | Toggle fullscreen |
-| `screenshot(path)` | Write the current frame to an image file |
+| `screenshot(path)` | Queue a capture of this frame to an image file |
 
 ## API
 
@@ -374,7 +382,7 @@ These helpers are pure math and need no window.
 | `close()` | Close the window if open |
 | `on("start" \| "update", fn)` | Register lifecycle callbacks |
 | `update()` | Run one frame; returns `false` when the window should close |
-| `clear(color)` | Set this frame's background color |
+| `clear(color)` | Queue a background clear for this frame; inside a render target it clears that target |
 | `rect(bounds, color)` | Queue a filled rectangle for this frame |
 | `rectLines(bounds, color)` | Queue a rectangle outline |
 | `circle(center, radius, color)` | Queue a filled circle |

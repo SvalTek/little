@@ -67,12 +67,35 @@ var image = ray.genImageColor(4, 4, ray.colors.white)
 var texture = ray.loadTextureFromImage(image)
 image:unload()
 
+; These two stay alive across ray.close() so the post-close unload path runs.
+var looseMesh = ray.genMeshCube(1, 1, 1)
+var survivor = ray.modelFromMesh(ray.genMeshCube(1, 1, 1))
+
 var unbalanced = pcall(fn() { return ray.endMode3D() })
 io.print(unbalanced.ok)
 io.print(string.contains(unbalanced.error, "beginMode3D"))
 var unbalancedTexture = pcall(fn() { return ray.endTextureMode() })
 io.print(unbalancedTexture.ok)
 io.print(string.contains(unbalancedTexture.error, "beginTextureMode"))
+
+; beginTextureMode holds its target until the frame is replayed, exactly like a
+; queued draw's resource, so dropping the only script reference mid-frame cannot
+; free the framebuffer out from under the replay.
+var heldTarget = -1
+var targetHeld = pcall(fn() {
+    var temp = ray.loadRenderTexture(8, 8)
+    ray.on("update", fn(dt) {
+        ray.beginTextureMode(temp)
+        heldTarget = array.len(ray.__queued)
+        ray.endTextureMode()
+        temp = null
+        gc.collect()
+    })
+    return ray.update()
+})
+io.print(targetHeld.ok)
+io.print(heldTarget is 1)
+io.print(array.len(ray.__queued) is 0)
 
 var frames = 0
 var unbalancedFrame = true
@@ -105,6 +128,8 @@ var drawScene = fn() {
     ray.endTextureMode()
     target:draw(ray.Vector2(2, 2), ray.colors.white)
     target:drawPro(ray.Rectangle(30, 30, 16, 12), ray.Vector2(0, 0), 0, ray.colors.white)
+    ; Queued like the draws, so it captures this frame.
+    ray.screenshot("build/raylib-3d-screen.png")
 }
 
 ray.on("start", fn() {
@@ -136,6 +161,17 @@ io.print(frames is 1)
 unbalancedFrame = false
 io.print(ray.update())
 io.print(frames is 2)
+
+; Read the target back and sample it: the top of the rendered scene has to hold
+; the clear colour queued inside beginTextureMode, which is what catches a clear
+; that lands on the screen instead of the render texture. raylib stores render
+; textures bottom-up, so the last image row is the top of the scene.
+var rendered = target:image()
+io.print(rendered.width)
+io.print(rendered.height)
+io.print(rendered:colorAt(1, 22):toString())
+rendered:unload()
+
 io.print(ray.update())
 io.print(frames is 3)
 
@@ -147,3 +183,10 @@ io.print(target:toString())
 
 ray.close()
 io.print("closed")
+
+; Resources that outlive the window still release their CPU-side data; only the
+; GPU handles died with the context.
+looseMesh:unload()
+io.print(looseMesh:toString())
+survivor:unload()
+io.print(survivor:toString())
