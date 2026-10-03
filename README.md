@@ -126,10 +126,10 @@ run for any ref, defaulting to `develop`, with either package type.
 
 Each run uploads one self-contained package for every target:
 
-* `little-windows-x64.zip` contains `little.exe`, `libs/json/json.dll`, and
-  `libs/webui/webui.dll`.
-* `little-linux-x64.zip` contains `little`, `libs/json/json.so`, and
-  `libs/webui/webui.so`.
+* `little-windows-x64.zip` contains `little.exe`, `libs/json/json.dll`,
+  `libs/webui/webui.dll`, and `libs/raylib/raylib.dll`.
+* `little-linux-x64.zip` contains `little`, `libs/json/json.so`,
+  `libs/webui/webui.so`, and `libs/raylib/raylib.so`.
 
 The produced packages are portable: the executable is at the archive root and
 native libraries are below `./libs`. The CLI also recognizes an installed

@@ -176,6 +176,14 @@ function Normalize([string]$Text) {
 # probe succeed and the windowed tests run for real.
 $windowedDir = Join-Path $PSScriptRoot "windowed"
 $windowAvailable = $false
+# A display is expected on Windows and macOS, and on Linux when one is
+# advertised. A display that exists but cannot create a window is a failure
+# rather than something to skip, so a raylib regression cannot hide behind a
+# SKIP in CI.
+$displayExpected = $true
+if ($env:OS -ne "Windows_NT" -and -not $IsMacOS) {
+    $displayExpected = [bool]($env:DISPLAY -or $env:WAYLAND_DISPLAY)
+}
 if ((Test-Path $windowedDir) -and (Test-Path $exe)) {
     New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
     $probeScript = Join-Path $buildDir "raylib-window-probe.little"
@@ -202,6 +210,12 @@ ray.close()
     catch {
         $windowAvailable = $false
     }
+    if (!$windowAvailable -and $displayExpected) {
+        $probeDetail = ""
+        if (Test-Path $probeErr) { $probeDetail = (Get-Content -Raw $probeErr).Trim() }
+        Remove-Item -Force $probeScript, $probeOut, $probeErr -ErrorAction SilentlyContinue
+        throw "A display is available but the raylib window probe failed, so tests/windowed cannot run: $probeDetail"
+    }
     Remove-Item -Force $probeScript, $probeOut, $probeErr -ErrorAction SilentlyContinue
 }
 
@@ -209,7 +223,7 @@ if ($windowAvailable) {
     Write-Host "Window available: running tests/windowed."
 }
 else {
-    Write-Host "SKIP tests/windowed: could not create a window (run under xvfb-run on headless Linux)."
+    Write-Host "SKIP tests/windowed: no display is available (use xvfb-run on headless Linux)."
 }
 
 $failed = 0

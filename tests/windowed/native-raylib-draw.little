@@ -88,11 +88,17 @@ ray.on("update", fn(dt) {
     ray.beginMode2D(camera)
     ray.rect(ray.Rectangle(4, 4, 8, 8), ray.colors.magenta)
     ray.endMode2D()
-    ray.close()
+    ; Close on the second frame: closing inside the first would discard the
+    ; queued commands before they are replayed.
+    if frames > 1 {
+        ray.close()
+    }
 })
 
 io.print(ray.update())
 io.print(frames is 1)
+io.print(ray.update())
+io.print(frames is 2)
 
 font:unload()
 texture:unload()

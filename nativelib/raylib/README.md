@@ -25,6 +25,9 @@ vendored desktop sources (`rcore`, `rshapes`, `rtextures`, `rtext`, `rglfw`,
 `tests/run-e2e.ps1` builds the same library so `task test` works on a fresh
 checkout.
 
+Release packages ship it as `libs/raylib/raylib.<ext>`, so scripts running from
+an unpacked release load `loadLibrary("libs/raylib/raylib")` instead.
+
 On Linux the desktop build needs the GL/X11 development headers:
 
 ```sh
@@ -271,7 +274,7 @@ These helpers are pure math and need no window.
 | `mousePressed(b)` / `mouseDown(b)` / `mouseReleased(b)` | Mouse button state |
 | `gamepadButtonDown(pad, b)` / `gamepadButtonPressed(pad, b)` | Gamepad button state |
 | `gamepadAxis(pad, axis)` | Gamepad axis value |
-| `windowSize()` | Window client size as a `Vector2` (window required) |
+| `windowSize()` | Current screen/canvas size as a `Vector2` (window required) |
 | `setFPS(n)` | Cap the frame rate |
 | `checkCollisionRecs(a, b)`, `checkCollisionCircles(c1, r1, c2, r2)`, `checkCollisionPointRec(p, r)`, `checkCollisionPointCircle(p, c, r)`, `getCollisionRec(a, b)` | Collision helpers |
 | `worldToScreen(p, camera)` / `screenToWorld(p, camera)` | Convert through a `Camera2D` |
