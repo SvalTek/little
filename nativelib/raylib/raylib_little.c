@@ -2,6 +2,10 @@
 
 #include "raylib.h"
 
+/* rlgl declares the default shader id, which the post-close shader teardown
+   needs to tell raylib's own locations apart from the ones we allocated. */
+#include "rlgl.h"
+
 /* raymath is header-only; raylib's own sources define RAYMATH_IMPLEMENTATION,
    so request file-local inline definitions for this translation unit only. */
 #define RAYMATH_STATIC_INLINE
@@ -24,6 +28,10 @@
    like the rest of the library's bounded inputs. */
 #define RAY_MAX_MESH_SEGMENTS 1024
 
+/* rmodels.c keeps its map count private and frees exactly this many entries, so
+   copying a material into a model has to match it. */
+#define RAY_MATERIAL_MAPS 12
+
 typedef enum {
     RAY_CMD_RECT,
     RAY_CMD_TEXT,
@@ -41,6 +49,8 @@ typedef enum {
     RAY_CMD_END_3D,
     RAY_CMD_BEGIN_TEXTURE,
     RAY_CMD_END_TEXTURE,
+    RAY_CMD_BEGIN_SHADER,
+    RAY_CMD_END_SHADER,
     RAY_CMD_MODEL,
     RAY_CMD_BILLBOARD
 } RayCommandKind;
@@ -173,7 +183,8 @@ typedef enum {
     RAY_RESOURCE_FONT,
     RAY_RESOURCE_MESH,
     RAY_RESOURCE_MODEL,
-    RAY_RESOURCE_RENDER_TEXTURE
+    RAY_RESOURCE_RENDER_TEXTURE,
+    RAY_RESOURCE_SHADER
 } RayResourceKind;
 
 static RayDeferredUnload deferred_unloads[RAY_MAX_COMMANDS];
@@ -231,6 +242,21 @@ typedef struct {
     uint8_t owned;
 } LtModelData;
 
+/* A shader is owned when the script loaded it; the copy handed out by
+   `material.shader` is a view onto the same program and must not unload it. */
+typedef struct {
+    Shader shader;
+    uint8_t owned;
+} LtShaderData;
+
+/* Materials are the opposite: the wrapper points at the raylib Material, which
+   is either heap-allocated here or a view into a model's material array, so a
+   shader assignment through the wrapper reaches the model. */
+typedef struct {
+    Material* material;
+    uint8_t owned;
+} LtMaterialData;
+
 static lt_Value vector2_class = LT_VALUE_NULL;
 static lt_Value vector3_class = LT_VALUE_NULL;
 static lt_Value color_class = LT_VALUE_NULL;
@@ -245,9 +271,12 @@ static lt_Value ray_collision_class = LT_VALUE_NULL;
 static lt_Value mesh_class = LT_VALUE_NULL;
 static lt_Value model_class = LT_VALUE_NULL;
 static lt_Value render_texture_class = LT_VALUE_NULL;
+static lt_Value shader_class = LT_VALUE_NULL;
+static lt_Value material_class = LT_VALUE_NULL;
 static uint32_t mode2d_depth = 0;
 static uint32_t mode3d_depth = 0;
 static uint32_t texture_depth = 0;
+static uint32_t shader_depth = 0;
 
 static void expect_number(lt_VM* vm, lt_Value value, const char* message)
 {
@@ -298,6 +327,8 @@ RAY_DATA_ACCESSOR(ray_data, Ray, ray_class)
 RAY_DATA_ACCESSOR(ray_collision_data, RayCollision, ray_collision_class)
 RAY_DATA_ACCESSOR(mesh_data, LtMeshData, mesh_class)
 RAY_DATA_ACCESSOR(model_data, LtModelData, model_class)
+RAY_DATA_ACCESSOR(shader_data, LtShaderData, shader_class)
+RAY_DATA_ACCESSOR(material_data, LtMaterialData, material_class)
 RAY_DATA_ACCESSOR(render_texture_data, RenderTexture, render_texture_class)
 
 static void* allocate_native_data(lt_VM* vm, size_t size)
@@ -942,6 +973,7 @@ static void clear_commands(lt_VM* vm)
     mode2d_depth = 0;
     mode3d_depth = 0;
     texture_depth = 0;
+    shader_depth = 0;
     deferred_unload_count = 0;
     /* Release this frame's references to queued resources by swapping in a
        fresh array; the old one becomes collectable. */
@@ -1054,6 +1086,32 @@ static void free_model_cpu(Model* model)
     RL_FREE(model->boneMatrices);
 }
 
+/* UnloadShader frees the program and the location array together; after
+   ray.close only the array is left, and only when the shader is not raylib's
+   own default one. */
+static void unload_shader_payload(LtShaderData* shader)
+{
+    if (shader->owned && shader->shader.id > 0)
+    {
+        if (IsWindowReady()) UnloadShader(shader->shader);
+        else if (shader->shader.id != rlGetShaderIdDefault()) RL_FREE(shader->shader.locs);
+        memset(&shader->shader, 0, sizeof(Shader));
+        shader->owned = 0;
+    }
+}
+
+/* UnloadMaterial also unloads the shader and every map texture, but a shader or
+   texture handed to a material belongs to whoever created it - raylib treats
+   models the same way - so only the map array is released here. */
+static void unload_material_payload(LtMaterialData* material)
+{
+    if (material->owned && material->material->maps)
+    {
+        RL_FREE(material->material->maps);
+        material->material->maps = 0;
+    }
+}
+
 /* UnloadMesh frees the CPU arrays and the GPU buffers together, and raylib
    uploads a mesh as soon as it generates or loads it. */
 static void unload_mesh_payload(LtMeshData* mesh)
@@ -1124,6 +1182,20 @@ static void destroy_render_texture(void* data)
     free(data);
 }
 
+static void destroy_shader(void* data)
+{
+    unload_shader_payload(data);
+    free(data);
+}
+
+static void destroy_material(void* data)
+{
+    LtMaterialData* material = data;
+    unload_material_payload(material);
+    free(material->material);
+    free(material);
+}
+
 static void require_window(lt_VM* vm, const char* message)
 {
     if (!window_open) lt->runtime_error(vm, message);
@@ -1177,6 +1249,9 @@ static void flush_deferred_unloads(void)
             break;
         case RAY_RESOURCE_RENDER_TEXTURE:
             unload_render_texture_payload(deferred_unloads[i].payload);
+            break;
+        case RAY_RESOURCE_SHADER:
+            unload_shader_payload(deferred_unloads[i].payload);
             break;
         }
     }
@@ -2171,6 +2246,349 @@ static uint8_t native_ring(lt_VM* vm, uint8_t argc)
     payload->radius = (float)lt->get_number(inner_value);
     payload->radius2 = (float)lt->get_number(outer_value);
     push_shape_command(payload, color);
+    return 0;
+}
+
+/* ---------------- shaders and materials ---------------- */
+
+static void attach_shader(lt_VM* vm, Shader source)
+{
+    lt_Value instance = construct(vm, shader_class, 0, 0);
+    LtShaderData* data = allocate_native_data(vm, sizeof(LtShaderData));
+    data->shader = source;
+    data->owned = 1;
+    lt->instance_set_native_data(vm, instance, shader_class, data);
+    lt->push(vm, instance);
+}
+
+static uint8_t native_load_shader(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected vertex and fragment shader paths for ray.loadShader!");
+    lt_Value fragment = lt->pop(vm);
+    lt_Value vertex = lt->pop(vm);
+    if (!LT_IS_NULL(vertex) && !LT_IS_STRING(vertex)) lt->runtime_error(vm, "Expected a vertex shader path string!");
+    if (!LT_IS_NULL(fragment) && !LT_IS_STRING(fragment)) lt->runtime_error(vm, "Expected a fragment shader path string!");
+    require_window(vm, "Expected ray.open before ray.loadShader!");
+    Shader source = LoadShader(LT_IS_NULL(vertex) ? 0 : lt->get_string(vm, vertex),
+        LT_IS_NULL(fragment) ? 0 : lt->get_string(vm, fragment));
+    /* raylib falls back to the default shader when a file cannot be read, so a
+       named path that yields the default program is a failed load. */
+    if ((!LT_IS_NULL(vertex) || !LT_IS_NULL(fragment)) && source.id == rlGetShaderIdDefault())
+        lt->runtime_error(vm, "Failed to load ray shader!");
+    if (!IsShaderValid(source)) lt->runtime_error(vm, "Failed to load ray shader!");
+    attach_shader(vm, source);
+    return 1;
+}
+
+static uint8_t native_load_shader_from_memory(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected vertex and fragment shader source for ray.loadShaderFromMemory!");
+    lt_Value fragment = lt->pop(vm);
+    lt_Value vertex = lt->pop(vm);
+    if (!LT_IS_NULL(vertex) && !LT_IS_STRING(vertex)) lt->runtime_error(vm, "Expected vertex shader source to be string!");
+    if (!LT_IS_NULL(fragment) && !LT_IS_STRING(fragment)) lt->runtime_error(vm, "Expected fragment shader source to be string!");
+    require_window(vm, "Expected ray.open before ray.loadShaderFromMemory!");
+    Shader source = LoadShaderFromMemory(LT_IS_NULL(vertex) ? 0 : lt->get_string(vm, vertex),
+        LT_IS_NULL(fragment) ? 0 : lt->get_string(vm, fragment));
+    if (!IsShaderValid(source)) lt->runtime_error(vm, "Failed to load ray shader!");
+    attach_shader(vm, source);
+    return 1;
+}
+
+/* A minimal directional light, built on raylib's default attribute and uniform
+   names so DrawModel* supplies the matrices and the material tint itself.
+   Scripts drive lightDirection (pointing from the surface towards the light),
+   lightColor, and ambientColor through the Shader setters. */
+static const char* const LIGHTING_VERTEX_SOURCE =
+    "#version 330\n"
+    "in vec3 vertexPosition;\n"
+    "in vec2 vertexTexCoord;\n"
+    "in vec3 vertexNormal;\n"
+    "in vec4 vertexColor;\n"
+    "uniform mat4 mvp;\n"
+    "uniform mat4 matModel;\n"
+    "uniform mat4 matNormal;\n"
+    "out vec3 fragPosition;\n"
+    "out vec2 fragTexCoord;\n"
+    "out vec4 fragColor;\n"
+    "out vec3 fragNormal;\n"
+    "void main()\n"
+    "{\n"
+    "    fragPosition = vec3(matModel*vec4(vertexPosition, 1.0));\n"
+    "    fragTexCoord = vertexTexCoord;\n"
+    "    fragColor = vertexColor;\n"
+    "    fragNormal = normalize(vec3(matNormal*vec4(vertexNormal, 1.0)));\n"
+    "    gl_Position = mvp*vec4(vertexPosition, 1.0);\n"
+    "}\n";
+
+static const char* const LIGHTING_FRAGMENT_SOURCE =
+    "#version 330\n"
+    "in vec3 fragPosition;\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "in vec3 fragNormal;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec4 colDiffuse;\n"
+    "uniform vec3 lightDirection;\n"
+    "uniform vec3 lightColor;\n"
+    "uniform vec3 ambientColor;\n"
+    "out vec4 finalColor;\n"
+    "void main()\n"
+    "{\n"
+    "    float diffuse = max(dot(normalize(fragNormal), normalize(lightDirection)), 0.0);\n"
+    "    vec4 texel = texture(texture0, fragTexCoord)*colDiffuse*fragColor;\n"
+    "    finalColor = vec4(texel.rgb*(ambientColor + lightColor*diffuse), texel.a);\n"
+    "}\n";
+
+static uint8_t native_lighting_shader(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.lightingShader!");
+    require_window(vm, "Expected ray.open before ray.lightingShader!");
+    Shader source = LoadShaderFromMemory(LIGHTING_VERTEX_SOURCE, LIGHTING_FRAGMENT_SOURCE);
+    if (!IsShaderValid(source)) lt->runtime_error(vm, "Failed to load the ray lighting shader!");
+    attach_shader(vm, source);
+    return 1;
+}
+
+static int shader_location(lt_VM* vm, LtShaderData* shader, lt_Value name)
+{
+    if (!LT_IS_STRING(name)) lt->runtime_error(vm, "Expected a shader uniform name string!");
+    if (shader->shader.id == 0) lt->runtime_error(vm, "Ray shader has been unloaded!");
+    int location = GetShaderLocation(shader->shader, lt->get_string(vm, name));
+    if (location < 0)
+    {
+        char message[128];
+        snprintf(message, sizeof(message), "Unknown ray shader uniform '%s'!", lt->get_string(vm, name));
+        lt->runtime_error(vm, message);
+    }
+    return location;
+}
+
+static uint8_t shader_set_float(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "setFloat expects a uniform name and a value!");
+    lt_Value raw = lt->pop(vm);
+    lt_Value name = lt->pop(vm);
+    LtShaderData* shader = shader_data(vm, lt->pop(vm), "Expected a Shader!");
+    expect_number(vm, raw, "Expected a shader float value!");
+    float value = (float)lt->get_number(raw);
+    SetShaderValue(shader->shader, shader_location(vm, shader, name), &value, SHADER_UNIFORM_FLOAT);
+    return 0;
+}
+
+static uint8_t shader_set_int(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "setInt expects a uniform name and a value!");
+    lt_Value raw = lt->pop(vm);
+    lt_Value name = lt->pop(vm);
+    LtShaderData* shader = shader_data(vm, lt->pop(vm), "Expected a Shader!");
+    expect_number(vm, raw, "Expected a shader int value!");
+    double number = lt->get_number(raw);
+    if (!(number >= -2147483648.0 && number <= 2147483647.0)) lt->runtime_error(vm, "Expected a shader int value in range!");
+    int value = (int)number;
+    SetShaderValue(shader->shader, shader_location(vm, shader, name), &value, SHADER_UNIFORM_INT);
+    return 0;
+}
+
+static uint8_t shader_set_vector2(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "setVector2 expects a uniform name and a Vector2!");
+    LtVector2* value = vector2_data(vm, lt->pop(vm), "Expected a Vector2 for the shader uniform!");
+    lt_Value name = lt->pop(vm);
+    LtShaderData* shader = shader_data(vm, lt->pop(vm), "Expected a Shader!");
+    float data[2] = { (float)value->x, (float)value->y };
+    SetShaderValue(shader->shader, shader_location(vm, shader, name), data, SHADER_UNIFORM_VEC2);
+    return 0;
+}
+
+static uint8_t shader_set_vector3(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "setVector3 expects a uniform name and a Vector3!");
+    LtVector3* value = vector3_data(vm, lt->pop(vm), "Expected a Vector3 for the shader uniform!");
+    lt_Value name = lt->pop(vm);
+    LtShaderData* shader = shader_data(vm, lt->pop(vm), "Expected a Shader!");
+    float data[3] = { (float)value->x, (float)value->y, (float)value->z };
+    SetShaderValue(shader->shader, shader_location(vm, shader, name), data, SHADER_UNIFORM_VEC3);
+    return 0;
+}
+
+static uint8_t shader_set_color(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "setColor expects a uniform name and a Color!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value name = lt->pop(vm);
+    LtShaderData* shader = shader_data(vm, lt->pop(vm), "Expected a Shader!");
+    Color color = expect_color(vm, color_value, "Expected a Color for the shader uniform!");
+    /* Shader colours are normalised, unlike the 0-255 Color type. */
+    float data[4] = { color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f };
+    SetShaderValue(shader->shader, shader_location(vm, shader, name), data, SHADER_UNIFORM_VEC4);
+    return 0;
+}
+
+static uint8_t shader_unload(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
+    lt_Value instance = lt->pop(vm);
+    LtShaderData* shader = shader_data(vm, instance, "Expected a Shader!");
+    if (resource_is_queued(vm, instance)) defer_unload(vm, shader, RAY_RESOURCE_SHADER);
+    else unload_shader_payload(shader);
+    return 0;
+}
+
+static uint8_t shader_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    LtShaderData* shader = shader_data(vm, lt->pop(vm), "Expected a Shader!");
+    char text[48];
+    snprintf(text, sizeof(text), "shader(%u)", shader->shader.id);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static void attach_material(lt_VM* vm, Material* material)
+{
+    lt_Value instance = construct(vm, material_class, 0, 0);
+    LtMaterialData* data = allocate_native_data(vm, sizeof(LtMaterialData));
+    data->material = material;
+    data->owned = 1;
+    lt->instance_set_native_data(vm, instance, material_class, data);
+    lt->push(vm, instance);
+}
+
+static uint8_t native_load_material_default(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.loadMaterialDefault!");
+    require_window(vm, "Expected ray.open before ray.loadMaterialDefault!");
+    Material* material = allocate_native_data(vm, sizeof(Material));
+    *material = LoadMaterialDefault();
+    if (!IsMaterialValid(*material)) lt->runtime_error(vm, "Failed to create a ray material!");
+    attach_material(vm, material);
+    return 1;
+}
+
+static uint8_t material_get_shader(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "shader getter expects no arguments!");
+    LtMaterialData* material = material_data(vm, lt->pop(vm), "Expected a Material!");
+    /* The program belongs to whoever loaded it, so this view must not unload. */
+    lt_Value instance = construct(vm, shader_class, 0, 0);
+    LtShaderData* data = allocate_native_data(vm, sizeof(LtShaderData));
+    data->shader = material->material->shader;
+    data->owned = 0;
+    lt->instance_set_native_data(vm, instance, shader_class, data);
+    lt->push(vm, instance);
+    return 1;
+}
+
+static uint8_t material_set_shader(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "shader setter expects one value!");
+    LtShaderData* shader = shader_data(vm, lt->pop(vm), "Expected a Shader for shader!");
+    LtMaterialData* material = material_data(vm, lt->pop(vm), "Expected a Material!");
+    if (shader->shader.id == 0) lt->runtime_error(vm, "Ray shader has been unloaded!");
+    material->material->shader = shader->shader;
+    return 0;
+}
+
+static int material_map_index(lt_VM* vm, lt_Value value)
+{
+    expect_number(vm, value, "Expected a ray.materialMap value!");
+    double map = lt->get_number(value);
+    if (!(map >= 0 && map <= (double)MATERIAL_MAP_BRDF)) lt->runtime_error(vm, "Expected a ray.materialMap value!");
+    return (int)map;
+}
+
+static uint8_t material_set_texture(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "setTexture expects a map type and a Texture!");
+    lt_Value instance = lt->pop(vm);
+    Texture2D* texture = texture_data(vm, instance, "Expected a Texture for the material map!");
+    int map = material_map_index(vm, lt->pop(vm));
+    LtMaterialData* material = material_data(vm, lt->pop(vm), "Expected a Material!");
+    if (texture->id == 0) lt->runtime_error(vm, "Ray texture has been unloaded!");
+    SetMaterialTexture(material->material, map, *texture);
+    return 0;
+}
+
+static uint8_t material_set_color(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "setColor expects a map type and a Color!");
+    lt_Value color_value = lt->pop(vm);
+    int map = material_map_index(vm, lt->pop(vm));
+    LtMaterialData* material = material_data(vm, lt->pop(vm), "Expected a Material!");
+    Color color = expect_color(vm, color_value, "Expected a Color for the material map!");
+    material->material->maps[map].color = color;
+    return 0;
+}
+
+static uint8_t material_unload(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
+    unload_material_payload(material_data(vm, lt->pop(vm), "Expected a Material!"));
+    return 0;
+}
+
+static uint8_t material_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    LtMaterialData* material = material_data(vm, lt->pop(vm), "Expected a Material!");
+    char text[48];
+    snprintf(text, sizeof(text), "material(shader %u)", material->material->shader.id);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+/* Copies a material into one of the model's slots. The map array is duplicated
+   because the model frees it on unload while the source material keeps its own;
+   the shader stays shared, and raylib never frees a model's shaders. */
+static uint8_t model_set_material(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "setMaterial expects an index and a Material!");
+    LtMaterialData* source = material_data(vm, lt->pop(vm), "Expected a Material!");
+    lt_Value index_value = lt->pop(vm);
+    LtModelData* model = model_data(vm, lt->pop(vm), "Expected a Model!");
+    if (model->model.meshCount <= 0 || model->model.materials == 0) lt->runtime_error(vm, "Ray model has been unloaded!");
+    if (!LT_IS_NUMBER(index_value)) lt->runtime_error(vm, "Expected a material index number!");
+    double index = lt->get_number(index_value);
+    if (!(index >= 0 && index < (double)model->model.materialCount)) lt->runtime_error(vm, "Expected a material index inside the model!");
+    if (!source->material->maps) lt->runtime_error(vm, "Ray material has been unloaded!");
+    Material* target = &model->model.materials[(int)index];
+    MaterialMap* maps = (MaterialMap *)RL_CALLOC(RAY_MATERIAL_MAPS, sizeof(MaterialMap));
+    if (!maps) lt->runtime_error(vm, "Out of memory!");
+    memcpy(maps, source->material->maps, RAY_MATERIAL_MAPS*sizeof(MaterialMap));
+    RL_FREE(target->maps);
+    target->maps = maps;
+    target->shader = source->material->shader;
+    return 0;
+}
+
+static uint8_t native_begin_shader_mode(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a Shader for ray.beginShaderMode!");
+    lt_Value instance = lt->pop(vm);
+    LtShaderData* shader = shader_data(vm, instance, "Expected a Shader for ray.beginShaderMode!");
+    require_draw_target(vm);
+    if (shader->shader.id == 0) lt->runtime_error(vm, "Ray shader has been unloaded!");
+    Shader* payload = allocate_native_data(vm, sizeof(Shader));
+    *payload = shader->shader;
+    RayCommand command = new_command(RAY_CMD_BEGIN_SHADER);
+    command.resource = instance;
+    command.payload = payload;
+    push_command(command);
+    /* The program has to outlive the callback, like a queued draw's resource. */
+    queue_resource(vm, instance);
+    shader_depth++;
+    return 0;
+}
+
+static uint8_t native_end_shader_mode(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.endShaderMode!");
+    require_draw_target(vm);
+    if (shader_depth == 0) lt->runtime_error(vm, "Expected ray.beginShaderMode before ray.endShaderMode!");
+    shader_depth--;
+    RayCommand command = new_command(RAY_CMD_END_SHADER);
+    push_command(command);
     return 0;
 }
 
@@ -3323,6 +3741,11 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
         clear_commands(vm);
         lt->runtime_error(vm, "Expected ray.endTextureMode before the frame ends!");
     }
+    if (shader_depth != 0)
+    {
+        clear_commands(vm);
+        lt->runtime_error(vm, "Expected ray.endShaderMode before the frame ends!");
+    }
     BeginDrawing();
     /* The frame starts black; ray.clear queues a clear of its own, so a script
        that clears inside a render target clears that target, not the screen. */
@@ -3472,6 +3895,12 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
             break;
         case RAY_CMD_END_TEXTURE:
             EndTextureMode();
+            break;
+        case RAY_CMD_BEGIN_SHADER:
+            BeginShaderMode(*(Shader*)command->payload);
+            break;
+        case RAY_CMD_END_SHADER:
+            EndShaderMode();
             break;
         case RAY_CMD_MODEL: {
             RayModelCommand* payload = command->payload;
@@ -3880,6 +4309,7 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     RAY_CLASS_METHOD(model_class, "drawEx", model_draw_ex);
     RAY_CLASS_METHOD(model_class, "drawWires", model_draw_wires);
     RAY_CLASS_METHOD(model_class, "drawWiresEx", model_draw_wires_ex);
+    RAY_CLASS_METHOD(model_class, "setMaterial", model_set_material);
     RAY_CLASS_METHOD(model_class, "unload", model_unload);
     RAY_CLASS_METHOD(model_class, "toString", model_to_string);
     lt->table_set(vm, module_value, lt->make_string(vm, "Model"), model_class);
@@ -3894,6 +4324,28 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     RAY_CLASS_METHOD(render_texture_class, "unload", render_texture_unload);
     RAY_CLASS_METHOD(render_texture_class, "toString", render_texture_to_string);
     lt->table_set(vm, module_value, lt->make_string(vm, "RenderTexture"), render_texture_class);
+
+    /* Shaders and materials are created by their loaders. */
+    shader_class = lt->class_create(vm, "Shader");
+    lt->class_set_native_data_destroy(vm, shader_class, destroy_shader);
+    RAY_CLASS_METHOD(shader_class, "setFloat", shader_set_float);
+    RAY_CLASS_METHOD(shader_class, "setInt", shader_set_int);
+    RAY_CLASS_METHOD(shader_class, "setVector2", shader_set_vector2);
+    RAY_CLASS_METHOD(shader_class, "setVector3", shader_set_vector3);
+    RAY_CLASS_METHOD(shader_class, "setColor", shader_set_color);
+    RAY_CLASS_METHOD(shader_class, "unload", shader_unload);
+    RAY_CLASS_METHOD(shader_class, "toString", shader_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Shader"), shader_class);
+
+    material_class = lt->class_create(vm, "Material");
+    lt->class_set_native_data_destroy(vm, material_class, destroy_material);
+    RAY_CLASS_GETTER(material_class, "shader", material_get_shader);
+    RAY_CLASS_SETTER(material_class, "shader", material_set_shader);
+    RAY_CLASS_METHOD(material_class, "setTexture", material_set_texture);
+    RAY_CLASS_METHOD(material_class, "setColor", material_set_color);
+    RAY_CLASS_METHOD(material_class, "unload", material_unload);
+    RAY_CLASS_METHOD(material_class, "toString", material_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Material"), material_class);
 
     set_native(vm, module_value, "loadImage", native_load_image);
     set_native(vm, module_value, "genImageColor", native_gen_image_color);
@@ -3910,6 +4362,12 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_native(vm, module_value, "loadModel", native_load_model);
     set_native(vm, module_value, "modelFromMesh", native_model_from_mesh);
     set_native(vm, module_value, "loadRenderTexture", native_load_render_texture);
+    set_native(vm, module_value, "loadShader", native_load_shader);
+    set_native(vm, module_value, "loadShaderFromMemory", native_load_shader_from_memory);
+    set_native(vm, module_value, "lightingShader", native_lighting_shader);
+    set_native(vm, module_value, "loadMaterialDefault", native_load_material_default);
+    set_native(vm, module_value, "beginShaderMode", native_begin_shader_mode);
+    set_native(vm, module_value, "endShaderMode", native_end_shader_mode);
     set_native(vm, module_value, "windowSize", native_window_size);
     set_native(vm, module_value, "traceLog", native_trace_log);
 
@@ -4162,6 +4620,18 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_number(vm, projection, "perspective", CAMERA_PERSPECTIVE);
     set_number(vm, projection, "orthographic", CAMERA_ORTHOGRAPHIC);
     lt->table_set(vm, module_value, lt->make_string(vm, "projection"), projection);
+
+    lt_Value material_maps = lt->make_table(vm);
+    set_number(vm, material_maps, "albedo", MATERIAL_MAP_ALBEDO);
+    set_number(vm, material_maps, "metalness", MATERIAL_MAP_METALNESS);
+    set_number(vm, material_maps, "normal", MATERIAL_MAP_NORMAL);
+    set_number(vm, material_maps, "roughness", MATERIAL_MAP_ROUGHNESS);
+    set_number(vm, material_maps, "occlusion", MATERIAL_MAP_OCCLUSION);
+    set_number(vm, material_maps, "emission", MATERIAL_MAP_EMISSION);
+    set_number(vm, material_maps, "height", MATERIAL_MAP_HEIGHT);
+    set_number(vm, material_maps, "diffuse", MATERIAL_MAP_DIFFUSE);
+    set_number(vm, material_maps, "specular", MATERIAL_MAP_SPECULAR);
+    lt->table_set(vm, module_value, lt->make_string(vm, "materialMap"), material_maps);
 
     lt_Value colors = lt->make_table(vm);
     set_color(vm, colors, "lightgray", 200, 200, 200, 255);

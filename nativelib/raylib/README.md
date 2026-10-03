@@ -39,7 +39,9 @@ CPU-side `Image` behavior, and error paths without needing a display.
 `tests/windowed/native-raylib-draw.little` opens a hidden window and renders a
 real 2D frame (rect, text, textures, the default font, every draw variant), and
 `tests/windowed/native-raylib-3d.little` generates meshes, renders a 3D scene
-through a camera and a render texture, and checks the mode-balance errors.
+through a camera and a render texture, and checks the mode-balance errors, and
+`tests/windowed/native-raylib-shaders.little` loads shaders, configures a
+material, and asserts that the lighting shader changes rendered pixels.
 `tests/run-e2e.ps1` runs the windowed tests whenever it can create a window,
 skipping them otherwise; CI runs the Linux test job under `xvfb-run` so they
 execute there. `scripts/raylib/demo.little` and `scripts/raylib/demo3d.little`
@@ -80,8 +82,9 @@ calling thread. `clear` and `screenshot` are queued the same way, so a clear
 lands inside whatever render target is active where it was called, and a
 screenshot captures the frame it was queued in rather than a stale buffer.
 
-A frame whose draw commands leave `beginMode2D`, `beginMode3D`, or
-`beginTextureMode` unclosed is rejected before anything is drawn.
+A frame whose draw commands leave `beginMode2D`, `beginMode3D`,
+`beginTextureMode`, or `beginShaderMode` unclosed is rejected before anything
+is drawn.
 
 `open` accepts an optional fourth argument, a table of window options applied
 before the window is created:
@@ -349,6 +352,62 @@ instead. `Model:draw` and `billboard` are checked the same way.
 | `grid(slices, spacing)` | Ground grid centered on the origin |
 | `billboard(camera, texture, position, scale, tint)` | Camera-facing texture |
 
+## Shaders and materials
+
+`Shader` wraps a GLSL program and `Material` wraps raylib's material struct.
+Both need a window, and both follow the ownership rule raylib uses for models: a
+shader or texture handed to a material belongs to whoever created it, so
+`unload()` on a material releases only its map array.
+
+```js
+var lighting = ray.lightingShader()          ; built-in directional light
+lighting:setVector3("lightDirection", ray.Vector3(0.4, 0.8, 0.2))
+lighting:setVector3("lightColor", ray.Vector3(1, 1, 1))
+lighting:setVector3("ambientColor", ray.Vector3(0.25, 0.25, 0.3))
+
+var material = ray.loadMaterialDefault()
+material.shader = lighting
+material:setColor(ray.materialMap.diffuse, ray.Color(255, 180, 120))
+
+var model = ray.modelFromMesh(ray.genMeshCube(1, 1, 1))
+model:setMaterial(0, material)               ; copies the maps into the model
+model:draw(ray.Vector3(0, 0, 0), 1, ray.colors.white)
+```
+
+`lightingShader()` is a small directional light built on raylib's default
+attribute and uniform names, so `DrawModel*` supplies the model matrices and
+the material tint itself. It exposes `lightDirection` (pointing from the surface
+towards the light), `lightColor`, and `ambientColor`.
+
+Shaders can come from files or from source. `loadShaderFromMemory` is how a
+bundled script ships one, since a packaged executable has no loose shader files
+beside it:
+
+```js
+var shader = ray.loadShader("basic.vs", "basic.fs")        ; nil uses raylib's default
+var fromSource = ray.loadShaderFromMemory(nil, fsSource)   ; fragment only
+```
+
+| Type | Fields | Methods |
+| --- | --- | --- |
+| `Shader` | - | `setFloat`, `setInt`, `setVector2`, `setVector3`, `setColor`, `unload`, `toString` |
+| `Material` | `shader` | `setTexture`, `setColor`, `unload`, `toString` |
+
+`Shader:setColor` normalises a `Color` to `0.0`-`1.0` for the uniform. Setting a
+uniform the program does not declare is an error, so a typo cannot pass
+silently.
+
+`Material:setTexture(map, texture)` and `Material:setColor(map, color)` address
+maps with the `ray.materialMap` constants (`albedo`, `metalness`, `normal`,
+`roughness`, `occlusion`, `emission`, `height`, plus the `diffuse` and
+`specular` aliases). `Model:setMaterial(index, material)` copies a material into
+one of the model's slots, duplicating the map array so the model's unload cannot
+free the source material's.
+
+`beginShaderMode(shader)`/`endShaderMode()` wrap the following draws in a custom
+program and nest with the other modes. The built-in 3D shapes draw without
+normals, so the lighting shader only produces sensible results on models.
+
 ## Collision, colour, and transforms
 
 These helpers are pure math and need no window.
@@ -406,6 +465,7 @@ These helpers are pure math and need no window.
 | `beginMode2D(camera)` / `endMode2D()` | Wrap the following draws in a `Camera2D` |
 | `beginMode3D(camera)` / `endMode3D()` | Wrap the following draws in a `Camera3D` |
 | `beginTextureMode(target)` / `endTextureMode()` | Render the following draws into a `RenderTexture` |
+| `beginShaderMode(shader)` / `endShaderMode()` | Draw the following commands with a custom program |
 | `cube(p, size, c)`, `cubeWires(p, size, c)`, `sphere(c, r, color)`, `sphereWires(c, r, rings, slices, color)`, `cylinder(p, rt, rb, h, sides, c)`, `cylinderWires(...)`, `capsule(a, b, r, rings, slices, c)`, `plane(c, size, color)`, `triangle3D(a, b, c, color)`, `line3D(a, b, color)`, `point3D(p, color)`, `boundingBox(min, max, color)`, `grid(slices, spacing)`, `billboard(camera, texture, p, scale, tint)` | Queue 3D shapes for this frame |
 | `getWorldToScreen(p, camera)` / `getScreenToWorldRay(p, camera)` | Convert through a `Camera3D` |
 | `raycastSphere(ray, center, radius)`, `raycastBox(ray, min, max)` | Ray collision tests |
@@ -432,10 +492,13 @@ These helpers are pure math and need no window.
 | `genMeshCube(w, h, l)`, `genMeshSphere(r, rings, slices)`, `genMeshPlane(w, l, resX, resZ)`, `genMeshCylinder(r, h, slices)`, `genMeshTorus(r, size, radSeg, sides)`, `genMeshKnot(r, size, radSeg, sides)` | Create a `Mesh` (window required) |
 | `loadModel(path)`, `modelFromMesh(mesh)` | Create a `Model` (window required) |
 | `loadRenderTexture(w, h)` | Create a `RenderTexture` (window required) |
+| `loadShader(vs, fs)`, `loadShaderFromMemory(vs, fs)`, `lightingShader()` | Create a `Shader` (window required) |
+| `loadMaterialDefault()` | Create a `Material` (window required) |
 | `Vector2`, `Vector3`, `Color`, `Rectangle`, `Camera2D`, `Camera3D`, `Ray` | Value type constructors |
-| `Image`, `Texture`, `Font`, `Mesh`, `Model`, `RenderTexture` | Resource types (created by their loaders) |
+| `Image`, `Texture`, `Font`, `Mesh`, `Model`, `RenderTexture`, `Shader`, `Material` | Resource types (created by their loaders) |
 | `RayCollision` | Result type returned by the raycasts |
 | `projection` | Camera projection codes (`perspective`, `orthographic`) |
+| `materialMap` | Material map codes (`albedo`/`diffuse`, `metalness`/`specular`, `normal`, …) |
 | `colors` | Named raylib palette (`lightgray` … `raywhite`, `blank`) |
 | `keys` | Keyboard codes (`a` … `z`, `space`, `escape`, `f1`, `kp0`, `leftShift`, …) |
 | `mouseButtons` | Mouse button codes (`left`, `right`, `middle`, `side`, `extra`, `forward`, `back`) |

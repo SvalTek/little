@@ -1,0 +1,132 @@
+; Requires a display: shaders and materials are GPU resources. Covers loading,
+; uniforms, material assignment, and the shader mode, and asserts that the
+; lighting shader actually changes rendered pixels.
+
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+ray.traceLog(ray.log.none)
+ray.open(64, 48, "windowed-shaders", { hidden: true })
+
+var shader = ray.lightingShader()
+io.print(typeof shader is ray.Shader)
+io.print(shader:toString())
+shader:setVector3("lightDirection", ray.Vector3(0, 1, 0))
+shader:setVector3("lightColor", ray.Vector3(1, 1, 1))
+shader:setVector3("ambientColor", ray.Vector3(0.2, 0.2, 0.2))
+
+; An unknown uniform is a typo, not a silent no-op.
+var missing = pcall(fn() { shader:setFloat("nope", 1) })
+io.print(missing.ok)
+io.print(string.contains(missing.error, "nope"))
+
+var wrongType = pcall(fn() { shader:setVector3("lightColor", 3) })
+io.print(wrongType.ok)
+io.print(string.contains(wrongType.error, "Vector3"))
+
+; Shaders can also come from source, which is how a bundled script ships them.
+var simple = ray.loadShaderFromMemory(nil, "#version 330\nout vec4 c;\nvoid main() { c = vec4(1.0); }\n")
+io.print(typeof simple is ray.Shader)
+var broken = pcall(fn() { return ray.loadShaderFromMemory(nil, "#version 330\nvoid main() { nope }\n") })
+io.print(broken.ok)
+io.print(string.contains(broken.error, "Failed to load"))
+var badSource = pcall(fn() { return ray.loadShaderFromMemory(3, 4) })
+io.print(badSource.ok)
+io.print(string.contains(badSource.error, "string"))
+
+var material = ray.loadMaterialDefault()
+io.print(typeof material is ray.Material)
+io.print(material:toString())
+material.shader = shader
+io.print(material:toString())
+material:setColor(ray.materialMap.diffuse, ray.Color(255, 128, 0))
+io.print(material:toString())
+var badMap = pcall(fn() { material:setColor(99, ray.colors.white) })
+io.print(badMap.ok)
+io.print(string.contains(badMap.error, "materialMap"))
+
+; Two models: one lit through the material, one left with the default material.
+var model = ray.modelFromMesh(ray.genMeshCube(1, 1, 1))
+var flatModel = ray.modelFromMesh(ray.genMeshCube(1, 1, 1))
+io.print(model.materialCount)
+model:setMaterial(0, material)
+io.print(model:toString())
+var badIndex = pcall(fn() { model:setMaterial(9, material) })
+io.print(badIndex.ok)
+io.print(string.contains(badIndex.error, "index"))
+
+var litTarget = ray.loadRenderTexture(32, 24)
+var flatTarget = ray.loadRenderTexture(32, 24)
+
+var camera = ray.Camera3D {
+    position: ray.Vector3(3, 3, 3)
+    target: ray.Vector3(0, 0, 0)
+}
+
+var unbalanced = pcall(fn() { return ray.endShaderMode() })
+io.print(unbalanced.ok)
+io.print(string.contains(unbalanced.error, "beginShaderMode"))
+
+var frames = 0
+var drawScene = fn() {
+    ray.clear(ray.colors.black)
+    ray.beginTextureMode(litTarget)
+    ray.clear(ray.colors.black)
+    ray.beginMode3D(camera)
+    model:draw(ray.Vector3(0, 0, 0), 1, ray.colors.white)
+    ray.endMode3D()
+    ray.endTextureMode()
+
+    ray.beginTextureMode(flatTarget)
+    ray.clear(ray.colors.black)
+    ray.beginMode3D(camera)
+    flatModel:draw(ray.Vector3(0, 0, 0), 1, ray.colors.white)
+    ray.endMode3D()
+    ray.endTextureMode()
+
+    ; The shader mode wraps the on-screen draw too.
+    ray.beginMode3D(camera)
+    ray.beginShaderMode(shader)
+    model:draw(ray.Vector3(0, 0, 0), 1, ray.colors.white)
+    ray.endShaderMode()
+    ray.endMode3D()
+}
+
+ray.on("update", fn(dt) {
+    frames = frames + 1
+    drawScene()
+    if frames > 2 {
+        ray.close()
+    }
+})
+
+io.print(ray.update())
+io.print(frames is 1)
+io.print(ray.update())
+io.print(frames is 2)
+
+; The lit centre pixel has to differ from the flat one; without the shader
+; reaching the model they would be identical. Reading a target needs a window,
+; so this happens before the closing frame.
+var lit = litTarget:image()
+var flat = flatTarget:image()
+io.print(lit.width)
+io.print(lit:colorAt(16, 12):equals(flat:colorAt(16, 12)))
+io.print(lit:colorAt(16, 12):equals(ray.Color(0, 0, 0, 255)))
+lit:unload()
+flat:unload()
+
+io.print(ray.update())
+io.print(frames is 3)
+
+shader:unload()
+simple:unload()
+material:unload()
+model:unload()
+flatModel:unload()
+litTarget:unload()
+flatTarget:unload()
+io.print(shader:toString())
+io.print(material:toString())
+
+ray.close()
+io.print("closed")

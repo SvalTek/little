@@ -90,3 +90,29 @@ io.print(string.contains(badSize.error, "positive"))
 var badGrid = pcall(fn() { return ray.grid(4) })
 io.print(badGrid.ok)
 io.print(string.contains(badGrid.error, "spacing"))
+
+; Shaders and materials are GPU resources too, so they need a window; their map
+; constants are plain numbers and work anywhere.
+io.print(ray.materialMap.diffuse is 0)
+io.print(ray.materialMap.specular is 1)
+io.print(ray.materialMap.normal is 2)
+io.print(ray.materialMap.roughness is 3)
+io.print(ray.materialMap.occlusion is 4)
+io.print(ray.materialMap.emission is 5)
+io.print(ray.materialMap.height is 6)
+
+var lighting = pcall(fn() { return ray.lightingShader() })
+io.print(lighting.ok)
+io.print(string.contains(lighting.error, "ray.open"))
+
+var fromMemory = pcall(fn() { return ray.loadShaderFromMemory(nil, nil) })
+io.print(fromMemory.ok)
+io.print(string.contains(fromMemory.error, "ray.open"))
+
+var fromFile = pcall(fn() { return ray.loadShader("a.vs", "a.fs") })
+io.print(fromFile.ok)
+io.print(string.contains(fromFile.error, "ray.open"))
+
+var material = pcall(fn() { return ray.loadMaterialDefault() })
+io.print(material.ok)
+io.print(string.contains(material.error, "ray.open"))
