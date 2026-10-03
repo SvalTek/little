@@ -68,14 +68,13 @@ static uint8_t _lt_bit_shl(lt_VM* vm, uint8_t argc)
 }
 
 /* Logical shift: the vacated high bits fill with zero, which is what a script
-   unpacking data wants and it keeps the result positive. */
+   unpacking data wants. The result is cast back to signed like every other
+   helper, so shr(-1, 0) is -1 rather than 4294967295. */
 static uint8_t _lt_bit_shr(lt_VM* vm, uint8_t argc)
 {
     if (argc != 2) lt_runtime_error(vm, "Expected a value and a shift to bit.shr!");
     uint32_t shift = _lt_bit_index(vm, "shr");
     uint32_t value = _lt_bit_pop(vm, "shr");
-    /* Cast back to signed so every bit helper returns a value in the same
-       domain and one result can feed the next: shr(-1, 0) is -1. */
     lt_push(vm, LT_VALUE_NUMBER((double)(int32_t)(value >> shift)));
     return 1;
 }

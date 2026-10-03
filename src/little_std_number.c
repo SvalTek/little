@@ -29,14 +29,14 @@ static double _lt_number_pop(lt_VM* vm, const char* name)
    fractional value would be silently truncated by the cast, changing its
    meaning, and roundTo would raise ten to a fractional power. The comparison
    form also rejects NaN, which fails every comparison. */
-static double _lt_number_whole(lt_VM* vm, lt_Value value, const char* name, double minimum, double maximum)
+static double _lt_number_whole(lt_VM* vm, lt_Value value, const char* what, double minimum, double maximum)
 {
     char message[128];
-    snprintf(message, sizeof(message), "Expected argument to number.%s to be number!", name);
+    snprintf(message, sizeof(message), "Expected argument to number.%s to be number!", what);
     double number = _lt_number_expect(vm, value, message);
     if (!(number >= minimum && number <= maximum) || number != floor(number))
     {
-        snprintf(message, sizeof(message), "Expected number.%s between %g and %g, as a whole number!", name, minimum, maximum);
+        snprintf(message, sizeof(message), "Expected number.%s between %g and %g, as a whole number!", what, minimum, maximum);
         lt_runtime_error(vm, message);
     }
     return number;
@@ -162,7 +162,7 @@ static uint8_t _lt_number_format(lt_VM* vm, uint8_t argc)
     char message[96];
     snprintf(message, sizeof(message), "Expected argument to number.format to be number!");
     double number = _lt_number_expect(vm, value, message);
-    double decimals = _lt_number_whole(vm, decimals_value, "format", 0, 32);
+    double decimals = _lt_number_whole(vm, decimals_value, "format decimals", 0, 32);
     if (!LT_IS_BOOL(separators)) lt_runtime_error(vm, "Expected number.format separators to be boolean!");
 
     char buffer[512];
@@ -209,7 +209,7 @@ static uint8_t _lt_number_tobase(lt_VM* vm, uint8_t argc)
     lt_Value base_value = lt_pop(vm);
     lt_Value value = lt_pop(vm);
     double number = _lt_number_expect(vm, value, "Expected argument to number.toBase to be number!");
-    double base = _lt_number_whole(vm, base_value, "toBase", 2, 36);
+    double base = _lt_number_whole(vm, base_value, "toBase base", 2, 36);
     if (!LT_IS_BOOL(prefix)) lt_runtime_error(vm, "Expected number.toBase prefix to be boolean!");
     if (!isfinite(number) || number != floor(number)) lt_runtime_error(vm, "Expected number.toBase value to be a whole number!");
 
@@ -302,7 +302,7 @@ static uint8_t _lt_number_trunc(lt_VM* vm, uint8_t argc)
 static uint8_t _lt_number_roundto(lt_VM* vm, uint8_t argc)
 {
     if (argc != 2) lt_runtime_error(vm, "Expected a number and decimals to number.roundTo!");
-    double decimals = _lt_number_whole(vm, lt_pop(vm), "roundTo", 0, 15);
+    double decimals = _lt_number_whole(vm, lt_pop(vm), "roundTo decimals", 0, 15);
     double value = _lt_number_pop(vm, "roundTo");
     double scale = pow(10.0, decimals);
     /* Scaling first can overflow for very large values, which have no

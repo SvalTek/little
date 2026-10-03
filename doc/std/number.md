@@ -28,9 +28,9 @@ test a string without trapping. `"inf"` and `"-inf"` are accepted, because
 the constants below), and neither are `strtod`'s payload forms such as
 `"nan(0x5000000000001)"`, whose bits can look like a value tag.
 
-`number.toBase(value, base [, prefix])` renders a whole number in a base from 2
-to 36. With `prefix` true, base 16 and base 2 emit `0x` and `0b`, so the result
-reads back through `number.from`.
+`number.toBase(value, base [, prefix])` renders a whole number in a whole base
+from 2 to 36. With `prefix` true, base 16 and base 2 emit `0x` and `0b`, so the
+result reads back through `number.from`.
 
 ```js
 number.toBase(255, 16, true)   ; "0xff"
@@ -41,7 +41,7 @@ number.toBase(10, 2, true)     ; "0b1010"
 
 `string.from(x)` is the plain coercion. `number.format(value, decimals
 [, separators])` is the precision-controlled one, and with `separators` true it
-groups thousands.
+groups thousands. `decimals` is a whole number of decimal places from 0 to 32.
 
 ```js
 string.from(42)                  ; "42.000000"
@@ -71,13 +71,19 @@ number.isClose(0.1 + 0.2, 0.3)           ; true
 | Helper | Meaning |
 | --- | --- |
 | `trunc(x)` | Round towards zero (`floor` and `ceil` cannot express this for negatives) |
-| `roundTo(x, decimals)` | Round to a number of decimal places |
+| `roundTo(x, decimals)` | Round to a number of decimal places; `decimals` is a whole number from 0 to 15 |
 | `snap(x, step)` | Round to the nearest multiple of `step` |
 | `wrap(x, min, max)` | Wrap into `[min, max)`, so `wrap(-1, 0, 10)` is `9` |
 | `pingPong(x, length)` | Bounce between `0` and `length` |
 | `map(x, inMin, inMax, outMin, outMax)` | Remap from one range to another |
 
 `clamp` and `lerp` live in [math](math.md).
+
+Discrete parameters - `toBase`'s base, `format`'s and `roundTo`'s decimal
+places - must be whole numbers. A fractional value would be silently truncated
+by the conversion, changing its meaning, so it is an error instead. The range
+helpers (`wrap`, `pingPong`, `map`) take ordinary numbers and require finite
+arguments.
 
 ## Constants
 
