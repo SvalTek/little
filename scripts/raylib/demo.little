@@ -12,13 +12,17 @@ ray.open(800, 450, "little + raylib")
 
 var background = ray.Color(20, 20, 30)
 var accent = ray.Color(255, 100, 50)
-var label = ray.Vector2(10, 60)
+var label = ray.Vector2(10, 30)
 var body = ray.Rectangle(10, 200, 120, 40)
+var camera = ray.Camera2D {
+    offset: ray.Vector2(400, 225)
+    zoom: 1
+}
 var x = 10.0
 
 ray.on("start", fn() {
     ray.setFPS(60)
-    io.print("raylib " + ray.version)
+    io.print(string.concat("raylib ", ray.version))
 })
 
 ray.on("update", fn(dt) {
@@ -27,9 +31,18 @@ ray.on("update", fn(dt) {
         x = 10.0
     }
     body.x = x
+    camera.target = ray.Vector2(x + 60.0, 220.0)
+
     ray.clear(background)
+    ray.beginMode2D(camera)
     ray.rect(body, accent)
+    ray.circle(ray.Vector2(120, 120), 40, ray.colors.darkgreen)
+    ray.circleLines(ray.Vector2(120, 120), 48, ray.colors.lime)
+    ray.lineEx(ray.Vector2(0, 0), ray.Vector2(800, 450), 2, ray.colors.gray)
+    ray.polygon(ray.Vector2(650, 90), 6, 30, x, ray.colors.purple)
+    ray.endMode2D()
     ray.text("little + raylib", label, 20, ray.colors.white)
+
     if ray.keyPressed(ray.keys.escape) {
         ray.close()
     }

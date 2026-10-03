@@ -130,10 +130,25 @@ io.print(ray.Vector2(1, 2):equals(ray.Vector2(1, 2)))     ; true
 | `Vector3` | `x`, `y`, `z` | `add`, `sub`, `mul`, `scale`, `dot`, `cross`, `length`, `lengthSq`, `normalize`, `distance`, `clone`, `equals`, `toString` |
 | `Color` | `r`, `g`, `b`, `a` | `equals`, `withAlpha`, `toString` |
 | `Rectangle` | `x`, `y`, `width`, `height` | `equals`, `contains`, `center`, `toString` |
+| `Camera2D` | `offset`, `target` (`Vector2`), `rotation`, `zoom` | `toString` |
 
 Color channels are clamped to `0`-`255`. `mul` is component-wise; `scale`
 takes a number. `toString` formats as `(x, y)`, `(x, y, z)`, `(x, y, w, h)`, or
 `rgba(r, g, b, a)`.
+
+`Camera2D` defaults to `offset (0, 0)`, `target (0, 0)`, `rotation 0`, `zoom 1`.
+It is built from a table, from `offset` and `target`, or from
+`offset, target, rotation, zoom`:
+
+```js
+var camera = ray.Camera2D { target: ray.Vector2(0, 0), offset: ray.Vector2(400, 225), zoom: 2 }
+ray.beginMode2D(camera)
+ray.rect(ray.Rectangle(0, 0, 32, 32), ray.colors.red)
+ray.endMode2D()
+```
+
+`beginMode2D` and `endMode2D` must be balanced inside a frame; an unmatched
+`endMode2D` is an error.
 
 ## Resources
 
@@ -195,21 +210,40 @@ rotation. `font:draw(text, position, size, spacing, tint)` and
 | `update()` | Run one frame; returns `false` when the window should close |
 | `clear(color)` | Set this frame's background color |
 | `rect(bounds, color)` | Queue a filled rectangle for this frame |
-| `text(str, position, size, color)` | Queue text for this frame |
-| `keyPressed(code)` | Whether a key was pressed this frame (`ray.keys.*`) |
-| `keyDown(code)` | Whether a key is held down |
-| `mousePressed(button)` | Whether a mouse button was pressed |
+| `rectLines(bounds, color)` | Queue a rectangle outline |
+| `circle(center, radius, color)` | Queue a filled circle |
+| `circleLines(center, radius, color)` | Queue a circle outline |
+| `line(start, end, color)` | Queue a line |
+| `lineEx(start, end, thickness, color)` | Queue a thick line |
+| `triangle(a, b, c, color)` | Queue a filled triangle |
+| `triangleLines(a, b, c, color)` | Queue a triangle outline |
+| `polygon(center, sides, radius, rotation, color)` | Queue a filled regular polygon |
+| `polygonLines(center, sides, radius, rotation, color)` | Queue a polygon outline |
+| `ring(center, innerRadius, outerRadius, color)` | Queue a filled ring |
+| `text(str, position, size, color)` | Queue default-font text for this frame |
+| `beginMode2D(camera)` / `endMode2D()` | Wrap the following draws in a `Camera2D` |
+| `keyPressed(code)` / `keyDown(code)` | Whether a key was pressed / is held |
+| `keyUp(code)` / `keyReleased(code)` | Whether a key is up / was released |
+| `charPressed()` | Next queued character code, `0` when the queue is empty |
 | `mouse()` | Current mouse position as a `Vector2` |
+| `mouseDelta()` | Mouse movement since the previous frame |
+| `mouseWheel()` | Wheel movement this frame |
+| `mousePressed(b)` / `mouseDown(b)` / `mouseReleased(b)` | Mouse button state |
+| `gamepadButtonDown(pad, b)` / `gamepadButtonPressed(pad, b)` | Gamepad button state |
+| `gamepadAxis(pad, axis)` | Gamepad axis value |
 | `windowSize()` | Window client size as a `Vector2` (window required) |
 | `setFPS(n)` | Cap the frame rate |
+| `time()` / `fps()` | Seconds since init / current frame rate |
 | `traceLog(level)` | Set the raylib log threshold (`ray.log.*`) |
 | `loadImage(path)`, `genImageColor(w, h, color)` | Create an `Image` |
 | `loadTexture(path)`, `loadTextureFromImage(image)` | Create a `Texture` |
 | `loadFont(path, size)`, `defaultFont()` | Create a `Font` |
-| `Vector2`, `Vector3`, `Color`, `Rectangle` | Value type constructors |
+| `Vector2`, `Vector3`, `Color`, `Rectangle`, `Camera2D` | Value type constructors |
 | `Image`, `Texture`, `Font` | Resource types (created by their loaders) |
 | `colors` | Named raylib palette (`lightgray` … `raywhite`, `blank`) |
-| `keys` | Key/mouse code table (`space`, `enter`, `escape`, `left/right/up/down`, `wasd`, `mouseLeft/Right/Middle`) |
+| `keys` | Keyboard codes (`a` … `z`, `space`, `escape`, `f1`, `kp0`, `leftShift`, …) |
+| `mouseButtons` | Mouse button codes (`left`, `right`, `middle`, `side`, `extra`, `forward`, `back`) |
+| `gamepad` | `buttons` and `axes` code tables |
 | `log` | Trace log levels (`all` … `none`) |
 | `version` | Vendored raylib version string |
 

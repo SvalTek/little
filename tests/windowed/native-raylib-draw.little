@@ -26,6 +26,35 @@ io.print(font.glyphCount > 0)
 io.print(font:measure("hi", 20, 1).x > 0)
 io.print(font:toString())
 
+var camera = ray.Camera2D {
+    offset: ray.Vector2(32, 24)
+    target: ray.Vector2(0, 0)
+    zoom: 2
+}
+io.print(typeof camera is ray.Camera2D)
+io.print(camera:toString())
+camera.target = ray.Vector2(4, 6)
+io.print(camera.target:toString())
+camera.zoom = 1
+io.print(camera.zoom)
+
+io.print(ray.keyUp(ray.keys.a))
+io.print(ray.keyDown(ray.keys.a))
+io.print(typeof ray.mouseDelta() is ray.Vector2)
+io.print(type ray.mouseWheel() is "number")
+io.print(ray.charPressed())
+io.print(ray.gamepadButtonDown(0, ray.gamepad.buttons.rightFaceDown))
+io.print(type ray.gamepadAxis(0, ray.gamepad.axes.leftX) is "number")
+io.print(ray.time() >= 0)
+io.print(ray.fps() >= 0)
+io.print(ray.keys.f1 is 290)
+io.print(ray.mouseButtons.right is 1)
+io.print(ray.gamepad.axes.rightTrigger is 5)
+
+var unbalanced = pcall(fn() { return ray.endMode2D() })
+io.print(unbalanced.ok)
+io.print(string.contains(unbalanced.error, "beginMode2D"))
+
 var frames = 0
 ray.on("start", fn() {
     ray.setFPS(60)
@@ -35,11 +64,24 @@ ray.on("update", fn(dt) {
     frames = frames + 1
     ray.clear(ray.colors.darkblue)
     ray.rect(ray.Rectangle(1, 1, 10, 6), ray.colors.red)
+    ray.rectLines(ray.Rectangle(1, 10, 20, 8), ray.colors.yellow)
     ray.text("hi", ray.Vector2(2, 20), 10, ray.colors.white)
+    ray.circle(ray.Vector2(30, 12), 6, ray.colors.orange)
+    ray.circleLines(ray.Vector2(30, 12), 8, ray.colors.skyblue)
+    ray.line(ray.Vector2(0, 0), ray.Vector2(20, 20), ray.colors.white)
+    ray.lineEx(ray.Vector2(0, 20), ray.Vector2(20, 0), 2, ray.colors.white)
+    ray.triangle(ray.Vector2(40, 4), ray.Vector2(56, 4), ray.Vector2(48, 16), ray.colors.green)
+    ray.triangleLines(ray.Vector2(40, 20), ray.Vector2(56, 20), ray.Vector2(48, 32), ray.colors.lime)
+    ray.polygon(ray.Vector2(8, 40), 6, 6, 0, ray.colors.purple)
+    ray.polygonLines(ray.Vector2(24, 40), 5, 6, 15, ray.colors.violet)
+    ray.ring(ray.Vector2(42, 40), 3, 6, ray.colors.gold)
     texture:draw(ray.Vector2(2, 2), ray.colors.white)
     texture:drawRec(ray.Rectangle(0, 0, 4, 4), ray.Vector2(20, 2), ray.colors.white)
     texture:drawPro(ray.Rectangle(0, 0, 8, 4), ray.Rectangle(30, 2, 16, 8), ray.Vector2(0, 0), 10, ray.colors.white)
     font:draw("hi", ray.Vector2(2, 30), 16, 1, ray.colors.raywhite)
+    ray.beginMode2D(camera)
+    ray.rect(ray.Rectangle(4, 4, 8, 8), ray.colors.magenta)
+    ray.endMode2D()
     ray.close()
 })
 

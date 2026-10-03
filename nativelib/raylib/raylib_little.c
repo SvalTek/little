@@ -21,11 +21,38 @@ typedef enum {
     RAY_CMD_TEXTURE,
     RAY_CMD_TEXTURE_REC,
     RAY_CMD_TEXTURE_PRO,
-    RAY_CMD_TEXT_EX
+    RAY_CMD_TEXT_EX,
+    RAY_CMD_SHAPE,
+    RAY_CMD_BEGIN_2D,
+    RAY_CMD_END_2D
 } RayCommandKind;
 
-/* Texture and font draws carry their larger arguments in a heap payload so the
-   fixed command buffer stays small. */
+typedef enum {
+    RAY_SHAPE_RECT_LINES,
+    RAY_SHAPE_CIRCLE,
+    RAY_SHAPE_CIRCLE_LINES,
+    RAY_SHAPE_LINE,
+    RAY_SHAPE_LINE_EX,
+    RAY_SHAPE_TRIANGLE,
+    RAY_SHAPE_TRIANGLE_LINES,
+    RAY_SHAPE_POLYGON,
+    RAY_SHAPE_POLYGON_LINES,
+    RAY_SHAPE_RING
+} RayShapeKind;
+
+typedef struct {
+    RayShapeKind shape;
+    Rectangle bounds;
+    Vector2 points[3];
+    float radius;
+    float radius2;
+    float rotation;
+    float thickness;
+    int sides;
+} RayShapeCommand;
+
+/* Texture draws carry their arguments in a heap payload so the fixed command
+   buffer stays small. */
 typedef struct {
     Texture2D texture;
     Rectangle source;
@@ -109,6 +136,8 @@ static lt_Value rectangle_class = LT_VALUE_NULL;
 static lt_Value image_class = LT_VALUE_NULL;
 static lt_Value texture_class = LT_VALUE_NULL;
 static lt_Value font_class = LT_VALUE_NULL;
+static lt_Value camera2d_class = LT_VALUE_NULL;
+static uint32_t mode2d_depth = 0;
 
 static void expect_number(lt_VM* vm, lt_Value value, const char* message)
 {
@@ -153,6 +182,7 @@ RAY_DATA_ACCESSOR(rectangle_data, LtRectangle, rectangle_class)
 RAY_DATA_ACCESSOR(image_data, Image, image_class)
 RAY_DATA_ACCESSOR(texture_data, Texture2D, texture_class)
 RAY_DATA_ACCESSOR(font_data, LtFontData, font_class)
+RAY_DATA_ACCESSOR(camera2d_data, Camera2D, camera2d_class)
 
 static void* allocate_native_data(lt_VM* vm, size_t size)
 {
@@ -383,6 +413,11 @@ static uint8_t font_get_glyph_count(lt_VM* vm, uint8_t argc)
     lt->push(vm, lt->make_number((double)data->font.glyphCount));
     return 1;
 }
+
+RAY_NUMBER_GETTER(camera2d_get_rotation, Camera2D, camera2d_data, rotation, "a Camera2D")
+RAY_NUMBER_SETTER(camera2d_set_rotation, Camera2D, camera2d_data, rotation, "a Camera2D")
+RAY_NUMBER_GETTER(camera2d_get_zoom, Camera2D, camera2d_data, zoom, "a Camera2D")
+RAY_NUMBER_SETTER(camera2d_set_zoom, Camera2D, camera2d_data, zoom, "a Camera2D")
 
 static lt_Value make_boolean(uint8_t value)
 {
@@ -720,6 +755,7 @@ static void clear_commands(void)
         commands[i].payload = 0;
     }
     command_count = 0;
+    mode2d_depth = 0;
 }
 
 static void require_draw_target(lt_VM* vm)
@@ -1113,6 +1149,332 @@ static uint8_t font_to_string(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+/* ---------------- 2D shapes ---------------- */
+
+static RayShapeCommand* make_shape_command(lt_VM* vm, RayShapeKind shape)
+{
+    require_draw_target(vm);
+    RayShapeCommand* payload = allocate_native_data(vm, sizeof(RayShapeCommand));
+    memset(payload, 0, sizeof(RayShapeCommand));
+    payload->shape = shape;
+    return payload;
+}
+
+static void push_shape_command(RayShapeCommand* payload, Color color)
+{
+    RayCommand command = new_command(RAY_CMD_SHAPE);
+    command.color = color;
+    command.payload = payload;
+    push_command(command);
+}
+
+static void set_point(Vector2* point, LtVector2* source)
+{
+    point->x = (float)source->x;
+    point->y = (float)source->y;
+}
+
+static uint8_t native_rect_lines(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a Rectangle and a Color for ray.rectLines!");
+    lt_Value color_value = lt->pop(vm);
+    LtRectangle* bounds = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle for ray.rectLines!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.rectLines!");
+    RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_RECT_LINES);
+    copy_rectangle(&payload->bounds, bounds);
+    payload->thickness = 1.0f;
+    push_shape_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_circle(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a Vector2 center, a radius, and a Color for ray.circle!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    LtVector2* center = vector2_data(vm, lt->pop(vm), "Expected a Vector2 center for ray.circle!");
+    expect_number(vm, radius_value, "Expected a circle radius number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.circle!");
+    RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_CIRCLE);
+    set_point(&payload->points[0], center);
+    payload->radius = (float)lt->get_number(radius_value);
+    push_shape_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_circle_lines(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a Vector2 center, a radius, and a Color for ray.circleLines!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    LtVector2* center = vector2_data(vm, lt->pop(vm), "Expected a Vector2 center for ray.circleLines!");
+    expect_number(vm, radius_value, "Expected a circle radius number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.circleLines!");
+    RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_CIRCLE_LINES);
+    set_point(&payload->points[0], center);
+    payload->radius = (float)lt->get_number(radius_value);
+    push_shape_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_line(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected two Vector2 points and a Color for ray.line!");
+    lt_Value color_value = lt->pop(vm);
+    LtVector2* end = vector2_data(vm, lt->pop(vm), "Expected a Vector2 end point for ray.line!");
+    LtVector2* start = vector2_data(vm, lt->pop(vm), "Expected a Vector2 start point for ray.line!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.line!");
+    RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_LINE);
+    set_point(&payload->points[0], start);
+    set_point(&payload->points[1], end);
+    push_shape_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_line_ex(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "Expected two Vector2 points, a thickness, and a Color for ray.lineEx!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value thickness_value = lt->pop(vm);
+    LtVector2* end = vector2_data(vm, lt->pop(vm), "Expected a Vector2 end point for ray.lineEx!");
+    LtVector2* start = vector2_data(vm, lt->pop(vm), "Expected a Vector2 start point for ray.lineEx!");
+    expect_number(vm, thickness_value, "Expected a line thickness number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.lineEx!");
+    RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_LINE_EX);
+    set_point(&payload->points[0], start);
+    set_point(&payload->points[1], end);
+    payload->thickness = (float)lt->get_number(thickness_value);
+    push_shape_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_triangle(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "Expected three Vector2 points and a Color for ray.triangle!");
+    lt_Value color_value = lt->pop(vm);
+    LtVector2* third = vector2_data(vm, lt->pop(vm), "Expected a Vector2 point for ray.triangle!");
+    LtVector2* second = vector2_data(vm, lt->pop(vm), "Expected a Vector2 point for ray.triangle!");
+    LtVector2* first = vector2_data(vm, lt->pop(vm), "Expected a Vector2 point for ray.triangle!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.triangle!");
+    RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_TRIANGLE);
+    set_point(&payload->points[0], first);
+    set_point(&payload->points[1], second);
+    set_point(&payload->points[2], third);
+    push_shape_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_triangle_lines(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "Expected three Vector2 points and a Color for ray.triangleLines!");
+    lt_Value color_value = lt->pop(vm);
+    LtVector2* third = vector2_data(vm, lt->pop(vm), "Expected a Vector2 point for ray.triangleLines!");
+    LtVector2* second = vector2_data(vm, lt->pop(vm), "Expected a Vector2 point for ray.triangleLines!");
+    LtVector2* first = vector2_data(vm, lt->pop(vm), "Expected a Vector2 point for ray.triangleLines!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.triangleLines!");
+    RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_TRIANGLE_LINES);
+    set_point(&payload->points[0], first);
+    set_point(&payload->points[1], second);
+    set_point(&payload->points[2], third);
+    push_shape_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_polygon(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 5) lt->runtime_error(vm, "Expected a Vector2 center, sides, a radius, a rotation, and a Color for ray.polygon!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value rotation_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    lt_Value sides_value = lt->pop(vm);
+    LtVector2* center = vector2_data(vm, lt->pop(vm), "Expected a Vector2 center for ray.polygon!");
+    expect_number(vm, sides_value, "Expected a polygon sides number!");
+    expect_number(vm, radius_value, "Expected a polygon radius number!");
+    expect_number(vm, rotation_value, "Expected a polygon rotation number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.polygon!");
+    RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_POLYGON);
+    set_point(&payload->points[0], center);
+    payload->sides = (int)lt->get_number(sides_value);
+    payload->radius = (float)lt->get_number(radius_value);
+    payload->rotation = (float)lt->get_number(rotation_value);
+    push_shape_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_polygon_lines(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 5) lt->runtime_error(vm, "Expected a Vector2 center, sides, a radius, a rotation, and a Color for ray.polygonLines!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value rotation_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    lt_Value sides_value = lt->pop(vm);
+    LtVector2* center = vector2_data(vm, lt->pop(vm), "Expected a Vector2 center for ray.polygonLines!");
+    expect_number(vm, sides_value, "Expected a polygon sides number!");
+    expect_number(vm, radius_value, "Expected a polygon radius number!");
+    expect_number(vm, rotation_value, "Expected a polygon rotation number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.polygonLines!");
+    RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_POLYGON_LINES);
+    set_point(&payload->points[0], center);
+    payload->sides = (int)lt->get_number(sides_value);
+    payload->radius = (float)lt->get_number(radius_value);
+    payload->rotation = (float)lt->get_number(rotation_value);
+    push_shape_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_ring(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "Expected a Vector2 center, an inner radius, an outer radius, and a Color for ray.ring!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value outer_value = lt->pop(vm);
+    lt_Value inner_value = lt->pop(vm);
+    LtVector2* center = vector2_data(vm, lt->pop(vm), "Expected a Vector2 center for ray.ring!");
+    expect_number(vm, inner_value, "Expected an inner radius number!");
+    expect_number(vm, outer_value, "Expected an outer radius number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.ring!");
+    RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_RING);
+    set_point(&payload->points[0], center);
+    payload->radius = (float)lt->get_number(inner_value);
+    payload->radius2 = (float)lt->get_number(outer_value);
+    push_shape_command(payload, color);
+    return 0;
+}
+
+/* ---------------- Camera2D ---------------- */
+
+static Vector2 read_vector2_field(lt_VM* vm, lt_Value table, const char* key, Vector2 fallback)
+{
+    lt_Value value = lt->table_get(vm, table, lt->make_string(vm, key));
+    if (LT_IS_NULL(value)) return fallback;
+    LtVector2* vector = vector2_data(vm, value, "Expected a Vector2 camera field!");
+    Vector2 result;
+    result.x = (float)vector->x;
+    result.y = (float)vector->y;
+    return result;
+}
+
+static uint8_t camera2d_constructor(lt_VM* vm, uint8_t argc)
+{
+    Vector2 zero = { 0.0f, 0.0f };
+    Camera2D camera;
+    camera.offset = zero;
+    camera.target = zero;
+    camera.rotation = 0.0f;
+    camera.zoom = 1.0f;
+    if (argc == 2)
+    {
+        lt_Value source = lt->pop(vm);
+        if (!LT_IS_TABLE(source)) lt->runtime_error(vm, "Expected a table, or offset and target Vector2s for Camera2D!");
+        camera.offset = read_vector2_field(vm, source, "offset", zero);
+        camera.target = read_vector2_field(vm, source, "target", zero);
+        camera.rotation = (float)table_field_number(vm, source, "rotation", 0, "Expected Camera2D rotation to be number!");
+        camera.zoom = (float)table_field_number(vm, source, "zoom", 1, "Expected Camera2D zoom to be number!");
+    }
+    else if (argc == 3 || argc == 5)
+    {
+        float zoom = 1.0f;
+        float rotation = 0.0f;
+        if (argc == 5)
+        {
+            lt_Value zoom_value = lt->pop(vm);
+            lt_Value rotation_value = lt->pop(vm);
+            expect_number(vm, rotation_value, "Expected a Camera2D rotation number!");
+            expect_number(vm, zoom_value, "Expected a Camera2D zoom number!");
+            rotation = (float)lt->get_number(rotation_value);
+            zoom = (float)lt->get_number(zoom_value);
+        }
+        LtVector2* target = vector2_data(vm, lt->pop(vm), "Expected a Vector2 target for Camera2D!");
+        LtVector2* offset = vector2_data(vm, lt->pop(vm), "Expected a Vector2 offset for Camera2D!");
+        camera.offset.x = (float)offset->x;
+        camera.offset.y = (float)offset->y;
+        camera.target.x = (float)target->x;
+        camera.target.y = (float)target->y;
+        camera.rotation = rotation;
+        camera.zoom = zoom;
+    }
+    else if (argc != 1)
+    {
+        lt->runtime_error(vm, "Expected a table, or offset and target Vector2s for Camera2D!");
+    }
+    lt_Value instance = lt->pop(vm);
+    Camera2D* data = allocate_native_data(vm, sizeof(Camera2D));
+    *data = camera;
+    lt->instance_set_native_data(vm, instance, camera2d_class, data);
+    return 0;
+}
+
+static uint8_t camera2d_get_target(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "target getter expects no arguments!");
+    Camera2D* camera = camera2d_data(vm, lt->pop(vm), "Expected a Camera2D!");
+    lt->push(vm, make_vector2(vm, camera->target.x, camera->target.y));
+    return 1;
+}
+
+static uint8_t camera2d_set_target(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "target setter expects one value!");
+    LtVector2* target = vector2_data(vm, lt->pop(vm), "Expected a Vector2 for target!");
+    Camera2D* camera = camera2d_data(vm, lt->pop(vm), "Expected a Camera2D!");
+    camera->target.x = (float)target->x;
+    camera->target.y = (float)target->y;
+    return 0;
+}
+
+static uint8_t camera2d_get_offset(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "offset getter expects no arguments!");
+    Camera2D* camera = camera2d_data(vm, lt->pop(vm), "Expected a Camera2D!");
+    lt->push(vm, make_vector2(vm, camera->offset.x, camera->offset.y));
+    return 1;
+}
+
+static uint8_t camera2d_set_offset(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "offset setter expects one value!");
+    LtVector2* offset = vector2_data(vm, lt->pop(vm), "Expected a Vector2 for offset!");
+    Camera2D* camera = camera2d_data(vm, lt->pop(vm), "Expected a Camera2D!");
+    camera->offset.x = (float)offset->x;
+    camera->offset.y = (float)offset->y;
+    return 0;
+}
+
+static uint8_t camera2d_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    Camera2D* camera = camera2d_data(vm, lt->pop(vm), "Expected a Camera2D!");
+    char text[128];
+    snprintf(text, sizeof(text), "camera2D(offset (%g, %g), target (%g, %g), rotation %g, zoom %g)",
+        camera->offset.x, camera->offset.y, camera->target.x, camera->target.y, camera->rotation, camera->zoom);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t native_begin_mode2d(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a Camera2D for ray.beginMode2D!");
+    Camera2D* camera = camera2d_data(vm, lt->pop(vm), "Expected a Camera2D for ray.beginMode2D!");
+    require_draw_target(vm);
+    Camera2D* payload = allocate_native_data(vm, sizeof(Camera2D));
+    *payload = *camera;
+    RayCommand command = new_command(RAY_CMD_BEGIN_2D);
+    command.payload = payload;
+    push_command(command);
+    mode2d_depth++;
+    return 0;
+}
+
+static uint8_t native_end_mode2d(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.endMode2D!");
+    require_draw_target(vm);
+    if (mode2d_depth == 0) lt->runtime_error(vm, "Expected ray.beginMode2D before ray.endMode2D!");
+    mode2d_depth--;
+    RayCommand command = new_command(RAY_CMD_END_2D);
+    push_command(command);
+    return 0;
+}
+
 static uint8_t native_open(lt_VM* vm, uint8_t argc)
 {
     if (argc != 3 && argc != 4) lt->runtime_error(vm, "Expected width, height, title, and optional window options for ray.open!");
@@ -1228,7 +1590,6 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
     for (uint32_t i = 0; i < command_count; ++i)
     {
         RayCommand* command = &commands[i];
-        RayTextureCommand* texture_command = command->payload;
         switch (command->kind)
         {
         case RAY_CMD_RECT:
@@ -1237,22 +1598,71 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
         case RAY_CMD_TEXT:
             DrawText(command->text, command->x, command->y, command->size, command->color);
             break;
-        case RAY_CMD_TEXTURE:
-            DrawTextureV(texture_command->texture, texture_command->position, command->color);
-            break;
-        case RAY_CMD_TEXTURE_REC:
-            DrawTextureRec(texture_command->texture, texture_command->source, texture_command->position, command->color);
-            break;
-        case RAY_CMD_TEXTURE_PRO:
-            DrawTexturePro(texture_command->texture, texture_command->source, texture_command->dest,
-                texture_command->origin, texture_command->rotation, command->color);
-            break;
-        case RAY_CMD_TEXT_EX: {
-            RayTextExCommand* text_command = command->payload;
-            DrawTextEx(text_command->font, command->text, text_command->position,
-                text_command->size, text_command->spacing, command->color);
+        case RAY_CMD_TEXTURE: {
+            RayTextureCommand* payload = command->payload;
+            DrawTextureV(payload->texture, payload->position, command->color);
             break;
         }
+        case RAY_CMD_TEXTURE_REC: {
+            RayTextureCommand* payload = command->payload;
+            DrawTextureRec(payload->texture, payload->source, payload->position, command->color);
+            break;
+        }
+        case RAY_CMD_TEXTURE_PRO: {
+            RayTextureCommand* payload = command->payload;
+            DrawTexturePro(payload->texture, payload->source, payload->dest,
+                payload->origin, payload->rotation, command->color);
+            break;
+        }
+        case RAY_CMD_TEXT_EX: {
+            RayTextExCommand* payload = command->payload;
+            DrawTextEx(payload->font, command->text, payload->position,
+                payload->size, payload->spacing, command->color);
+            break;
+        }
+        case RAY_CMD_SHAPE: {
+            RayShapeCommand* shape = command->payload;
+            switch (shape->shape)
+            {
+            case RAY_SHAPE_RECT_LINES:
+                DrawRectangleLinesEx(shape->bounds, shape->thickness, command->color);
+                break;
+            case RAY_SHAPE_CIRCLE:
+                DrawCircleV(shape->points[0], shape->radius, command->color);
+                break;
+            case RAY_SHAPE_CIRCLE_LINES:
+                DrawCircleLinesV(shape->points[0], shape->radius, command->color);
+                break;
+            case RAY_SHAPE_LINE:
+                DrawLineV(shape->points[0], shape->points[1], command->color);
+                break;
+            case RAY_SHAPE_LINE_EX:
+                DrawLineEx(shape->points[0], shape->points[1], shape->thickness, command->color);
+                break;
+            case RAY_SHAPE_TRIANGLE:
+                DrawTriangle(shape->points[0], shape->points[1], shape->points[2], command->color);
+                break;
+            case RAY_SHAPE_TRIANGLE_LINES:
+                DrawTriangleLines(shape->points[0], shape->points[1], shape->points[2], command->color);
+                break;
+            case RAY_SHAPE_POLYGON:
+                DrawPoly(shape->points[0], shape->sides, shape->radius, shape->rotation, command->color);
+                break;
+            case RAY_SHAPE_POLYGON_LINES:
+                DrawPolyLines(shape->points[0], shape->sides, shape->radius, shape->rotation, command->color);
+                break;
+            case RAY_SHAPE_RING:
+                DrawRing(shape->points[0], shape->radius, shape->radius2, 0.0f, 360.0f, 64, command->color);
+                break;
+            }
+            break;
+        }
+        case RAY_CMD_BEGIN_2D:
+            BeginMode2D(*(Camera2D*)command->payload);
+            break;
+        case RAY_CMD_END_2D:
+            EndMode2D();
+            break;
         }
     }
     EndDrawing();
@@ -1317,30 +1727,90 @@ static uint8_t native_text(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
-static uint8_t native_key_pressed(lt_VM* vm, uint8_t argc)
+#define RAY_BUTTON_QUERY(function_name, api_call, function_label, value_label)              \
+    static uint8_t function_name(lt_VM* vm, uint8_t argc)                                   \
+    {                                                                                       \
+        if (argc != 1) lt->runtime_error(vm, "Expected a " value_label " for ray." function_label "!"); \
+        lt_Value code = lt->pop(vm);                                                        \
+        expect_number(vm, code, "Expected a " value_label " number!");                       \
+        lt->push(vm, api_call((int)lt->get_number(code)) ? LT_VALUE_TRUE : LT_VALUE_FALSE);  \
+        return 1;                                                                            \
+    }
+
+RAY_BUTTON_QUERY(native_key_pressed, IsKeyPressed, "keyPressed", "key code")
+RAY_BUTTON_QUERY(native_key_down, IsKeyDown, "keyDown", "key code")
+RAY_BUTTON_QUERY(native_key_up, IsKeyUp, "keyUp", "key code")
+RAY_BUTTON_QUERY(native_key_released, IsKeyReleased, "keyReleased", "key code")
+RAY_BUTTON_QUERY(native_mouse_pressed, IsMouseButtonPressed, "mousePressed", "mouse button")
+RAY_BUTTON_QUERY(native_mouse_down, IsMouseButtonDown, "mouseDown", "mouse button")
+RAY_BUTTON_QUERY(native_mouse_released, IsMouseButtonReleased, "mouseReleased", "mouse button")
+
+static uint8_t native_char_pressed(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 1) lt->runtime_error(vm, "Expected key code for ray.keyPressed!");
-    lt_Value key = lt->pop(vm);
-    expect_number(vm, key, "Expected ray key code to be number!");
-    lt->push(vm, IsKeyPressed((int)lt->get_number(key)) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.charPressed!");
+    lt->push(vm, lt->make_number((double)GetCharPressed()));
     return 1;
 }
 
-static uint8_t native_key_down(lt_VM* vm, uint8_t argc)
+static uint8_t native_mouse_delta(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 1) lt->runtime_error(vm, "Expected key code for ray.keyDown!");
-    lt_Value key = lt->pop(vm);
-    expect_number(vm, key, "Expected ray key code to be number!");
-    lt->push(vm, IsKeyDown((int)lt->get_number(key)) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.mouseDelta!");
+    Vector2 delta = GetMouseDelta();
+    lt->push(vm, make_vector2(vm, (double)delta.x, (double)delta.y));
     return 1;
 }
 
-static uint8_t native_mouse_pressed(lt_VM* vm, uint8_t argc)
+static uint8_t native_mouse_wheel(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 1) lt->runtime_error(vm, "Expected mouse button for ray.mousePressed!");
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.mouseWheel!");
+    lt->push(vm, lt->make_number((double)GetMouseWheelMove()));
+    return 1;
+}
+
+static uint8_t native_gamepad_button_down(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a gamepad index and a button for ray.gamepadButtonDown!");
     lt_Value button = lt->pop(vm);
-    expect_number(vm, button, "Expected ray mouse button to be number!");
-    lt->push(vm, IsMouseButtonPressed((int)lt->get_number(button)) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    lt_Value gamepad = lt->pop(vm);
+    expect_number(vm, gamepad, "Expected a gamepad index number!");
+    expect_number(vm, button, "Expected a gamepad button number!");
+    lt->push(vm, IsGamepadButtonDown((int)lt->get_number(gamepad), (int)lt->get_number(button)) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
+static uint8_t native_gamepad_button_pressed(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a gamepad index and a button for ray.gamepadButtonPressed!");
+    lt_Value button = lt->pop(vm);
+    lt_Value gamepad = lt->pop(vm);
+    expect_number(vm, gamepad, "Expected a gamepad index number!");
+    expect_number(vm, button, "Expected a gamepad button number!");
+    lt->push(vm, IsGamepadButtonPressed((int)lt->get_number(gamepad), (int)lt->get_number(button)) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
+static uint8_t native_gamepad_axis(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a gamepad index and an axis for ray.gamepadAxis!");
+    lt_Value axis = lt->pop(vm);
+    lt_Value gamepad = lt->pop(vm);
+    expect_number(vm, gamepad, "Expected a gamepad index number!");
+    expect_number(vm, axis, "Expected a gamepad axis number!");
+    lt->push(vm, lt->make_number((double)GetGamepadAxisMovement((int)lt->get_number(gamepad), (int)lt->get_number(axis))));
+    return 1;
+}
+
+static uint8_t native_time(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.time!");
+    lt->push(vm, lt->make_number(GetTime()));
+    return 1;
+}
+
+static uint8_t native_fps(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.fps!");
+    lt->push(vm, lt->make_number((double)GetFPS()));
     return 1;
 }
 
@@ -1504,6 +1974,20 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     RAY_CLASS_METHOD(font_class, "toString", font_to_string);
     lt->table_set(vm, module_value, lt->make_string(vm, "Font"), font_class);
 
+    camera2d_class = lt->class_create(vm, "Camera2D");
+    lt->class_set_native_data_destroy(vm, camera2d_class, destroy_native_data);
+    lt->class_set_constructor(vm, camera2d_class, camera2d_constructor);
+    RAY_CLASS_GETTER(camera2d_class, "target", camera2d_get_target);
+    RAY_CLASS_SETTER(camera2d_class, "target", camera2d_set_target);
+    RAY_CLASS_GETTER(camera2d_class, "offset", camera2d_get_offset);
+    RAY_CLASS_SETTER(camera2d_class, "offset", camera2d_set_offset);
+    RAY_CLASS_GETTER(camera2d_class, "rotation", camera2d_get_rotation);
+    RAY_CLASS_SETTER(camera2d_class, "rotation", camera2d_set_rotation);
+    RAY_CLASS_GETTER(camera2d_class, "zoom", camera2d_get_zoom);
+    RAY_CLASS_SETTER(camera2d_class, "zoom", camera2d_set_zoom);
+    RAY_CLASS_METHOD(camera2d_class, "toString", camera2d_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Camera2D"), camera2d_class);
+
     set_native(vm, module_value, "loadImage", native_load_image);
     set_native(vm, module_value, "genImageColor", native_gen_image_color);
     set_native(vm, module_value, "loadTexture", native_load_texture);
@@ -1520,30 +2004,193 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_native(vm, module_value, "clear", native_clear);
     set_native(vm, module_value, "rect", native_rect);
     set_native(vm, module_value, "text", native_text);
+    set_native(vm, module_value, "rectLines", native_rect_lines);
+    set_native(vm, module_value, "circle", native_circle);
+    set_native(vm, module_value, "circleLines", native_circle_lines);
+    set_native(vm, module_value, "line", native_line);
+    set_native(vm, module_value, "lineEx", native_line_ex);
+    set_native(vm, module_value, "triangle", native_triangle);
+    set_native(vm, module_value, "triangleLines", native_triangle_lines);
+    set_native(vm, module_value, "polygon", native_polygon);
+    set_native(vm, module_value, "polygonLines", native_polygon_lines);
+    set_native(vm, module_value, "ring", native_ring);
+    set_native(vm, module_value, "beginMode2D", native_begin_mode2d);
+    set_native(vm, module_value, "endMode2D", native_end_mode2d);
     set_native(vm, module_value, "keyPressed", native_key_pressed);
     set_native(vm, module_value, "keyDown", native_key_down);
+    set_native(vm, module_value, "keyUp", native_key_up);
+    set_native(vm, module_value, "keyReleased", native_key_released);
     set_native(vm, module_value, "mousePressed", native_mouse_pressed);
+    set_native(vm, module_value, "mouseDown", native_mouse_down);
+    set_native(vm, module_value, "mouseReleased", native_mouse_released);
     set_native(vm, module_value, "mouse", native_mouse_position);
+    set_native(vm, module_value, "mouseDelta", native_mouse_delta);
+    set_native(vm, module_value, "mouseWheel", native_mouse_wheel);
+    set_native(vm, module_value, "charPressed", native_char_pressed);
+    set_native(vm, module_value, "gamepadButtonDown", native_gamepad_button_down);
+    set_native(vm, module_value, "gamepadButtonPressed", native_gamepad_button_pressed);
+    set_native(vm, module_value, "gamepadAxis", native_gamepad_axis);
     set_native(vm, module_value, "setFPS", native_set_fps);
+    set_native(vm, module_value, "time", native_time);
+    set_native(vm, module_value, "fps", native_fps);
 
     lt->table_set(vm, module_value, lt->make_string(vm, "version"), lt->make_string(vm, RAYLIB_VERSION));
 
     lt_Value keys = lt->make_table(vm);
-    set_number(vm, keys, "space", 32);
-    set_number(vm, keys, "enter", 257);
-    set_number(vm, keys, "escape", 256);
-    set_number(vm, keys, "left", 262);
-    set_number(vm, keys, "right", 263);
-    set_number(vm, keys, "up", 264);
-    set_number(vm, keys, "down", 265);
-    set_number(vm, keys, "w", 87);
+    set_number(vm, keys, "none", 0);
+    set_number(vm, keys, "apostrophe", 39);
+    set_number(vm, keys, "comma", 44);
+    set_number(vm, keys, "minus", 45);
+    set_number(vm, keys, "period", 46);
+    set_number(vm, keys, "slash", 47);
+    set_number(vm, keys, "zero", 48);
+    set_number(vm, keys, "one", 49);
+    set_number(vm, keys, "two", 50);
+    set_number(vm, keys, "three", 51);
+    set_number(vm, keys, "four", 52);
+    set_number(vm, keys, "five", 53);
+    set_number(vm, keys, "six", 54);
+    set_number(vm, keys, "seven", 55);
+    set_number(vm, keys, "eight", 56);
+    set_number(vm, keys, "nine", 57);
+    set_number(vm, keys, "semicolon", 59);
+    set_number(vm, keys, "equal", 61);
     set_number(vm, keys, "a", 65);
-    set_number(vm, keys, "s", 83);
+    set_number(vm, keys, "b", 66);
+    set_number(vm, keys, "c", 67);
     set_number(vm, keys, "d", 68);
-    set_number(vm, keys, "mouseLeft", 0);
-    set_number(vm, keys, "mouseRight", 1);
-    set_number(vm, keys, "mouseMiddle", 2);
+    set_number(vm, keys, "e", 69);
+    set_number(vm, keys, "f", 70);
+    set_number(vm, keys, "g", 71);
+    set_number(vm, keys, "h", 72);
+    set_number(vm, keys, "i", 73);
+    set_number(vm, keys, "j", 74);
+    set_number(vm, keys, "k", 75);
+    set_number(vm, keys, "l", 76);
+    set_number(vm, keys, "m", 77);
+    set_number(vm, keys, "n", 78);
+    set_number(vm, keys, "o", 79);
+    set_number(vm, keys, "p", 80);
+    set_number(vm, keys, "q", 81);
+    set_number(vm, keys, "r", 82);
+    set_number(vm, keys, "s", 83);
+    set_number(vm, keys, "t", 84);
+    set_number(vm, keys, "u", 85);
+    set_number(vm, keys, "v", 86);
+    set_number(vm, keys, "w", 87);
+    set_number(vm, keys, "x", 88);
+    set_number(vm, keys, "y", 89);
+    set_number(vm, keys, "z", 90);
+    set_number(vm, keys, "leftBracket", 91);
+    set_number(vm, keys, "backslash", 92);
+    set_number(vm, keys, "rightBracket", 93);
+    set_number(vm, keys, "grave", 96);
+    set_number(vm, keys, "space", 32);
+    set_number(vm, keys, "escape", 256);
+    set_number(vm, keys, "enter", 257);
+    set_number(vm, keys, "tab", 258);
+    set_number(vm, keys, "backspace", 259);
+    set_number(vm, keys, "insert", 260);
+    set_number(vm, keys, "delete", 261);
+    set_number(vm, keys, "right", 262);
+    set_number(vm, keys, "left", 263);
+    set_number(vm, keys, "down", 264);
+    set_number(vm, keys, "up", 265);
+    set_number(vm, keys, "pageUp", 266);
+    set_number(vm, keys, "pageDown", 267);
+    set_number(vm, keys, "home", 268);
+    set_number(vm, keys, "end", 269);
+    set_number(vm, keys, "capsLock", 280);
+    set_number(vm, keys, "scrollLock", 281);
+    set_number(vm, keys, "numLock", 282);
+    set_number(vm, keys, "printScreen", 283);
+    set_number(vm, keys, "pause", 284);
+    set_number(vm, keys, "f1", 290);
+    set_number(vm, keys, "f2", 291);
+    set_number(vm, keys, "f3", 292);
+    set_number(vm, keys, "f4", 293);
+    set_number(vm, keys, "f5", 294);
+    set_number(vm, keys, "f6", 295);
+    set_number(vm, keys, "f7", 296);
+    set_number(vm, keys, "f8", 297);
+    set_number(vm, keys, "f9", 298);
+    set_number(vm, keys, "f10", 299);
+    set_number(vm, keys, "f11", 300);
+    set_number(vm, keys, "f12", 301);
+    set_number(vm, keys, "leftShift", 340);
+    set_number(vm, keys, "leftControl", 341);
+    set_number(vm, keys, "leftAlt", 342);
+    set_number(vm, keys, "leftSuper", 343);
+    set_number(vm, keys, "rightShift", 344);
+    set_number(vm, keys, "rightControl", 345);
+    set_number(vm, keys, "rightAlt", 346);
+    set_number(vm, keys, "rightSuper", 347);
+    set_number(vm, keys, "kbMenu", 348);
+    set_number(vm, keys, "kp0", 320);
+    set_number(vm, keys, "kp1", 321);
+    set_number(vm, keys, "kp2", 322);
+    set_number(vm, keys, "kp3", 323);
+    set_number(vm, keys, "kp4", 324);
+    set_number(vm, keys, "kp5", 325);
+    set_number(vm, keys, "kp6", 326);
+    set_number(vm, keys, "kp7", 327);
+    set_number(vm, keys, "kp8", 328);
+    set_number(vm, keys, "kp9", 329);
+    set_number(vm, keys, "kpDecimal", 330);
+    set_number(vm, keys, "kpDivide", 331);
+    set_number(vm, keys, "kpMultiply", 332);
+    set_number(vm, keys, "kpSubtract", 333);
+    set_number(vm, keys, "kpAdd", 334);
+    set_number(vm, keys, "kpEnter", 335);
+    set_number(vm, keys, "kpEqual", 336);
+    set_number(vm, keys, "back", 4);
+    set_number(vm, keys, "menu", 5);
+    set_number(vm, keys, "volumeUp", 24);
+    set_number(vm, keys, "volumeDown", 25);
     lt->table_set(vm, module_value, lt->make_string(vm, "keys"), keys);
+
+    lt_Value mouse_buttons = lt->make_table(vm);
+    set_number(vm, mouse_buttons, "left", 0);
+    set_number(vm, mouse_buttons, "right", 1);
+    set_number(vm, mouse_buttons, "middle", 2);
+    set_number(vm, mouse_buttons, "side", 3);
+    set_number(vm, mouse_buttons, "extra", 4);
+    set_number(vm, mouse_buttons, "forward", 5);
+    set_number(vm, mouse_buttons, "back", 6);
+    lt->table_set(vm, module_value, lt->make_string(vm, "mouseButtons"), mouse_buttons);
+
+    lt_Value gamepad_buttons = lt->make_table(vm);
+    set_number(vm, gamepad_buttons, "unknown", 0);
+    set_number(vm, gamepad_buttons, "leftFaceUp", 1);
+    set_number(vm, gamepad_buttons, "leftFaceRight", 2);
+    set_number(vm, gamepad_buttons, "leftFaceDown", 3);
+    set_number(vm, gamepad_buttons, "leftFaceLeft", 4);
+    set_number(vm, gamepad_buttons, "rightFaceUp", 5);
+    set_number(vm, gamepad_buttons, "rightFaceRight", 6);
+    set_number(vm, gamepad_buttons, "rightFaceDown", 7);
+    set_number(vm, gamepad_buttons, "rightFaceLeft", 8);
+    set_number(vm, gamepad_buttons, "leftTrigger1", 9);
+    set_number(vm, gamepad_buttons, "leftTrigger2", 10);
+    set_number(vm, gamepad_buttons, "rightTrigger1", 11);
+    set_number(vm, gamepad_buttons, "rightTrigger2", 12);
+    set_number(vm, gamepad_buttons, "middleLeft", 13);
+    set_number(vm, gamepad_buttons, "middle", 14);
+    set_number(vm, gamepad_buttons, "middleRight", 15);
+    set_number(vm, gamepad_buttons, "leftThumb", 16);
+    set_number(vm, gamepad_buttons, "rightThumb", 17);
+
+    lt_Value gamepad_axes = lt->make_table(vm);
+    set_number(vm, gamepad_axes, "leftX", 0);
+    set_number(vm, gamepad_axes, "leftY", 1);
+    set_number(vm, gamepad_axes, "rightX", 2);
+    set_number(vm, gamepad_axes, "rightY", 3);
+    set_number(vm, gamepad_axes, "leftTrigger", 4);
+    set_number(vm, gamepad_axes, "rightTrigger", 5);
+
+    lt_Value gamepad = lt->make_table(vm);
+    lt->table_set(vm, gamepad, lt->make_string(vm, "buttons"), gamepad_buttons);
+    lt->table_set(vm, gamepad, lt->make_string(vm, "axes"), gamepad_axes);
+    lt->table_set(vm, module_value, lt->make_string(vm, "gamepad"), gamepad);
 
     lt_Value log_levels = lt->make_table(vm);
     set_number(vm, log_levels, "all", 0);
