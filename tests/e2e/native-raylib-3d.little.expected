@@ -1,0 +1,42 @@
+true
+camera3D(position (10, 10, 10), target (0, 0, 0), up (0, 1, 0), fovy 45, projection perspective)
+(10, 10, 10)
+(0, 0, 0)
+(0, 1, 0)
+45.000000
+true
+camera3D(position (1, 2, 3), target (4, 5, 6), up (0, 1, 0), fovy 60, projection orthographic)
+camera3D(position (1, 1, 1), target (0, 0, 0), up (0, 1, 0), fovy 30, projection orthographic)
+(0, 1, 0)
+false
+true
+true
+ray((0, 0, 0) -> (0, 0, 1))
+(0, 0, 0)
+(0, 0, 1)
+(0, 0, -2)
+ray((1, 1, 1) -> (0, 1, 0))
+true
+true
+5.000000
+(0, 0, 3)
+(0, 0, -1)
+rayCollision(hit, 5, (0, 0, 3), (0, 0, -1))
+false
+true
+5.000000
+false
+false
+true
+false
+true
+false
+true
+false
+true
+false
+true
+false
+true
+false
+true

@@ -1,0 +1,51 @@
+; Raylib 3D native-library demo. Needs a display; not run by scripts/run.ps1.
+;
+; Build first:
+;   task build:nativelibs
+;
+; Then run:
+;   build/little.exe scripts/raylib/demo3d.little
+
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+ray.open(800, 450, "little + raylib 3D")
+
+var background = ray.Color(20, 20, 30)
+var camera = ray.Camera3D {
+    position: ray.Vector3(0, 6, 12)
+    target: ray.Vector3(0, 0, 0)
+}
+var mesh = ray.genMeshCube(1, 1, 1)
+var model = ray.modelFromMesh(mesh)
+var angle = 0.0
+
+ray.on("start", fn() {
+    ray.setFPS(60)
+    io.print(string.concat("raylib ", ray.version))
+})
+
+ray.on("update", fn(dt) {
+    angle = angle + 45.0 * dt
+
+    ray.clear(background)
+    ray.beginMode3D(camera)
+    ray.grid(10, 1)
+    ray.cube(ray.Vector3(-2, 0.5, 0), ray.Vector3(1, 1, 1), ray.colors.red)
+    ray.cubeWires(ray.Vector3(-2, 0.5, 0), ray.Vector3(1, 1, 1), ray.colors.maroon)
+    ray.sphere(ray.Vector3(2, 0.5, 0), 0.5, ray.colors.skyblue)
+    ray.cylinder(ray.Vector3(0, 0.5, -2), 0.5, 0.5, 1, 16, ray.colors.lime)
+    ray.capsule(ray.Vector3(0, 0.5, 4), ray.Vector3(0, 2, 4), 0.25, 8, 8, ray.colors.purple)
+    model:drawEx(ray.Vector3(0, 0.5, 2), ray.Vector3(0, 1, 0), angle, ray.Vector3(1, 1, 1), ray.colors.white)
+    ray.endMode3D()
+    ray.text("little + raylib 3D", ray.Vector2(10, 10), 20, ray.colors.white)
+
+    if ray.keyPressed(ray.keys.escape) {
+        ray.close()
+    }
+})
+
+while ray.update() {
+}
+
+model:unload()
+ray.close()

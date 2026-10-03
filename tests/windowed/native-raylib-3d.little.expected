@@ -1,0 +1,43 @@
+(32, 24)
+true
+mesh(24 vertices, 12 triangles)
+24.000000
+12.000000
+true
+true
+true
+8.000000
+true
+true
+true
+model(1 meshes, 1 materials)
+1.000000
+1.000000
+true
+24.000000
+24.000000
+false
+true
+false
+true
+false
+true
+renderTexture(32x24)
+32.000000
+24.000000
+true
+false
+true
+false
+true
+started
+false
+true
+true
+true
+true
+false
+true
+model(0 meshes, 0 materials)
+renderTexture(0x0)
+closed

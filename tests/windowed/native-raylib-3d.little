@@ -1,0 +1,149 @@
+; Requires a display: generates meshes, renders a 3D frame, and renders into a
+; texture. tests/run-e2e.ps1 runs it under tests/windowed/ when a window can be
+; opened.
+
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+ray.traceLog(ray.log.none)
+ray.open(64, 48, "windowed-3d", { hidden: true })
+
+var camera = ray.Camera3D {
+    position: ray.Vector3(6, 6, 6)
+    target: ray.Vector3(0, 0, 0)
+}
+io.print(ray.getWorldToScreen(ray.Vector3(0, 0, 0), camera):toString())
+io.print(typeof ray.getScreenToWorldRay(ray.Vector2(32, 24), camera) is ray.Ray)
+
+var cube = ray.genMeshCube(1, 1, 1)
+io.print(cube:toString())
+io.print(cube.vertexCount)
+io.print(cube.triangleCount)
+io.print(typeof cube is ray.Mesh)
+
+var sphere = ray.genMeshSphere(1, 8, 8)
+io.print(sphere.vertexCount > 0)
+io.print(sphere.triangleCount > 0)
+
+var plane = ray.genMeshPlane(2, 2, 2, 2)
+io.print(plane.triangleCount)
+var cylinder = ray.genMeshCylinder(0.5, 1, 8)
+io.print(cylinder.vertexCount > 0)
+var torus = ray.genMeshTorus(0.5, 0.2, 8, 8)
+io.print(torus.vertexCount > 0)
+var knot = ray.genMeshKnot(0.5, 0.2, 8, 8)
+io.print(knot.vertexCount > 0)
+
+var model = ray.modelFromMesh(cube)
+io.print(model:toString())
+io.print(model.meshCount)
+io.print(model.materialCount)
+io.print(typeof model is ray.Model)
+
+; The model owns the mesh now, so the instance must not free it.
+io.print(cube.vertexCount)
+cube:unload()
+io.print(cube.vertexCount)
+
+var again = pcall(fn() { return ray.modelFromMesh(cube) })
+io.print(again.ok)
+io.print(string.contains(again.error, "belongs to a model"))
+
+sphere:unload()
+var gone = pcall(fn() { return ray.modelFromMesh(sphere) })
+io.print(gone.ok)
+io.print(string.contains(gone.error, "unloaded"))
+
+var missing = pcall(fn() { return ray.loadModel("missing.gltf") })
+io.print(missing.ok)
+io.print(string.contains(missing.error, "Failed to load"))
+
+var target = ray.loadRenderTexture(32, 24)
+io.print(target:toString())
+io.print(target.width)
+io.print(target.height)
+io.print(typeof target is ray.RenderTexture)
+
+var image = ray.genImageColor(4, 4, ray.colors.white)
+var texture = ray.loadTextureFromImage(image)
+image:unload()
+
+var unbalanced = pcall(fn() { return ray.endMode3D() })
+io.print(unbalanced.ok)
+io.print(string.contains(unbalanced.error, "beginMode3D"))
+var unbalancedTexture = pcall(fn() { return ray.endTextureMode() })
+io.print(unbalancedTexture.ok)
+io.print(string.contains(unbalancedTexture.error, "beginTextureMode"))
+
+var frames = 0
+var unbalancedFrame = true
+
+var drawScene = fn() {
+    ray.clear(ray.colors.black)
+    ; Render the scene into the texture first, then draw it on screen.
+    ray.beginTextureMode(target)
+    ray.clear(ray.colors.darkblue)
+    ray.beginMode3D(camera)
+    ray.cube(ray.Vector3(0, 0, 0), ray.Vector3(1, 1, 1), ray.colors.red)
+    ray.cubeWires(ray.Vector3(2, 0, 0), ray.Vector3(1, 1, 1), ray.colors.yellow)
+    ray.sphere(ray.Vector3(0, 2, 0), 0.5, ray.colors.green)
+    ray.sphereWires(ray.Vector3(2, 2, 0), 0.5, 4, 4, ray.colors.lime)
+    ray.cylinder(ray.Vector3(0, -2, 0), 0.5, 0.5, 1, 8, ray.colors.blue)
+    ray.cylinderWires(ray.Vector3(2, -2, 0), 0.5, 0.5, 1, 8, ray.colors.skyblue)
+    ray.capsule(ray.Vector3(-2, 0, 0), ray.Vector3(-2, 1, 0), 0.25, 4, 4, ray.colors.purple)
+    ray.line3D(ray.Vector3(0, 0, 0), ray.Vector3(1, 1, 1), ray.colors.white)
+    ray.point3D(ray.Vector3(1, 0, 1), ray.colors.white)
+    ray.triangle3D(ray.Vector3(-1, 0, 0), ray.Vector3(-1, 1, 0), ray.Vector3(-2, 0, 0), ray.colors.gold)
+    ray.plane(ray.Vector3(0, -3, 0), ray.Vector2(4, 4), ray.colors.gray)
+    ray.boundingBox(ray.Vector3(-1, -1, -1), ray.Vector3(1, 1, 1), ray.colors.magenta)
+    ray.grid(4, 1)
+    model:draw(ray.Vector3(0, 0, 0), 1, ray.colors.white)
+    model:drawWires(ray.Vector3(0, 3, 0), 1, ray.colors.white)
+    model:drawEx(ray.Vector3(0, -3, 0), ray.Vector3(0, 1, 0), 45, ray.Vector3(1, 1, 1), ray.colors.white)
+    model:drawWiresEx(ray.Vector3(0, 4, 0), ray.Vector3(0, 1, 0), 45, ray.Vector3(1, 1, 1), ray.colors.white)
+    ray.billboard(camera, texture, ray.Vector3(0, 0, 0), 1, ray.colors.white)
+    ray.endMode3D()
+    ray.endTextureMode()
+    target:draw(ray.Vector2(2, 2), ray.colors.white)
+    target:drawPro(ray.Rectangle(30, 30, 16, 12), ray.Vector2(0, 0), 0, ray.colors.white)
+}
+
+ray.on("start", fn() {
+    ray.setFPS(60)
+    io.print("started")
+})
+ray.on("update", fn(dt) {
+    frames = frames + 1
+    if unbalancedFrame {
+        ray.beginMode3D(camera)
+    }
+    if not unbalancedFrame {
+        drawScene()
+    }
+    ; Close on the third frame: closing inside the first would discard the
+    ; queued commands before they are replayed.
+    if frames > 2 {
+        ray.close()
+    }
+})
+
+; The first frame leaves a mode open on purpose: it is rejected before anything
+; is drawn, and the loop carries on.
+var unclosedFrame = pcall(fn() { return ray.update() })
+io.print(unclosedFrame.ok)
+io.print(string.contains(unclosedFrame.error, "endMode3D"))
+io.print(frames is 1)
+
+unbalancedFrame = false
+io.print(ray.update())
+io.print(frames is 2)
+io.print(ray.update())
+io.print(frames is 3)
+
+model:unload()
+target:unload()
+texture:unload()
+io.print(model:toString())
+io.print(target:toString())
+
+ray.close()
+io.print("closed")

@@ -28,8 +28,15 @@ typedef enum {
     RAY_CMD_TEXTURE_PRO,
     RAY_CMD_TEXT_EX,
     RAY_CMD_SHAPE,
+    RAY_CMD_SHAPE3D,
     RAY_CMD_BEGIN_2D,
-    RAY_CMD_END_2D
+    RAY_CMD_END_2D,
+    RAY_CMD_BEGIN_3D,
+    RAY_CMD_END_3D,
+    RAY_CMD_BEGIN_TEXTURE,
+    RAY_CMD_END_TEXTURE,
+    RAY_CMD_MODEL,
+    RAY_CMD_BILLBOARD
 } RayCommandKind;
 
 typedef enum {
@@ -55,6 +62,55 @@ typedef struct {
     float thickness;
     int sides;
 } RayShapeCommand;
+
+typedef enum {
+    RAY_SHAPE3D_CUBE,
+    RAY_SHAPE3D_CUBE_WIRES,
+    RAY_SHAPE3D_SPHERE,
+    RAY_SHAPE3D_SPHERE_WIRES,
+    RAY_SHAPE3D_CYLINDER,
+    RAY_SHAPE3D_CYLINDER_WIRES,
+    RAY_SHAPE3D_CAPSULE,
+    RAY_SHAPE3D_GRID,
+    RAY_SHAPE3D_LINE,
+    RAY_SHAPE3D_POINT,
+    RAY_SHAPE3D_TRIANGLE,
+    RAY_SHAPE3D_PLANE,
+    RAY_SHAPE3D_BOX
+} RayShape3DKind;
+
+/* 3D shapes carry three world points plus the handful of scalars the raylib
+   cube/sphere/cylinder/capsule family takes, so one payload type covers them. */
+typedef struct {
+    RayShape3DKind shape;
+    Vector3 points[3];
+    Vector3 size;
+    float radius;
+    float radius2;
+    float height;
+    float thickness;
+    int slices;
+    int rings;
+    int sides;
+} RayShape3DCommand;
+
+/* A model draw stores the model by value and the transform it was queued with;
+   the instance stays alive through the queued-resource array. */
+typedef struct {
+    Model model;
+    Vector3 position;
+    Vector3 rotationAxis;
+    Vector3 scale;
+    float angle;
+    uint8_t wires;
+} RayModelCommand;
+
+typedef struct {
+    Camera3D camera;
+    Texture2D texture;
+    Vector3 position;
+    float scale;
+} RayBillboardCommand;
 
 /* Texture draws carry their arguments in a heap payload so the fixed command
    buffer stays small. */
@@ -108,8 +164,13 @@ typedef struct {
     uint8_t kind;
 } RayDeferredUnload;
 
-#define RAY_RESOURCE_TEXTURE 0
-#define RAY_RESOURCE_FONT 1
+typedef enum {
+    RAY_RESOURCE_TEXTURE,
+    RAY_RESOURCE_FONT,
+    RAY_RESOURCE_MESH,
+    RAY_RESOURCE_MODEL,
+    RAY_RESOURCE_RENDER_TEXTURE
+} RayResourceKind;
 
 static RayDeferredUnload deferred_unloads[RAY_MAX_COMMANDS];
 static uint32_t deferred_unload_count = 0;
@@ -154,6 +215,18 @@ typedef struct {
     uint8_t owned;
 } LtFontData;
 
+/* Meshes and models track ownership the same way: `modelFromMesh` hands the
+   mesh to the model, and an unowned mesh is only good for reading its counts. */
+typedef struct {
+    Mesh mesh;
+    uint8_t owned;
+} LtMeshData;
+
+typedef struct {
+    Model model;
+    uint8_t owned;
+} LtModelData;
+
 static lt_Value vector2_class = LT_VALUE_NULL;
 static lt_Value vector3_class = LT_VALUE_NULL;
 static lt_Value color_class = LT_VALUE_NULL;
@@ -162,7 +235,15 @@ static lt_Value image_class = LT_VALUE_NULL;
 static lt_Value texture_class = LT_VALUE_NULL;
 static lt_Value font_class = LT_VALUE_NULL;
 static lt_Value camera2d_class = LT_VALUE_NULL;
+static lt_Value camera3d_class = LT_VALUE_NULL;
+static lt_Value ray_class = LT_VALUE_NULL;
+static lt_Value ray_collision_class = LT_VALUE_NULL;
+static lt_Value mesh_class = LT_VALUE_NULL;
+static lt_Value model_class = LT_VALUE_NULL;
+static lt_Value render_texture_class = LT_VALUE_NULL;
 static uint32_t mode2d_depth = 0;
+static uint32_t mode3d_depth = 0;
+static uint32_t texture_depth = 0;
 
 static void expect_number(lt_VM* vm, lt_Value value, const char* message)
 {
@@ -208,6 +289,12 @@ RAY_DATA_ACCESSOR(image_data, Image, image_class)
 RAY_DATA_ACCESSOR(texture_data, Texture2D, texture_class)
 RAY_DATA_ACCESSOR(font_data, LtFontData, font_class)
 RAY_DATA_ACCESSOR(camera2d_data, Camera2D, camera2d_class)
+RAY_DATA_ACCESSOR(camera3d_data, Camera3D, camera3d_class)
+RAY_DATA_ACCESSOR(ray_data, Ray, ray_class)
+RAY_DATA_ACCESSOR(ray_collision_data, RayCollision, ray_collision_class)
+RAY_DATA_ACCESSOR(mesh_data, LtMeshData, mesh_class)
+RAY_DATA_ACCESSOR(model_data, LtModelData, model_class)
+RAY_DATA_ACCESSOR(render_texture_data, RenderTexture, render_texture_class)
 
 static void* allocate_native_data(lt_VM* vm, size_t size)
 {
@@ -828,6 +915,16 @@ static Color expect_color(lt_VM* vm, lt_Value value, const char* message)
     return color;
 }
 
+static Vector3 expect_vector3(lt_VM* vm, lt_Value value, const char* message)
+{
+    LtVector3* source = vector3_data(vm, value, message);
+    Vector3 point;
+    point.x = (float)source->x;
+    point.y = (float)source->y;
+    point.z = (float)source->z;
+    return point;
+}
+
 static void clear_commands(lt_VM* vm)
 {
     for (uint32_t i = 0; i < command_count; ++i)
@@ -839,6 +936,8 @@ static void clear_commands(lt_VM* vm)
     }
     command_count = 0;
     mode2d_depth = 0;
+    mode3d_depth = 0;
+    texture_depth = 0;
     deferred_unload_count = 0;
     /* Release this frame's references to queued resources by swapping in a
        fresh array; the old one becomes collectable. */
@@ -909,6 +1008,38 @@ static void unload_font_payload(LtFontData* font)
     }
 }
 
+/* raylib uploads a mesh as soon as it generates or loads it, so unloading needs
+   a live context; after the window closes the GPU buffers died with it,
+   exactly like textures and fonts. */
+static void unload_mesh_payload(LtMeshData* mesh)
+{
+    if (mesh->owned && mesh->mesh.vertexCount > 0)
+    {
+        if (IsWindowReady()) UnloadMesh(mesh->mesh);
+        memset(&mesh->mesh, 0, sizeof(Mesh));
+        mesh->owned = 0;
+    }
+}
+
+static void unload_model_payload(LtModelData* model)
+{
+    if (model->owned && model->model.meshCount > 0)
+    {
+        if (IsWindowReady()) UnloadModel(model->model);
+        memset(&model->model, 0, sizeof(Model));
+        model->owned = 0;
+    }
+}
+
+static void unload_render_texture_payload(RenderTexture* target)
+{
+    if (target->id > 0)
+    {
+        if (IsWindowReady()) UnloadRenderTexture(*target);
+        memset(target, 0, sizeof(RenderTexture));
+    }
+}
+
 static void destroy_image(void* data)
 {
     Image* image = data;
@@ -925,6 +1056,24 @@ static void destroy_texture(void* data)
 static void destroy_font(void* data)
 {
     unload_font_payload(data);
+    free(data);
+}
+
+static void destroy_mesh(void* data)
+{
+    unload_mesh_payload(data);
+    free(data);
+}
+
+static void destroy_model(void* data)
+{
+    unload_model_payload(data);
+    free(data);
+}
+
+static void destroy_render_texture(void* data)
+{
+    unload_render_texture_payload(data);
     free(data);
 }
 
@@ -965,8 +1114,24 @@ static void flush_deferred_unloads(void)
 {
     for (uint32_t i = 0; i < deferred_unload_count; ++i)
     {
-        if (deferred_unloads[i].kind == RAY_RESOURCE_TEXTURE) unload_texture_payload(deferred_unloads[i].payload);
-        else unload_font_payload(deferred_unloads[i].payload);
+        switch (deferred_unloads[i].kind)
+        {
+        case RAY_RESOURCE_TEXTURE:
+            unload_texture_payload(deferred_unloads[i].payload);
+            break;
+        case RAY_RESOURCE_FONT:
+            unload_font_payload(deferred_unloads[i].payload);
+            break;
+        case RAY_RESOURCE_MESH:
+            unload_mesh_payload(deferred_unloads[i].payload);
+            break;
+        case RAY_RESOURCE_MODEL:
+            unload_model_payload(deferred_unloads[i].payload);
+            break;
+        case RAY_RESOURCE_RENDER_TEXTURE:
+            unload_render_texture_payload(deferred_unloads[i].payload);
+            break;
+        }
     }
     deferred_unload_count = 0;
 }
@@ -1304,6 +1469,423 @@ static uint8_t font_to_string(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+/* ---------------- meshes, models, and render textures ---------------- */
+
+static void attach_mesh(lt_VM* vm, Mesh source, uint8_t owned)
+{
+    lt_Value instance = construct(vm, mesh_class, 0, 0);
+    LtMeshData* data = allocate_native_data(vm, sizeof(LtMeshData));
+    data->mesh = source;
+    data->owned = owned;
+    lt->instance_set_native_data(vm, instance, mesh_class, data);
+    lt->push(vm, instance);
+}
+
+static void attach_model(lt_VM* vm, Model source, uint8_t owned)
+{
+    lt_Value instance = construct(vm, model_class, 0, 0);
+    LtModelData* data = allocate_native_data(vm, sizeof(LtModelData));
+    data->model = source;
+    data->owned = owned;
+    lt->instance_set_native_data(vm, instance, model_class, data);
+    lt->push(vm, instance);
+}
+
+static void attach_render_texture(lt_VM* vm, RenderTexture source)
+{
+    lt_Value instance = construct(vm, render_texture_class, 0, 0);
+    RenderTexture* data = allocate_native_data(vm, sizeof(RenderTexture));
+    *data = source;
+    lt->instance_set_native_data(vm, instance, render_texture_class, data);
+    lt->push(vm, instance);
+}
+
+static uint8_t native_gen_mesh_cube(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected width, height, and length for ray.genMeshCube!");
+    lt_Value length_value = lt->pop(vm);
+    lt_Value height_value = lt->pop(vm);
+    lt_Value width_value = lt->pop(vm);
+    expect_number(vm, width_value, "Expected a cube width number!");
+    expect_number(vm, height_value, "Expected a cube height number!");
+    expect_number(vm, length_value, "Expected a cube length number!");
+    require_window(vm, "Expected ray.open before ray.genMeshCube!");
+    attach_mesh(vm, GenMeshCube((float)lt->get_number(width_value), (float)lt->get_number(height_value), (float)lt->get_number(length_value)), 1);
+    return 1;
+}
+
+static uint8_t native_gen_mesh_sphere(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a radius, rings, and slices for ray.genMeshSphere!");
+    lt_Value slices_value = lt->pop(vm);
+    lt_Value rings_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    expect_number(vm, radius_value, "Expected a sphere radius number!");
+    expect_number(vm, rings_value, "Expected a sphere rings number!");
+    expect_number(vm, slices_value, "Expected a sphere slices number!");
+    require_window(vm, "Expected ray.open before ray.genMeshSphere!");
+    attach_mesh(vm, GenMeshSphere((float)lt->get_number(radius_value), (int)lt->get_number(rings_value), (int)lt->get_number(slices_value)), 1);
+    return 1;
+}
+
+static uint8_t native_gen_mesh_plane(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "Expected a width, a length, resX, and resZ for ray.genMeshPlane!");
+    lt_Value resz_value = lt->pop(vm);
+    lt_Value resx_value = lt->pop(vm);
+    lt_Value length_value = lt->pop(vm);
+    lt_Value width_value = lt->pop(vm);
+    expect_number(vm, width_value, "Expected a plane width number!");
+    expect_number(vm, length_value, "Expected a plane length number!");
+    expect_number(vm, resx_value, "Expected a plane resX number!");
+    expect_number(vm, resz_value, "Expected a plane resZ number!");
+    require_window(vm, "Expected ray.open before ray.genMeshPlane!");
+    attach_mesh(vm, GenMeshPlane((float)lt->get_number(width_value), (float)lt->get_number(length_value),
+        (int)lt->get_number(resx_value), (int)lt->get_number(resz_value)), 1);
+    return 1;
+}
+
+static uint8_t native_gen_mesh_cylinder(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a radius, a height, and slices for ray.genMeshCylinder!");
+    lt_Value slices_value = lt->pop(vm);
+    lt_Value height_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    expect_number(vm, radius_value, "Expected a cylinder radius number!");
+    expect_number(vm, height_value, "Expected a cylinder height number!");
+    expect_number(vm, slices_value, "Expected a cylinder slices number!");
+    require_window(vm, "Expected ray.open before ray.genMeshCylinder!");
+    attach_mesh(vm, GenMeshCylinder((float)lt->get_number(radius_value), (float)lt->get_number(height_value), (int)lt->get_number(slices_value)), 1);
+    return 1;
+}
+
+static uint8_t native_gen_mesh_torus(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "Expected a radius, a size, radSeg, and sides for ray.genMeshTorus!");
+    lt_Value sides_value = lt->pop(vm);
+    lt_Value radseg_value = lt->pop(vm);
+    lt_Value size_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    expect_number(vm, radius_value, "Expected a torus radius number!");
+    expect_number(vm, size_value, "Expected a torus size number!");
+    expect_number(vm, radseg_value, "Expected a torus radSeg number!");
+    expect_number(vm, sides_value, "Expected a torus sides number!");
+    require_window(vm, "Expected ray.open before ray.genMeshTorus!");
+    attach_mesh(vm, GenMeshTorus((float)lt->get_number(radius_value), (float)lt->get_number(size_value),
+        (int)lt->get_number(radseg_value), (int)lt->get_number(sides_value)), 1);
+    return 1;
+}
+
+static uint8_t native_gen_mesh_knot(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "Expected a radius, a size, radSeg, and sides for ray.genMeshKnot!");
+    lt_Value sides_value = lt->pop(vm);
+    lt_Value radseg_value = lt->pop(vm);
+    lt_Value size_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    expect_number(vm, radius_value, "Expected a knot radius number!");
+    expect_number(vm, size_value, "Expected a knot size number!");
+    expect_number(vm, radseg_value, "Expected a knot radSeg number!");
+    expect_number(vm, sides_value, "Expected a knot sides number!");
+    require_window(vm, "Expected ray.open before ray.genMeshKnot!");
+    attach_mesh(vm, GenMeshKnot((float)lt->get_number(radius_value), (float)lt->get_number(size_value),
+        (int)lt->get_number(radseg_value), (int)lt->get_number(sides_value)), 1);
+    return 1;
+}
+
+static uint8_t native_load_model(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a path for ray.loadModel!");
+    lt_Value path = lt->pop(vm);
+    expect_string(vm, path, "Expected ray model path to be string!");
+    require_window(vm, "Expected ray.open before ray.loadModel!");
+    Model model = LoadModel(lt->get_string(vm, path));
+    if (!IsModelValid(model)) lt->runtime_error(vm, "Failed to load ray model!");
+    attach_model(vm, model, 1);
+    return 1;
+}
+
+static uint8_t native_model_from_mesh(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a Mesh for ray.modelFromMesh!");
+    LtMeshData* mesh = mesh_data(vm, lt->pop(vm), "Expected a Mesh for ray.modelFromMesh!");
+    require_window(vm, "Expected ray.open before ray.modelFromMesh!");
+    if (mesh->mesh.vertexCount <= 0) lt->runtime_error(vm, "Ray mesh has been unloaded!");
+    if (!mesh->owned) lt->runtime_error(vm, "Ray mesh already belongs to a model!");
+    Model model = LoadModelFromMesh(mesh->mesh);
+    if (!IsModelValid(model)) lt->runtime_error(vm, "Failed to create a ray model!");
+    /* The model frees the mesh now, so the instance must stop owning it. */
+    mesh->owned = 0;
+    attach_model(vm, model, 1);
+    return 1;
+}
+
+static uint8_t native_load_render_texture(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected width and height for ray.loadRenderTexture!");
+    lt_Value height_value = lt->pop(vm);
+    lt_Value width_value = lt->pop(vm);
+    expect_number(vm, width_value, "Expected a render texture width number!");
+    expect_number(vm, height_value, "Expected a render texture height number!");
+    int width = (int)lt->get_number(width_value);
+    int height = (int)lt->get_number(height_value);
+    if (width <= 0 || height <= 0) lt->runtime_error(vm, "Expected positive ray render texture dimensions!");
+    require_window(vm, "Expected ray.open before ray.loadRenderTexture!");
+    RenderTexture target = LoadRenderTexture(width, height);
+    if (!IsRenderTextureValid(target)) lt->runtime_error(vm, "Failed to create a ray render texture!");
+    attach_render_texture(vm, target);
+    return 1;
+}
+
+static uint8_t mesh_get_vertex_count(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "vertexCount getter expects no arguments!");
+    LtMeshData* mesh = mesh_data(vm, lt->pop(vm), "Expected a Mesh!");
+    lt->push(vm, lt->make_number((double)mesh->mesh.vertexCount));
+    return 1;
+}
+
+static uint8_t mesh_get_triangle_count(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "triangleCount getter expects no arguments!");
+    LtMeshData* mesh = mesh_data(vm, lt->pop(vm), "Expected a Mesh!");
+    lt->push(vm, lt->make_number((double)mesh->mesh.triangleCount));
+    return 1;
+}
+
+static uint8_t mesh_unload(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
+    lt_Value instance = lt->pop(vm);
+    LtMeshData* mesh = mesh_data(vm, instance, "Expected a Mesh!");
+    if (resource_is_queued(vm, instance)) defer_unload(vm, mesh, RAY_RESOURCE_MESH);
+    else unload_mesh_payload(mesh);
+    return 0;
+}
+
+static uint8_t mesh_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    LtMeshData* mesh = mesh_data(vm, lt->pop(vm), "Expected a Mesh!");
+    char text[64];
+    snprintf(text, sizeof(text), "mesh(%d vertices, %d triangles)", mesh->mesh.vertexCount, mesh->mesh.triangleCount);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t model_get_mesh_count(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "meshCount getter expects no arguments!");
+    LtModelData* model = model_data(vm, lt->pop(vm), "Expected a Model!");
+    lt->push(vm, lt->make_number((double)model->model.meshCount));
+    return 1;
+}
+
+static uint8_t model_get_material_count(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "materialCount getter expects no arguments!");
+    LtModelData* model = model_data(vm, lt->pop(vm), "Expected a Model!");
+    lt->push(vm, lt->make_number((double)model->model.materialCount));
+    return 1;
+}
+
+static void queue_model_draw(lt_VM* vm, lt_Value instance, LtModelData* model, Vector3 position,
+    Vector3 axis, float angle, Vector3 scale, Color color, uint8_t wires)
+{
+    if (model->model.meshCount <= 0) lt->runtime_error(vm, "Ray model has been unloaded!");
+    require_draw_target(vm);
+    RayModelCommand* payload = allocate_native_data(vm, sizeof(RayModelCommand));
+    memset(payload, 0, sizeof(RayModelCommand));
+    payload->model = model->model;
+    payload->position = position;
+    payload->rotationAxis = axis;
+    payload->angle = angle;
+    payload->scale = scale;
+    payload->wires = wires;
+    RayCommand command = new_command(RAY_CMD_MODEL);
+    command.resource = instance;
+    command.color = color;
+    command.payload = payload;
+    push_command(command);
+    queue_resource(vm, instance);
+}
+
+/* DrawModel is DrawModelEx with an upward axis, no rotation, and a uniform
+   scale, so every draw goes through the extended path. */
+static void queue_model_draw_simple(lt_VM* vm, uint8_t argc, uint8_t wires)
+{
+    if (argc != 4) lt->runtime_error(vm, wires
+        ? "Expected a Vector3 position, a scale, and a Color for ray model drawWires!"
+        : "Expected a Vector3 position, a scale, and a Color for ray model draw!");
+    lt_Value tint = lt->pop(vm);
+    lt_Value scale_value = lt->pop(vm);
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position!");
+    lt_Value instance = lt->pop(vm);
+    LtModelData* model = model_data(vm, instance, "Expected a Model!");
+    expect_number(vm, scale_value, "Expected a model scale number!");
+    Color color = expect_color(vm, tint, "Expected a Color tint!");
+    double scale = lt->get_number(scale_value);
+    Vector3 axis = { 0.0f, 1.0f, 0.0f };
+    Vector3 uniform = { (float)scale, (float)scale, (float)scale };
+    queue_model_draw(vm, instance, model, position, axis, 0.0f, uniform, color, wires);
+}
+
+static void queue_model_draw_ex(lt_VM* vm, uint8_t argc, uint8_t wires)
+{
+    if (argc != 6) lt->runtime_error(vm, wires
+        ? "Expected a Vector3 position, a Vector3 axis, an angle, a Vector3 scale, and a Color for ray model drawWiresEx!"
+        : "Expected a Vector3 position, a Vector3 axis, an angle, a Vector3 scale, and a Color for ray model drawEx!");
+    lt_Value tint = lt->pop(vm);
+    Vector3 scale = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 scale!");
+    lt_Value angle_value = lt->pop(vm);
+    Vector3 axis = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 rotation axis!");
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position!");
+    lt_Value instance = lt->pop(vm);
+    LtModelData* model = model_data(vm, instance, "Expected a Model!");
+    expect_number(vm, angle_value, "Expected a model rotation angle number!");
+    Color color = expect_color(vm, tint, "Expected a Color tint!");
+    queue_model_draw(vm, instance, model, position, axis, (float)lt->get_number(angle_value), scale, color, wires);
+}
+
+static uint8_t model_draw(lt_VM* vm, uint8_t argc)
+{
+    queue_model_draw_simple(vm, argc, 0);
+    return 0;
+}
+
+static uint8_t model_draw_wires(lt_VM* vm, uint8_t argc)
+{
+    queue_model_draw_simple(vm, argc, 1);
+    return 0;
+}
+
+static uint8_t model_draw_ex(lt_VM* vm, uint8_t argc)
+{
+    queue_model_draw_ex(vm, argc, 0);
+    return 0;
+}
+
+static uint8_t model_draw_wires_ex(lt_VM* vm, uint8_t argc)
+{
+    queue_model_draw_ex(vm, argc, 1);
+    return 0;
+}
+
+static uint8_t model_unload(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
+    lt_Value instance = lt->pop(vm);
+    LtModelData* model = model_data(vm, instance, "Expected a Model!");
+    if (resource_is_queued(vm, instance)) defer_unload(vm, model, RAY_RESOURCE_MODEL);
+    else unload_model_payload(model);
+    return 0;
+}
+
+static uint8_t model_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    LtModelData* model = model_data(vm, lt->pop(vm), "Expected a Model!");
+    char text[64];
+    snprintf(text, sizeof(text), "model(%d meshes, %d materials)", model->model.meshCount, model->model.materialCount);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t render_texture_get_width(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "width getter expects no arguments!");
+    RenderTexture* target = render_texture_data(vm, lt->pop(vm), "Expected a RenderTexture!");
+    lt->push(vm, lt->make_number((double)target->texture.width));
+    return 1;
+}
+
+static uint8_t render_texture_get_height(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "height getter expects no arguments!");
+    RenderTexture* target = render_texture_data(vm, lt->pop(vm), "Expected a RenderTexture!");
+    lt->push(vm, lt->make_number((double)target->texture.height));
+    return 1;
+}
+
+/* Render textures are stored bottom-up, so drawing one flips the source rect;
+   that is why these are separate from Texture draws rather than the same code. */
+static RayTextureCommand* make_render_texture_command(lt_VM* vm, RenderTexture* target)
+{
+    if (target->id == 0) lt->runtime_error(vm, "Ray render texture has been unloaded!");
+    require_draw_target(vm);
+    RayTextureCommand* payload = allocate_native_data(vm, sizeof(RayTextureCommand));
+    memset(payload, 0, sizeof(RayTextureCommand));
+    payload->texture = target->texture;
+    payload->source.width = (float)target->texture.width;
+    payload->source.height = (float)-target->texture.height;
+    return payload;
+}
+
+static uint8_t render_texture_draw(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "draw expects a Vector2 position and a Color!");
+    lt_Value tint = lt->pop(vm);
+    LtVector2* position = vector2_data(vm, lt->pop(vm), "Expected a Vector2 position!");
+    lt_Value instance = lt->pop(vm);
+    RenderTexture* target = render_texture_data(vm, instance, "Expected a RenderTexture!");
+    Color color = expect_color(vm, tint, "Expected a Color tint!");
+    RayTextureCommand* payload = make_render_texture_command(vm, target);
+    payload->position.x = (float)position->x;
+    payload->position.y = (float)position->y;
+    RayCommand command = new_command(RAY_CMD_TEXTURE_REC);
+    command.resource = instance;
+    command.color = color;
+    command.payload = payload;
+    push_command(command);
+    queue_resource(vm, instance);
+    return 0;
+}
+
+static uint8_t render_texture_draw_pro(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 5) lt->runtime_error(vm, "drawPro expects a dest Rectangle, a Vector2 origin, a rotation, and a Color!");
+    lt_Value tint = lt->pop(vm);
+    lt_Value rotation_value = lt->pop(vm);
+    LtVector2* origin = vector2_data(vm, lt->pop(vm), "Expected a Vector2 origin!");
+    LtRectangle* dest = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle dest!");
+    lt_Value instance = lt->pop(vm);
+    RenderTexture* target = render_texture_data(vm, instance, "Expected a RenderTexture!");
+    expect_number(vm, rotation_value, "Expected a rotation number!");
+    Color color = expect_color(vm, tint, "Expected a Color tint!");
+    RayTextureCommand* payload = make_render_texture_command(vm, target);
+    copy_rectangle(&payload->dest, dest);
+    payload->origin.x = (float)origin->x;
+    payload->origin.y = (float)origin->y;
+    payload->rotation = (float)lt->get_number(rotation_value);
+    RayCommand command = new_command(RAY_CMD_TEXTURE_PRO);
+    command.resource = instance;
+    command.color = color;
+    command.payload = payload;
+    push_command(command);
+    queue_resource(vm, instance);
+    return 0;
+}
+
+static uint8_t render_texture_unload(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
+    lt_Value instance = lt->pop(vm);
+    RenderTexture* target = render_texture_data(vm, instance, "Expected a RenderTexture!");
+    if (resource_is_queued(vm, instance)) defer_unload(vm, target, RAY_RESOURCE_RENDER_TEXTURE);
+    else unload_render_texture_payload(target);
+    return 0;
+}
+
+static uint8_t render_texture_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    RenderTexture* target = render_texture_data(vm, lt->pop(vm), "Expected a RenderTexture!");
+    char text[48];
+    snprintf(text, sizeof(text), "renderTexture(%dx%d)", target->texture.width, target->texture.height);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
 /* ---------------- 2D shapes ---------------- */
 
 static RayShapeCommand* make_shape_command(lt_VM* vm, RayShapeKind shape)
@@ -1495,6 +2077,324 @@ static uint8_t native_ring(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+/* ---------------- 3D shapes ---------------- */
+
+static RayShape3DCommand* make_shape3d_command(lt_VM* vm, RayShape3DKind shape)
+{
+    require_draw_target(vm);
+    RayShape3DCommand* payload = allocate_native_data(vm, sizeof(RayShape3DCommand));
+    memset(payload, 0, sizeof(RayShape3DCommand));
+    payload->shape = shape;
+    return payload;
+}
+
+static void push_shape3d_command(RayShape3DCommand* payload, Color color)
+{
+    RayCommand command = new_command(RAY_CMD_SHAPE3D);
+    command.color = color;
+    command.payload = payload;
+    push_command(command);
+}
+
+static uint8_t native_cube(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a Vector3 position, a Vector3 size, and a Color for ray.cube!");
+    lt_Value color_value = lt->pop(vm);
+    Vector3 size = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 size for ray.cube!");
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position for ray.cube!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.cube!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_CUBE);
+    payload->points[0] = position;
+    payload->size = size;
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_cube_wires(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a Vector3 position, a Vector3 size, and a Color for ray.cubeWires!");
+    lt_Value color_value = lt->pop(vm);
+    Vector3 size = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 size for ray.cubeWires!");
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position for ray.cubeWires!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.cubeWires!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_CUBE_WIRES);
+    payload->points[0] = position;
+    payload->size = size;
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_sphere(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a Vector3 center, a radius, and a Color for ray.sphere!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    Vector3 center = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 center for ray.sphere!");
+    expect_number(vm, radius_value, "Expected a sphere radius number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.sphere!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_SPHERE);
+    payload->points[0] = center;
+    payload->radius = (float)lt->get_number(radius_value);
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_sphere_wires(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 5) lt->runtime_error(vm, "Expected a Vector3 center, a radius, rings, slices, and a Color for ray.sphereWires!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value slices_value = lt->pop(vm);
+    lt_Value rings_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    Vector3 center = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 center for ray.sphereWires!");
+    expect_number(vm, radius_value, "Expected a sphere radius number!");
+    expect_number(vm, rings_value, "Expected a sphere rings number!");
+    expect_number(vm, slices_value, "Expected a sphere slices number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.sphereWires!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_SPHERE_WIRES);
+    payload->points[0] = center;
+    payload->radius = (float)lt->get_number(radius_value);
+    payload->rings = (int)lt->get_number(rings_value);
+    payload->slices = (int)lt->get_number(slices_value);
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_cylinder(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 6) lt->runtime_error(vm, "Expected a Vector3 position, a top radius, a bottom radius, a height, sides, and a Color for ray.cylinder!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value sides_value = lt->pop(vm);
+    lt_Value height_value = lt->pop(vm);
+    lt_Value bottom_value = lt->pop(vm);
+    lt_Value top_value = lt->pop(vm);
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position for ray.cylinder!");
+    expect_number(vm, top_value, "Expected a cylinder top radius number!");
+    expect_number(vm, bottom_value, "Expected a cylinder bottom radius number!");
+    expect_number(vm, height_value, "Expected a cylinder height number!");
+    expect_number(vm, sides_value, "Expected a cylinder sides number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.cylinder!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_CYLINDER);
+    payload->points[0] = position;
+    payload->radius = (float)lt->get_number(top_value);
+    payload->radius2 = (float)lt->get_number(bottom_value);
+    payload->height = (float)lt->get_number(height_value);
+    payload->sides = (int)lt->get_number(sides_value);
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_cylinder_wires(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 6) lt->runtime_error(vm, "Expected a Vector3 position, a top radius, a bottom radius, a height, sides, and a Color for ray.cylinderWires!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value sides_value = lt->pop(vm);
+    lt_Value height_value = lt->pop(vm);
+    lt_Value bottom_value = lt->pop(vm);
+    lt_Value top_value = lt->pop(vm);
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position for ray.cylinderWires!");
+    expect_number(vm, top_value, "Expected a cylinder top radius number!");
+    expect_number(vm, bottom_value, "Expected a cylinder bottom radius number!");
+    expect_number(vm, height_value, "Expected a cylinder height number!");
+    expect_number(vm, sides_value, "Expected a cylinder sides number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.cylinderWires!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_CYLINDER_WIRES);
+    payload->points[0] = position;
+    payload->radius = (float)lt->get_number(top_value);
+    payload->radius2 = (float)lt->get_number(bottom_value);
+    payload->height = (float)lt->get_number(height_value);
+    payload->sides = (int)lt->get_number(sides_value);
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_capsule(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 6) lt->runtime_error(vm, "Expected two Vector3 points, a radius, rings, slices, and a Color for ray.capsule!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value slices_value = lt->pop(vm);
+    lt_Value rings_value = lt->pop(vm);
+    lt_Value radius_value = lt->pop(vm);
+    Vector3 end = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 end point for ray.capsule!");
+    Vector3 start = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 start point for ray.capsule!");
+    expect_number(vm, radius_value, "Expected a capsule radius number!");
+    expect_number(vm, rings_value, "Expected a capsule rings number!");
+    expect_number(vm, slices_value, "Expected a capsule slices number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.capsule!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_CAPSULE);
+    payload->points[0] = start;
+    payload->points[1] = end;
+    payload->radius = (float)lt->get_number(radius_value);
+    payload->rings = (int)lt->get_number(rings_value);
+    payload->slices = (int)lt->get_number(slices_value);
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_grid(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected slices and a spacing for ray.grid!");
+    lt_Value spacing_value = lt->pop(vm);
+    lt_Value slices_value = lt->pop(vm);
+    expect_number(vm, slices_value, "Expected a grid slices number!");
+    expect_number(vm, spacing_value, "Expected a grid spacing number!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_GRID);
+    payload->sides = (int)lt->get_number(slices_value);
+    payload->thickness = (float)lt->get_number(spacing_value);
+    push_shape3d_command(payload, GRAY);
+    return 0;
+}
+
+static uint8_t native_line3d(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected two Vector3 points and a Color for ray.line3D!");
+    lt_Value color_value = lt->pop(vm);
+    Vector3 end = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 end point for ray.line3D!");
+    Vector3 start = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 start point for ray.line3D!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.line3D!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_LINE);
+    payload->points[0] = start;
+    payload->points[1] = end;
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_point3d(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a Vector3 position and a Color for ray.point3D!");
+    lt_Value color_value = lt->pop(vm);
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position for ray.point3D!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.point3D!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_POINT);
+    payload->points[0] = position;
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_triangle3d(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "Expected three Vector3 points and a Color for ray.triangle3D!");
+    lt_Value color_value = lt->pop(vm);
+    Vector3 third = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 point for ray.triangle3D!");
+    Vector3 second = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 point for ray.triangle3D!");
+    Vector3 first = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 point for ray.triangle3D!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.triangle3D!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_TRIANGLE);
+    payload->points[0] = first;
+    payload->points[1] = second;
+    payload->points[2] = third;
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_plane(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a Vector3 center, a Vector2 size, and a Color for ray.plane!");
+    lt_Value color_value = lt->pop(vm);
+    LtVector2* size = vector2_data(vm, lt->pop(vm), "Expected a Vector2 size for ray.plane!");
+    Vector3 center = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 center for ray.plane!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.plane!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_PLANE);
+    payload->points[0] = center;
+    payload->size.x = (float)size->x;
+    payload->size.z = (float)size->y;
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_bounding_box(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected two Vector3 corners and a Color for ray.boundingBox!");
+    lt_Value color_value = lt->pop(vm);
+    Vector3 max = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 max corner for ray.boundingBox!");
+    Vector3 min = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 min corner for ray.boundingBox!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.boundingBox!");
+    RayShape3DCommand* payload = make_shape3d_command(vm, RAY_SHAPE3D_BOX);
+    payload->points[0] = min;
+    payload->points[1] = max;
+    push_shape3d_command(payload, color);
+    return 0;
+}
+
+static uint8_t native_billboard(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 5) lt->runtime_error(vm, "Expected a Camera3D, a Texture, a Vector3 position, a scale, and a Color for ray.billboard!");
+    lt_Value tint = lt->pop(vm);
+    lt_Value scale_value = lt->pop(vm);
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position for ray.billboard!");
+    lt_Value instance = lt->pop(vm);
+    Texture2D* texture = texture_data(vm, instance, "Expected a Texture for ray.billboard!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D for ray.billboard!");
+    expect_number(vm, scale_value, "Expected a billboard scale number!");
+    Color color = expect_color(vm, tint, "Expected a Color tint for ray.billboard!");
+    if (texture->id == 0) lt->runtime_error(vm, "Ray texture has been unloaded!");
+    require_draw_target(vm);
+    RayBillboardCommand* payload = allocate_native_data(vm, sizeof(RayBillboardCommand));
+    memset(payload, 0, sizeof(RayBillboardCommand));
+    payload->camera = *camera;
+    payload->texture = *texture;
+    payload->position = position;
+    payload->scale = (float)lt->get_number(scale_value);
+    RayCommand command = new_command(RAY_CMD_BILLBOARD);
+    command.resource = instance;
+    command.color = color;
+    command.payload = payload;
+    push_command(command);
+    queue_resource(vm, instance);
+    return 0;
+}
+
+static uint8_t native_begin_mode3d(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a Camera3D for ray.beginMode3D!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D for ray.beginMode3D!");
+    require_draw_target(vm);
+    Camera3D* payload = allocate_native_data(vm, sizeof(Camera3D));
+    *payload = *camera;
+    RayCommand command = new_command(RAY_CMD_BEGIN_3D);
+    command.payload = payload;
+    push_command(command);
+    mode3d_depth++;
+    return 0;
+}
+
+static uint8_t native_end_mode3d(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.endMode3D!");
+    require_draw_target(vm);
+    if (mode3d_depth == 0) lt->runtime_error(vm, "Expected ray.beginMode3D before ray.endMode3D!");
+    mode3d_depth--;
+    RayCommand command = new_command(RAY_CMD_END_3D);
+    push_command(command);
+    return 0;
+}
+
+static uint8_t native_begin_texture_mode(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a RenderTexture for ray.beginTextureMode!");
+    RenderTexture* target = render_texture_data(vm, lt->pop(vm), "Expected a RenderTexture for ray.beginTextureMode!");
+    require_draw_target(vm);
+    if (target->id == 0) lt->runtime_error(vm, "Ray render texture has been unloaded!");
+    RenderTexture* payload = allocate_native_data(vm, sizeof(RenderTexture));
+    *payload = *target;
+    RayCommand command = new_command(RAY_CMD_BEGIN_TEXTURE);
+    command.payload = payload;
+    push_command(command);
+    texture_depth++;
+    return 0;
+}
+
+static uint8_t native_end_texture_mode(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.endTextureMode!");
+    require_draw_target(vm);
+    if (texture_depth == 0) lt->runtime_error(vm, "Expected ray.beginTextureMode before ray.endTextureMode!");
+    texture_depth--;
+    RayCommand command = new_command(RAY_CMD_END_TEXTURE);
+    push_command(command);
+    return 0;
+}
+
 /* ---------------- Camera2D ---------------- */
 
 static Vector2 read_vector2_field(lt_VM* vm, lt_Value table, const char* key, Vector2 fallback)
@@ -1628,6 +2528,360 @@ static uint8_t native_end_mode2d(lt_VM* vm, uint8_t argc)
     RayCommand command = new_command(RAY_CMD_END_2D);
     push_command(command);
     return 0;
+}
+
+/* ---------------- Camera3D, Ray, and ray collisions ---------------- */
+
+static Vector3 read_vector3_field(lt_VM* vm, lt_Value table, const char* key, Vector3 fallback)
+{
+    lt_Value value = lt->table_get(vm, table, lt->make_string(vm, key));
+    if (LT_IS_NULL(value)) return fallback;
+    return expect_vector3(vm, value, "Expected a Vector3 camera field!");
+}
+
+/* Ray is built through its constructor like the other value types: the class
+   installs its own payload, so setting it here as well would raise. */
+static lt_Value make_ray(lt_VM* vm, Vector3 position, Vector3 direction)
+{
+    lt->push(vm, make_vector3(vm, position.x, position.y, position.z));
+    lt->push(vm, make_vector3(vm, direction.x, direction.y, direction.z));
+    uint16_t returns = lt->exec(vm, ray_class, 2);
+    if (returns == 0) return LT_VALUE_NULL;
+    return lt->pop(vm);
+}
+
+static void attach_ray_collision(lt_VM* vm, RayCollision source)
+{
+    lt_Value instance = construct(vm, ray_collision_class, 0, 0);
+    RayCollision* data = allocate_native_data(vm, sizeof(RayCollision));
+    *data = source;
+    lt->instance_set_native_data(vm, instance, ray_collision_class, data);
+    lt->push(vm, instance);
+}
+
+static uint8_t camera3d_constructor(lt_VM* vm, uint8_t argc)
+{
+    Camera3D camera;
+    camera.position.x = 0.0f;
+    camera.position.y = 0.0f;
+    camera.position.z = 0.0f;
+    camera.target = camera.position;
+    camera.up.x = 0.0f;
+    camera.up.y = 1.0f;
+    camera.up.z = 0.0f;
+    camera.fovy = 45.0f;
+    camera.projection = CAMERA_PERSPECTIVE;
+    if (argc == 2)
+    {
+        lt_Value source = lt->pop(vm);
+        if (!LT_IS_TABLE(source)) lt->runtime_error(vm, "Expected a table, or position and target Vector3s for Camera3D!");
+        camera.position = read_vector3_field(vm, source, "position", camera.position);
+        camera.target = read_vector3_field(vm, source, "target", camera.target);
+        camera.up = read_vector3_field(vm, source, "up", camera.up);
+        camera.fovy = (float)table_field_number(vm, source, "fovy", 45, "Expected Camera3D fovy to be number!");
+        camera.projection = (int)table_field_number(vm, source, "projection", CAMERA_PERSPECTIVE, "Expected Camera3D projection to be number!");
+    }
+    else if (argc >= 3 && argc <= 6)
+    {
+        float fovy = 45.0f;
+        int projection = CAMERA_PERSPECTIVE;
+        if (argc == 6)
+        {
+            lt_Value projection_value = lt->pop(vm);
+            expect_number(vm, projection_value, "Expected a Camera3D projection number!");
+            projection = (int)lt->get_number(projection_value);
+        }
+        if (argc >= 5)
+        {
+            lt_Value fovy_value = lt->pop(vm);
+            expect_number(vm, fovy_value, "Expected a Camera3D fovy number!");
+            fovy = (float)lt->get_number(fovy_value);
+        }
+        if (argc >= 4) camera.up = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 up for Camera3D!");
+        camera.target = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 target for Camera3D!");
+        camera.position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position for Camera3D!");
+        camera.fovy = fovy;
+        camera.projection = projection;
+    }
+    else if (argc != 1)
+    {
+        lt->runtime_error(vm, "Expected a table, or position and target Vector3s for Camera3D!");
+    }
+    lt_Value instance = lt->pop(vm);
+    Camera3D* data = allocate_native_data(vm, sizeof(Camera3D));
+    *data = camera;
+    lt->instance_set_native_data(vm, instance, camera3d_class, data);
+    return 0;
+}
+
+static uint8_t camera3d_get_position(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "position getter expects no arguments!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    lt->push(vm, make_vector3(vm, camera->position.x, camera->position.y, camera->position.z));
+    return 1;
+}
+
+static uint8_t camera3d_set_position(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "position setter expects one value!");
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 for position!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    camera->position = position;
+    return 0;
+}
+
+static uint8_t camera3d_get_target(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "target getter expects no arguments!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    lt->push(vm, make_vector3(vm, camera->target.x, camera->target.y, camera->target.z));
+    return 1;
+}
+
+static uint8_t camera3d_set_target(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "target setter expects one value!");
+    Vector3 target = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 for target!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    camera->target = target;
+    return 0;
+}
+
+static uint8_t camera3d_get_up(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "up getter expects no arguments!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    lt->push(vm, make_vector3(vm, camera->up.x, camera->up.y, camera->up.z));
+    return 1;
+}
+
+static uint8_t camera3d_set_up(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "up setter expects one value!");
+    Vector3 up = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 for up!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    camera->up = up;
+    return 0;
+}
+
+static uint8_t camera3d_get_fovy(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "fovy getter expects no arguments!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    lt->push(vm, lt->make_number((double)camera->fovy));
+    return 1;
+}
+
+static uint8_t camera3d_set_fovy(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "fovy setter expects one value!");
+    lt_Value raw = lt->pop(vm);
+    expect_number(vm, raw, "Expected a number for fovy!");
+    double value = lt->get_number(raw);
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    camera->fovy = (float)value;
+    return 0;
+}
+
+static uint8_t camera3d_get_projection(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "projection getter expects no arguments!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    lt->push(vm, lt->make_number((double)camera->projection));
+    return 1;
+}
+
+static uint8_t camera3d_set_projection(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "projection setter expects one value!");
+    lt_Value raw = lt->pop(vm);
+    expect_number(vm, raw, "Expected a number for projection!");
+    double value = lt->get_number(raw);
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    camera->projection = (int)value;
+    return 0;
+}
+
+static uint8_t camera3d_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D!");
+    char text[192];
+    snprintf(text, sizeof(text), "camera3D(position (%g, %g, %g), target (%g, %g, %g), up (%g, %g, %g), fovy %g, projection %s)",
+        camera->position.x, camera->position.y, camera->position.z,
+        camera->target.x, camera->target.y, camera->target.z,
+        camera->up.x, camera->up.y, camera->up.z,
+        camera->fovy, camera->projection == CAMERA_ORTHOGRAPHIC ? "orthographic" : "perspective");
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t ray_constructor(lt_VM* vm, uint8_t argc)
+{
+    Vector3 zero = { 0.0f, 0.0f, 0.0f };
+    Ray ray;
+    ray.position = zero;
+    ray.direction = zero;
+    if (argc == 2)
+    {
+        lt_Value source = lt->pop(vm);
+        if (!LT_IS_TABLE(source)) lt->runtime_error(vm, "Expected a table, or position and direction Vector3s for Ray!");
+        ray.position = read_vector3_field(vm, source, "position", zero);
+        ray.direction = read_vector3_field(vm, source, "direction", zero);
+    }
+    else if (argc == 3)
+    {
+        ray.direction = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 direction for Ray!");
+        ray.position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position for Ray!");
+    }
+    else if (argc != 1)
+    {
+        lt->runtime_error(vm, "Expected a table, or position and direction Vector3s for Ray!");
+    }
+    lt_Value instance = lt->pop(vm);
+    Ray* data = allocate_native_data(vm, sizeof(Ray));
+    *data = ray;
+    lt->instance_set_native_data(vm, instance, ray_class, data);
+    return 0;
+}
+
+static uint8_t ray_get_position(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "position getter expects no arguments!");
+    Ray* ray = ray_data(vm, lt->pop(vm), "Expected a Ray!");
+    lt->push(vm, make_vector3(vm, ray->position.x, ray->position.y, ray->position.z));
+    return 1;
+}
+
+static uint8_t ray_set_position(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "position setter expects one value!");
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 for position!");
+    Ray* ray = ray_data(vm, lt->pop(vm), "Expected a Ray!");
+    ray->position = position;
+    return 0;
+}
+
+static uint8_t ray_get_direction(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "direction getter expects no arguments!");
+    Ray* ray = ray_data(vm, lt->pop(vm), "Expected a Ray!");
+    lt->push(vm, make_vector3(vm, ray->direction.x, ray->direction.y, ray->direction.z));
+    return 1;
+}
+
+static uint8_t ray_set_direction(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "direction setter expects one value!");
+    Vector3 direction = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 for direction!");
+    Ray* ray = ray_data(vm, lt->pop(vm), "Expected a Ray!");
+    ray->direction = direction;
+    return 0;
+}
+
+static uint8_t ray_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    Ray* ray = ray_data(vm, lt->pop(vm), "Expected a Ray!");
+    char text[128];
+    snprintf(text, sizeof(text), "ray((%g, %g, %g) -> (%g, %g, %g))",
+        ray->position.x, ray->position.y, ray->position.z,
+        ray->direction.x, ray->direction.y, ray->direction.z);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t ray_collision_get_hit(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "hit getter expects no arguments!");
+    RayCollision* collision = ray_collision_data(vm, lt->pop(vm), "Expected a RayCollision!");
+    lt->push(vm, make_boolean(collision->hit ? 1 : 0));
+    return 1;
+}
+
+static uint8_t ray_collision_get_distance(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "distance getter expects no arguments!");
+    RayCollision* collision = ray_collision_data(vm, lt->pop(vm), "Expected a RayCollision!");
+    lt->push(vm, lt->make_number((double)collision->distance));
+    return 1;
+}
+
+static uint8_t ray_collision_get_point(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "point getter expects no arguments!");
+    RayCollision* collision = ray_collision_data(vm, lt->pop(vm), "Expected a RayCollision!");
+    lt->push(vm, make_vector3(vm, collision->point.x, collision->point.y, collision->point.z));
+    return 1;
+}
+
+static uint8_t ray_collision_get_normal(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "normal getter expects no arguments!");
+    RayCollision* collision = ray_collision_data(vm, lt->pop(vm), "Expected a RayCollision!");
+    lt->push(vm, make_vector3(vm, collision->normal.x, collision->normal.y, collision->normal.z));
+    return 1;
+}
+
+static uint8_t ray_collision_to_string(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "toString expects no arguments!");
+    RayCollision* collision = ray_collision_data(vm, lt->pop(vm), "Expected a RayCollision!");
+    char text[160];
+    snprintf(text, sizeof(text), "rayCollision(%s, %g, (%g, %g, %g), (%g, %g, %g))",
+        collision->hit ? "hit" : "miss", (double)collision->distance,
+        collision->point.x, collision->point.y, collision->point.z,
+        collision->normal.x, collision->normal.y, collision->normal.z);
+    lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t native_get_world_to_screen(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a Vector3 position and a Camera3D for ray.getWorldToScreen!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D for ray.getWorldToScreen!");
+    Vector3 position = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 position for ray.getWorldToScreen!");
+    require_window(vm, "Expected ray.open before ray.getWorldToScreen!");
+    Vector2 result = GetWorldToScreen(position, *camera);
+    lt->push(vm, make_vector2(vm, (double)result.x, (double)result.y));
+    return 1;
+}
+
+static uint8_t native_get_screen_to_world_ray(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a Vector2 position and a Camera3D for ray.getScreenToWorldRay!");
+    Camera3D* camera = camera3d_data(vm, lt->pop(vm), "Expected a Camera3D for ray.getScreenToWorldRay!");
+    LtVector2* position = vector2_data(vm, lt->pop(vm), "Expected a Vector2 position for ray.getScreenToWorldRay!");
+    require_window(vm, "Expected ray.open before ray.getScreenToWorldRay!");
+    Vector2 point = { (float)position->x, (float)position->y };
+    Ray result = GetScreenToWorldRay(point, *camera);
+    lt->push(vm, make_ray(vm, result.position, result.direction));
+    return 1;
+}
+
+static uint8_t native_raycast_sphere(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a Ray, a Vector3 center, and a radius for ray.raycastSphere!");
+    lt_Value radius_value = lt->pop(vm);
+    Vector3 center = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 center for ray.raycastSphere!");
+    Ray* ray = ray_data(vm, lt->pop(vm), "Expected a Ray for ray.raycastSphere!");
+    expect_number(vm, radius_value, "Expected a sphere radius number!");
+    attach_ray_collision(vm, GetRayCollisionSphere(*ray, center, (float)lt->get_number(radius_value)));
+    return 1;
+}
+
+static uint8_t native_raycast_box(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a Ray and two Vector3 corners for ray.raycastBox!");
+    Vector3 max = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 max corner for ray.raycastBox!");
+    Vector3 min = expect_vector3(vm, lt->pop(vm), "Expected a Vector3 min corner for ray.raycastBox!");
+    Ray* ray = ray_data(vm, lt->pop(vm), "Expected a Ray for ray.raycastBox!");
+    BoundingBox box;
+    box.min = min;
+    box.max = max;
+    attach_ray_collision(vm, GetRayCollisionBox(*ray, box));
+    return 1;
 }
 
 /* ---------------- collision, colour, transforms, window control ---------------- */
@@ -1950,6 +3204,16 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
         clear_commands(vm);
         lt->runtime_error(vm, "Expected ray.endMode2D before the frame ends!");
     }
+    if (mode3d_depth != 0)
+    {
+        clear_commands(vm);
+        lt->runtime_error(vm, "Expected ray.endMode3D before the frame ends!");
+    }
+    if (texture_depth != 0)
+    {
+        clear_commands(vm);
+        lt->runtime_error(vm, "Expected ray.endTextureMode before the frame ends!");
+    }
     BeginDrawing();
     if (has_clear) ClearBackground(clear_color);
     else ClearBackground(BLACK);
@@ -2030,6 +3294,85 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
         case RAY_CMD_END_2D:
             EndMode2D();
             break;
+        case RAY_CMD_SHAPE3D: {
+            RayShape3DCommand* shape = command->payload;
+            switch (shape->shape)
+            {
+            case RAY_SHAPE3D_CUBE:
+                DrawCubeV(shape->points[0], shape->size, command->color);
+                break;
+            case RAY_SHAPE3D_CUBE_WIRES:
+                DrawCubeWiresV(shape->points[0], shape->size, command->color);
+                break;
+            case RAY_SHAPE3D_SPHERE:
+                DrawSphere(shape->points[0], shape->radius, command->color);
+                break;
+            case RAY_SHAPE3D_SPHERE_WIRES:
+                DrawSphereWires(shape->points[0], shape->radius, shape->rings, shape->slices, command->color);
+                break;
+            case RAY_SHAPE3D_CYLINDER:
+                DrawCylinder(shape->points[0], shape->radius, shape->radius2, shape->height, shape->sides, command->color);
+                break;
+            case RAY_SHAPE3D_CYLINDER_WIRES:
+                DrawCylinderWires(shape->points[0], shape->radius, shape->radius2, shape->height, shape->sides, command->color);
+                break;
+            case RAY_SHAPE3D_CAPSULE:
+                DrawCapsule(shape->points[0], shape->points[1], shape->radius, shape->rings, shape->slices, command->color);
+                break;
+            case RAY_SHAPE3D_GRID:
+                DrawGrid(shape->sides, shape->thickness);
+                break;
+            case RAY_SHAPE3D_LINE:
+                DrawLine3D(shape->points[0], shape->points[1], command->color);
+                break;
+            case RAY_SHAPE3D_POINT:
+                DrawPoint3D(shape->points[0], command->color);
+                break;
+            case RAY_SHAPE3D_TRIANGLE:
+                DrawTriangle3D(shape->points[0], shape->points[1], shape->points[2], command->color);
+                break;
+            case RAY_SHAPE3D_PLANE: {
+                Vector2 size = { shape->size.x, shape->size.z };
+                DrawPlane(shape->points[0], size, command->color);
+                break;
+            }
+            case RAY_SHAPE3D_BOX: {
+                BoundingBox box;
+                box.min = shape->points[0];
+                box.max = shape->points[1];
+                DrawBoundingBox(box, command->color);
+                break;
+            }
+            }
+            break;
+        }
+        case RAY_CMD_BEGIN_3D:
+            BeginMode3D(*(Camera3D*)command->payload);
+            break;
+        case RAY_CMD_END_3D:
+            EndMode3D();
+            break;
+        case RAY_CMD_BEGIN_TEXTURE:
+            BeginTextureMode(*(RenderTexture*)command->payload);
+            break;
+        case RAY_CMD_END_TEXTURE:
+            EndTextureMode();
+            break;
+        case RAY_CMD_MODEL: {
+            RayModelCommand* payload = command->payload;
+            if (payload->wires)
+                DrawModelWiresEx(payload->model, payload->position, payload->rotationAxis,
+                    payload->angle, payload->scale, command->color);
+            else
+                DrawModelEx(payload->model, payload->position, payload->rotationAxis,
+                    payload->angle, payload->scale, command->color);
+            break;
+        }
+        case RAY_CMD_BILLBOARD: {
+            RayBillboardCommand* payload = command->payload;
+            DrawBillboard(payload->camera, payload->texture, payload->position, payload->scale, command->color);
+            break;
+        }
         }
     }
     EndDrawing();
@@ -2365,12 +3708,88 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     RAY_CLASS_METHOD(camera2d_class, "toString", camera2d_to_string);
     lt->table_set(vm, module_value, lt->make_string(vm, "Camera2D"), camera2d_class);
 
+    camera3d_class = lt->class_create(vm, "Camera3D");
+    lt->class_set_native_data_destroy(vm, camera3d_class, destroy_native_data);
+    lt->class_set_constructor(vm, camera3d_class, camera3d_constructor);
+    RAY_CLASS_GETTER(camera3d_class, "position", camera3d_get_position);
+    RAY_CLASS_SETTER(camera3d_class, "position", camera3d_set_position);
+    RAY_CLASS_GETTER(camera3d_class, "target", camera3d_get_target);
+    RAY_CLASS_SETTER(camera3d_class, "target", camera3d_set_target);
+    RAY_CLASS_GETTER(camera3d_class, "up", camera3d_get_up);
+    RAY_CLASS_SETTER(camera3d_class, "up", camera3d_set_up);
+    RAY_CLASS_GETTER(camera3d_class, "fovy", camera3d_get_fovy);
+    RAY_CLASS_SETTER(camera3d_class, "fovy", camera3d_set_fovy);
+    RAY_CLASS_GETTER(camera3d_class, "projection", camera3d_get_projection);
+    RAY_CLASS_SETTER(camera3d_class, "projection", camera3d_set_projection);
+    RAY_CLASS_METHOD(camera3d_class, "toString", camera3d_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Camera3D"), camera3d_class);
+
+    ray_class = lt->class_create(vm, "Ray");
+    lt->class_set_native_data_destroy(vm, ray_class, destroy_native_data);
+    lt->class_set_constructor(vm, ray_class, ray_constructor);
+    RAY_CLASS_GETTER(ray_class, "position", ray_get_position);
+    RAY_CLASS_SETTER(ray_class, "position", ray_set_position);
+    RAY_CLASS_GETTER(ray_class, "direction", ray_get_direction);
+    RAY_CLASS_SETTER(ray_class, "direction", ray_set_direction);
+    RAY_CLASS_METHOD(ray_class, "toString", ray_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Ray"), ray_class);
+
+    /* Ray collisions are produced by the raycasts, so they have no constructor. */
+    ray_collision_class = lt->class_create(vm, "RayCollision");
+    lt->class_set_native_data_destroy(vm, ray_collision_class, destroy_native_data);
+    RAY_CLASS_GETTER(ray_collision_class, "hit", ray_collision_get_hit);
+    RAY_CLASS_GETTER(ray_collision_class, "distance", ray_collision_get_distance);
+    RAY_CLASS_GETTER(ray_collision_class, "point", ray_collision_get_point);
+    RAY_CLASS_GETTER(ray_collision_class, "normal", ray_collision_get_normal);
+    RAY_CLASS_METHOD(ray_collision_class, "toString", ray_collision_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "RayCollision"), ray_collision_class);
+
+    /* Meshes, models, and render textures are created by their loaders. */
+    mesh_class = lt->class_create(vm, "Mesh");
+    lt->class_set_native_data_destroy(vm, mesh_class, destroy_mesh);
+    RAY_CLASS_GETTER(mesh_class, "vertexCount", mesh_get_vertex_count);
+    RAY_CLASS_GETTER(mesh_class, "triangleCount", mesh_get_triangle_count);
+    RAY_CLASS_METHOD(mesh_class, "unload", mesh_unload);
+    RAY_CLASS_METHOD(mesh_class, "toString", mesh_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Mesh"), mesh_class);
+
+    model_class = lt->class_create(vm, "Model");
+    lt->class_set_native_data_destroy(vm, model_class, destroy_model);
+    RAY_CLASS_GETTER(model_class, "meshCount", model_get_mesh_count);
+    RAY_CLASS_GETTER(model_class, "materialCount", model_get_material_count);
+    RAY_CLASS_METHOD(model_class, "draw", model_draw);
+    RAY_CLASS_METHOD(model_class, "drawEx", model_draw_ex);
+    RAY_CLASS_METHOD(model_class, "drawWires", model_draw_wires);
+    RAY_CLASS_METHOD(model_class, "drawWiresEx", model_draw_wires_ex);
+    RAY_CLASS_METHOD(model_class, "unload", model_unload);
+    RAY_CLASS_METHOD(model_class, "toString", model_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "Model"), model_class);
+
+    render_texture_class = lt->class_create(vm, "RenderTexture");
+    lt->class_set_native_data_destroy(vm, render_texture_class, destroy_render_texture);
+    RAY_CLASS_GETTER(render_texture_class, "width", render_texture_get_width);
+    RAY_CLASS_GETTER(render_texture_class, "height", render_texture_get_height);
+    RAY_CLASS_METHOD(render_texture_class, "draw", render_texture_draw);
+    RAY_CLASS_METHOD(render_texture_class, "drawPro", render_texture_draw_pro);
+    RAY_CLASS_METHOD(render_texture_class, "unload", render_texture_unload);
+    RAY_CLASS_METHOD(render_texture_class, "toString", render_texture_to_string);
+    lt->table_set(vm, module_value, lt->make_string(vm, "RenderTexture"), render_texture_class);
+
     set_native(vm, module_value, "loadImage", native_load_image);
     set_native(vm, module_value, "genImageColor", native_gen_image_color);
     set_native(vm, module_value, "loadTexture", native_load_texture);
     set_native(vm, module_value, "loadTextureFromImage", native_load_texture_from_image);
     set_native(vm, module_value, "loadFont", native_load_font);
     set_native(vm, module_value, "defaultFont", native_default_font);
+    set_native(vm, module_value, "genMeshCube", native_gen_mesh_cube);
+    set_native(vm, module_value, "genMeshSphere", native_gen_mesh_sphere);
+    set_native(vm, module_value, "genMeshPlane", native_gen_mesh_plane);
+    set_native(vm, module_value, "genMeshCylinder", native_gen_mesh_cylinder);
+    set_native(vm, module_value, "genMeshTorus", native_gen_mesh_torus);
+    set_native(vm, module_value, "genMeshKnot", native_gen_mesh_knot);
+    set_native(vm, module_value, "loadModel", native_load_model);
+    set_native(vm, module_value, "modelFromMesh", native_model_from_mesh);
+    set_native(vm, module_value, "loadRenderTexture", native_load_render_texture);
     set_native(vm, module_value, "windowSize", native_window_size);
     set_native(vm, module_value, "traceLog", native_trace_log);
 
@@ -2391,6 +3810,24 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_native(vm, module_value, "polygon", native_polygon);
     set_native(vm, module_value, "polygonLines", native_polygon_lines);
     set_native(vm, module_value, "ring", native_ring);
+    set_native(vm, module_value, "cube", native_cube);
+    set_native(vm, module_value, "cubeWires", native_cube_wires);
+    set_native(vm, module_value, "sphere", native_sphere);
+    set_native(vm, module_value, "sphereWires", native_sphere_wires);
+    set_native(vm, module_value, "cylinder", native_cylinder);
+    set_native(vm, module_value, "cylinderWires", native_cylinder_wires);
+    set_native(vm, module_value, "capsule", native_capsule);
+    set_native(vm, module_value, "grid", native_grid);
+    set_native(vm, module_value, "line3D", native_line3d);
+    set_native(vm, module_value, "point3D", native_point3d);
+    set_native(vm, module_value, "triangle3D", native_triangle3d);
+    set_native(vm, module_value, "plane", native_plane);
+    set_native(vm, module_value, "boundingBox", native_bounding_box);
+    set_native(vm, module_value, "billboard", native_billboard);
+    set_native(vm, module_value, "beginMode3D", native_begin_mode3d);
+    set_native(vm, module_value, "endMode3D", native_end_mode3d);
+    set_native(vm, module_value, "beginTextureMode", native_begin_texture_mode);
+    set_native(vm, module_value, "endTextureMode", native_end_texture_mode);
     set_native(vm, module_value, "beginMode2D", native_begin_mode2d);
     set_native(vm, module_value, "endMode2D", native_end_mode2d);
     set_native(vm, module_value, "keyPressed", native_key_pressed);
@@ -2423,6 +3860,10 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_native(vm, module_value, "colorToInt", native_color_to_int);
     set_native(vm, module_value, "worldToScreen", native_world_to_screen);
     set_native(vm, module_value, "screenToWorld", native_screen_to_world);
+    set_native(vm, module_value, "getWorldToScreen", native_get_world_to_screen);
+    set_native(vm, module_value, "getScreenToWorldRay", native_get_screen_to_world_ray);
+    set_native(vm, module_value, "raycastSphere", native_raycast_sphere);
+    set_native(vm, module_value, "raycastBox", native_raycast_box);
     set_native(vm, module_value, "setWindowTitle", native_set_window_title);
     set_native(vm, module_value, "setWindowSize", native_set_window_size);
     set_native(vm, module_value, "toggleFullscreen", native_toggle_fullscreen);
@@ -2596,6 +4037,11 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_number(vm, log_levels, "fatal", 6);
     set_number(vm, log_levels, "none", 7);
     lt->table_set(vm, module_value, lt->make_string(vm, "log"), log_levels);
+
+    lt_Value projection = lt->make_table(vm);
+    set_number(vm, projection, "perspective", CAMERA_PERSPECTIVE);
+    set_number(vm, projection, "orthographic", CAMERA_ORTHOGRAPHIC);
+    lt->table_set(vm, module_value, lt->make_string(vm, "projection"), projection);
 
     lt_Value colors = lt->make_table(vm);
     set_color(vm, colors, "lightgray", 200, 200, 200, 255);

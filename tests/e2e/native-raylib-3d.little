@@ -1,0 +1,92 @@
+; CPU-only surface of the 3D nativelib: value types and pure-math raycasts.
+; Meshes, models, and render textures need a live GL context, so this test only
+; covers their error paths; tests/windowed/native-raylib-3d.little exercises them.
+
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+ray.traceLog(ray.log.none)
+
+var camera = ray.Camera3D {
+    position: ray.Vector3(10, 10, 10)
+    target: ray.Vector3(0, 0, 0)
+}
+io.print(typeof camera is ray.Camera3D)
+io.print(camera:toString())
+io.print(camera.position:toString())
+io.print(camera.target:toString())
+io.print(camera.up:toString())
+io.print(camera.fovy)
+io.print(camera.projection is ray.projection.perspective)
+
+var positional = ray.Camera3D(ray.Vector3(1, 2, 3), ray.Vector3(4, 5, 6), ray.Vector3(0, 1, 0), 60, ray.projection.orthographic)
+io.print(positional:toString())
+
+camera.fovy = 30
+camera.projection = ray.projection.orthographic
+camera.position = ray.Vector3(1, 1, 1)
+io.print(camera:toString())
+io.print(camera.up:toString())
+
+var badField = pcall(fn() { return ray.Camera3D { position: 3 } })
+io.print(badField.ok)
+io.print(string.contains(badField.error, "Vector3"))
+
+var ray3 = ray.Ray(ray.Vector3(0, 0, 0), ray.Vector3(0, 0, 1))
+io.print(typeof ray3 is ray.Ray)
+io.print(ray3:toString())
+io.print(ray3.position:toString())
+io.print(ray3.direction:toString())
+ray3.position = ray.Vector3(0, 0, -2)
+io.print(ray3.position:toString())
+
+var fromTable = ray.Ray {
+    position: ray.Vector3(1, 1, 1)
+    direction: ray.Vector3(0, 1, 0)
+}
+io.print(fromTable:toString())
+
+var sphere = ray.raycastSphere(ray3, ray.Vector3(0, 0, 4), 1)
+io.print(typeof sphere is ray.RayCollision)
+io.print(sphere.hit)
+io.print(sphere.distance)
+io.print(sphere.point:toString())
+io.print(sphere.normal:toString())
+io.print(sphere:toString())
+
+var lateral = ray.raycastSphere(ray3, ray.Vector3(5, 0, 4), 1)
+io.print(lateral.hit)
+
+var box = ray.raycastBox(ray3, ray.Vector3(-1, -1, 3), ray.Vector3(1, 1, 5))
+io.print(box.hit)
+io.print(box.distance)
+
+var boxMiss = ray.raycastBox(ray3, ray.Vector3(-1, -1, -32), ray.Vector3(1, 1, -30))
+io.print(boxMiss.hit)
+
+var badRaycast = pcall(fn() { return ray.raycastSphere(ray3, ray.Vector3(0, 0, 4), "wide") })
+io.print(badRaycast.ok)
+io.print(string.contains(badRaycast.error, "radius"))
+
+var mesh = pcall(fn() { return ray.genMeshCube(1, 1, 1) })
+io.print(mesh.ok)
+io.print(string.contains(mesh.error, "ray.open"))
+
+var model = pcall(fn() { return ray.loadModel("missing.gltf") })
+io.print(model.ok)
+io.print(string.contains(model.error, "ray.open"))
+
+var target = pcall(fn() { return ray.loadRenderTexture(8, 8) })
+io.print(target.ok)
+io.print(string.contains(target.error, "ray.open"))
+
+var fromMesh = pcall(fn() { return ray.modelFromMesh(ray.Vector3(0, 0, 0)) })
+io.print(fromMesh.ok)
+io.print(string.contains(fromMesh.error, "Mesh"))
+
+var badSize = pcall(fn() { return ray.loadRenderTexture(0, 4) })
+io.print(badSize.ok)
+io.print(string.contains(badSize.error, "positive"))
+
+var badGrid = pcall(fn() { return ray.grid(4) })
+io.print(badGrid.ok)
+io.print(string.contains(badGrid.error, "spacing"))
