@@ -78,6 +78,26 @@ var unbalancedTexture = pcall(fn() { return ray.endTextureMode() })
 io.print(unbalancedTexture.ok)
 io.print(string.contains(unbalancedTexture.error, "beginTextureMode"))
 
+; A 3D draw outside a camera mode would render nothing, so it raises.
+var outsideMode = pcall(fn() { return ray.cube(ray.Vector3(0, 0, 0), ray.Vector3(1, 1, 1), ray.colors.red) })
+io.print(outsideMode.ok)
+io.print(string.contains(outsideMode.error, "beginMode3D"))
+
+; Segment counts size raylib's vertex buffers, so they are bounded.
+var zeroSegments = pcall(fn() { return ray.genMeshPlane(1, 1, 0, 2) })
+io.print(zeroSegments.ok)
+io.print(string.contains(zeroSegments.error, "between 1 and 1024"))
+var hugeSegments = pcall(fn() { return ray.genMeshSphere(1, 1000000000, 8) })
+io.print(hugeSegments.ok)
+io.print(string.contains(hugeSegments.error, "between 1 and 1024"))
+
+; Registered before the first update, which the retention check below performs;
+; a later registration would never fire because the start latch is one-shot.
+ray.on("start", fn() {
+    ray.setFPS(60)
+    io.print("started")
+})
+
 ; beginTextureMode holds its target until the frame is replayed, exactly like a
 ; queued draw's resource, so dropping the only script reference mid-frame cannot
 ; free the framebuffer out from under the replay.
@@ -132,10 +152,6 @@ var drawScene = fn() {
     ray.screenshot("build/raylib-3d-screen.png")
 }
 
-ray.on("start", fn() {
-    ray.setFPS(60)
-    io.print("started")
-})
 ray.on("update", fn(dt) {
     frames = frames + 1
     if unbalancedFrame {

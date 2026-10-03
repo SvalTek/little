@@ -276,12 +276,12 @@ var mesh = ray.genMeshCube(1, 1, 1)
 io.print(mesh:toString())             ; mesh(24 vertices, 12 triangles)
 
 var model = ray.modelFromMesh(mesh)   ; the model owns the mesh now
-model:draw(ray.Vector3(0, 0, 0), 1, ray.colors.white)
 
 var target = ray.loadRenderTexture(320, 180)
 ray.beginTextureMode(target)
 ray.beginMode3D(camera)
 ray.cube(ray.Vector3(0, 0, 0), ray.Vector3(1, 1, 1), ray.colors.red)
+model:draw(ray.Vector3(0, 0, 0), 1, ray.colors.white)
 ray.endMode3D()
 ray.endTextureMode()
 target:draw(ray.Vector2(0, 0), ray.colors.white)
@@ -305,6 +305,10 @@ target:draw(ray.Vector2(0, 0), ray.colors.white)
 | `modelFromMesh(mesh)` | Model with a default material from a `Mesh` |
 | `loadRenderTexture(width, height)` | Render target |
 
+`rings`, `slices`, `resX`, `resZ`, `radSeg`, and `sides` size raylib's vertex
+buffers, so they must be whole numbers between 1 and 1024; anything else is an
+error.
+
 `modelFromMesh` takes ownership of the mesh: the model frees it, so `unload()`
 on that `Mesh` instance does nothing afterwards and passing the same mesh to a
 second `modelFromMesh` is an error. `Model` draws mirror raylib's
@@ -316,7 +320,9 @@ Render textures are stored bottom-up, so `draw(position, tint)` and
 `drawPro(dest, origin, rotation, tint)` flip the source for you; `drawPro`
 scales the whole target into `dest`. `image()` reads the target's colour
 attachment back into an `Image`, following the same layout, so the last row of
-that image is the top of the rendered scene.
+that image is the top of the rendered scene. Unlike the draw helpers it is not
+queued: it reads immediately, so calling it inside an update callback returns
+the last completed frame rather than the one being built.
 
 `beginTextureMode` and `beginMode3D` nest, so a frame can render a 3D scene into
 a texture and then draw that texture on screen. All three modes must be balanced
@@ -324,8 +330,10 @@ before the frame ends.
 
 ## 3D shapes
 
-These queue draws for the current frame, like the 2D helpers, and must sit
-inside `beginMode3D`/`endMode3D`.
+These queue draws for the current frame, like the 2D helpers. They must sit
+inside `beginMode3D`/`endMode3D`: without a camera mode the draws would replay
+against the default matrices and silently render nothing, so they raise
+instead. `Model:draw` and `billboard` are checked the same way.
 
 | Helper | Meaning |
 | --- | --- |

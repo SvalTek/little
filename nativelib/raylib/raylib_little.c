@@ -20,6 +20,10 @@
 
 #define RAY_MAX_COMMANDS 1024
 
+/* Segment counts size raylib's vertex allocations, so they get a fixed limit
+   like the rest of the library's bounded inputs. */
+#define RAY_MAX_MESH_SEGMENTS 1024
+
 typedef enum {
     RAY_CMD_RECT,
     RAY_CMD_TEXT,
@@ -954,6 +958,13 @@ static void require_draw_target(lt_VM* vm)
     if (command_count >= RAY_MAX_COMMANDS) lt->runtime_error(vm, "Too many ray draw commands in one frame!");
 }
 
+/* A 3D draw outside a camera mode replays against the default 2D matrices and
+   silently draws nothing, so require the mode rather than letting it pass. */
+static void require_mode3d(lt_VM* vm)
+{
+    if (mode3d_depth == 0) lt->runtime_error(vm, "Expected ray.beginMode3D before a 3D draw!");
+}
+
 static RayCommand new_command(RayCommandKind kind)
 {
     RayCommand command;
@@ -1011,32 +1022,57 @@ static void unload_font_payload(LtFontData* font)
     }
 }
 
+/* UnloadMesh calls rlUnloadVertexArray unconditionally, so it cannot run once
+   ray.close has destroyed the context. These mirror raylib's own teardown, and
+   are the only way to release the CPU-side arrays without touching GL. */
+static void free_mesh_cpu(Mesh* mesh)
+{
+    RL_FREE(mesh->vboId);
+    RL_FREE(mesh->vertices);
+    RL_FREE(mesh->texcoords);
+    RL_FREE(mesh->normals);
+    RL_FREE(mesh->colors);
+    RL_FREE(mesh->tangents);
+    RL_FREE(mesh->texcoords2);
+    RL_FREE(mesh->indices);
+    RL_FREE(mesh->boneWeights);
+    RL_FREE(mesh->boneIndices);
+    RL_FREE(mesh->animVertices);
+    RL_FREE(mesh->animNormals);
+}
+
+static void free_model_cpu(Model* model)
+{
+    for (int i = 0; i < model->meshCount; ++i) free_mesh_cpu(&model->meshes[i]);
+    for (int i = 0; i < model->materialCount; ++i) RL_FREE(model->materials[i].maps);
+    RL_FREE(model->meshes);
+    RL_FREE(model->materials);
+    RL_FREE(model->meshMaterial);
+    RL_FREE(model->skeleton.bones);
+    RL_FREE(model->skeleton.bindPose);
+    RL_FREE(model->currentPose);
+    RL_FREE(model->boneMatrices);
+}
+
 /* UnloadMesh frees the CPU arrays and the GPU buffers together, and raylib
-   uploads a mesh as soon as it generates or loads it. After ray.close the GPU
-   buffers are already gone with the context, so drop the GL handle first and
-   let the call release the CPU side; skipping it would leak the vertex data. */
+   uploads a mesh as soon as it generates or loads it. */
 static void unload_mesh_payload(LtMeshData* mesh)
 {
     if (mesh->owned && mesh->mesh.vertexCount > 0)
     {
-        if (!IsWindowReady()) mesh->mesh.vaoId = 0;
-        UnloadMesh(mesh->mesh);
+        if (IsWindowReady()) UnloadMesh(mesh->mesh);
+        else free_mesh_cpu(&mesh->mesh);
         memset(&mesh->mesh, 0, sizeof(Mesh));
         mesh->owned = 0;
     }
 }
 
-/* UnloadModel walks its meshes, so clear their GL handles when the context is
-   gone and let it release the CPU-side meshes, material maps, and arrays. */
 static void unload_model_payload(LtModelData* model)
 {
     if (model->owned && model->model.meshCount > 0)
     {
-        if (!IsWindowReady())
-        {
-            for (int i = 0; i < model->model.meshCount; ++i) model->model.meshes[i].vaoId = 0;
-        }
-        UnloadModel(model->model);
+        if (IsWindowReady()) UnloadModel(model->model);
+        else free_model_cpu(&model->model);
         memset(&model->model, 0, sizeof(Model));
         model->owned = 0;
     }
@@ -1528,6 +1564,22 @@ static void attach_render_texture(lt_VM* vm, RenderTexture source)
     lt->push(vm, instance);
 }
 
+/* The range check has to happen before the cast: converting a NaN or an
+   out-of-range double to int is undefined, and the count decides how much
+   raylib allocates. */
+static int expect_segment_count(lt_VM* vm, lt_Value value, const char* what)
+{
+    expect_number(vm, value, "Expected a mesh segment count number!");
+    double count = lt->get_number(value);
+    if (!(count >= 1.0 && count <= (double)RAY_MAX_MESH_SEGMENTS))
+    {
+        char message[96];
+        snprintf(message, sizeof(message), "Expected %s between 1 and %d!", what, RAY_MAX_MESH_SEGMENTS);
+        lt->runtime_error(vm, message);
+    }
+    return (int)count;
+}
+
 static uint8_t native_gen_mesh_cube(lt_VM* vm, uint8_t argc)
 {
     if (argc != 3) lt->runtime_error(vm, "Expected width, height, and length for ray.genMeshCube!");
@@ -1549,10 +1601,10 @@ static uint8_t native_gen_mesh_sphere(lt_VM* vm, uint8_t argc)
     lt_Value rings_value = lt->pop(vm);
     lt_Value radius_value = lt->pop(vm);
     expect_number(vm, radius_value, "Expected a sphere radius number!");
-    expect_number(vm, rings_value, "Expected a sphere rings number!");
-    expect_number(vm, slices_value, "Expected a sphere slices number!");
+    int rings = expect_segment_count(vm, rings_value, "sphere rings");
+    int slices = expect_segment_count(vm, slices_value, "sphere slices");
     require_window(vm, "Expected ray.open before ray.genMeshSphere!");
-    attach_mesh(vm, GenMeshSphere((float)lt->get_number(radius_value), (int)lt->get_number(rings_value), (int)lt->get_number(slices_value)), 1);
+    attach_mesh(vm, GenMeshSphere((float)lt->get_number(radius_value), rings, slices), 1);
     return 1;
 }
 
@@ -1565,11 +1617,10 @@ static uint8_t native_gen_mesh_plane(lt_VM* vm, uint8_t argc)
     lt_Value width_value = lt->pop(vm);
     expect_number(vm, width_value, "Expected a plane width number!");
     expect_number(vm, length_value, "Expected a plane length number!");
-    expect_number(vm, resx_value, "Expected a plane resX number!");
-    expect_number(vm, resz_value, "Expected a plane resZ number!");
+    int resx = expect_segment_count(vm, resx_value, "plane resX");
+    int resz = expect_segment_count(vm, resz_value, "plane resZ");
     require_window(vm, "Expected ray.open before ray.genMeshPlane!");
-    attach_mesh(vm, GenMeshPlane((float)lt->get_number(width_value), (float)lt->get_number(length_value),
-        (int)lt->get_number(resx_value), (int)lt->get_number(resz_value)), 1);
+    attach_mesh(vm, GenMeshPlane((float)lt->get_number(width_value), (float)lt->get_number(length_value), resx, resz), 1);
     return 1;
 }
 
@@ -1581,9 +1632,9 @@ static uint8_t native_gen_mesh_cylinder(lt_VM* vm, uint8_t argc)
     lt_Value radius_value = lt->pop(vm);
     expect_number(vm, radius_value, "Expected a cylinder radius number!");
     expect_number(vm, height_value, "Expected a cylinder height number!");
-    expect_number(vm, slices_value, "Expected a cylinder slices number!");
+    int slices = expect_segment_count(vm, slices_value, "cylinder slices");
     require_window(vm, "Expected ray.open before ray.genMeshCylinder!");
-    attach_mesh(vm, GenMeshCylinder((float)lt->get_number(radius_value), (float)lt->get_number(height_value), (int)lt->get_number(slices_value)), 1);
+    attach_mesh(vm, GenMeshCylinder((float)lt->get_number(radius_value), (float)lt->get_number(height_value), slices), 1);
     return 1;
 }
 
@@ -1596,11 +1647,10 @@ static uint8_t native_gen_mesh_torus(lt_VM* vm, uint8_t argc)
     lt_Value radius_value = lt->pop(vm);
     expect_number(vm, radius_value, "Expected a torus radius number!");
     expect_number(vm, size_value, "Expected a torus size number!");
-    expect_number(vm, radseg_value, "Expected a torus radSeg number!");
-    expect_number(vm, sides_value, "Expected a torus sides number!");
+    int radseg = expect_segment_count(vm, radseg_value, "torus radSeg");
+    int sides = expect_segment_count(vm, sides_value, "torus sides");
     require_window(vm, "Expected ray.open before ray.genMeshTorus!");
-    attach_mesh(vm, GenMeshTorus((float)lt->get_number(radius_value), (float)lt->get_number(size_value),
-        (int)lt->get_number(radseg_value), (int)lt->get_number(sides_value)), 1);
+    attach_mesh(vm, GenMeshTorus((float)lt->get_number(radius_value), (float)lt->get_number(size_value), radseg, sides), 1);
     return 1;
 }
 
@@ -1613,11 +1663,10 @@ static uint8_t native_gen_mesh_knot(lt_VM* vm, uint8_t argc)
     lt_Value radius_value = lt->pop(vm);
     expect_number(vm, radius_value, "Expected a knot radius number!");
     expect_number(vm, size_value, "Expected a knot size number!");
-    expect_number(vm, radseg_value, "Expected a knot radSeg number!");
-    expect_number(vm, sides_value, "Expected a knot sides number!");
+    int radseg = expect_segment_count(vm, radseg_value, "knot radSeg");
+    int sides = expect_segment_count(vm, sides_value, "knot sides");
     require_window(vm, "Expected ray.open before ray.genMeshKnot!");
-    attach_mesh(vm, GenMeshKnot((float)lt->get_number(radius_value), (float)lt->get_number(size_value),
-        (int)lt->get_number(radseg_value), (int)lt->get_number(sides_value)), 1);
+    attach_mesh(vm, GenMeshKnot((float)lt->get_number(radius_value), (float)lt->get_number(size_value), radseg, sides), 1);
     return 1;
 }
 
@@ -1722,6 +1771,7 @@ static void queue_model_draw(lt_VM* vm, lt_Value instance, LtModelData* model, V
 {
     if (model->model.meshCount <= 0) lt->runtime_error(vm, "Ray model has been unloaded!");
     require_draw_target(vm);
+    require_mode3d(vm);
     RayModelCommand* payload = allocate_native_data(vm, sizeof(RayModelCommand));
     memset(payload, 0, sizeof(RayModelCommand));
     payload->model = model->model;
@@ -2122,6 +2172,7 @@ static uint8_t native_ring(lt_VM* vm, uint8_t argc)
 static RayShape3DCommand* make_shape3d_command(lt_VM* vm, RayShape3DKind shape)
 {
     require_draw_target(vm);
+    require_mode3d(vm);
     RayShape3DCommand* payload = allocate_native_data(vm, sizeof(RayShape3DCommand));
     memset(payload, 0, sizeof(RayShape3DCommand));
     payload->shape = shape;
@@ -2369,6 +2420,7 @@ static uint8_t native_billboard(lt_VM* vm, uint8_t argc)
     Color color = expect_color(vm, tint, "Expected a Color tint for ray.billboard!");
     if (texture->id == 0) lt->runtime_error(vm, "Ray texture has been unloaded!");
     require_draw_target(vm);
+    require_mode3d(vm);
     RayBillboardCommand* payload = allocate_native_data(vm, sizeof(RayBillboardCommand));
     memset(payload, 0, sizeof(RayBillboardCommand));
     payload->camera = *camera;
