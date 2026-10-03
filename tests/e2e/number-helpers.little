@@ -93,6 +93,17 @@ io.print(infiniteSnap.ok)
 var infiniteMap = pcall(fn() { return number.map(number.infinity, 0, number.infinity, 0, 100) })
 io.print(infiniteMap.ok)
 
+; Finite arguments are not enough on their own: the arithmetic can still
+; overflow, so these helpers guarantee a finite result.
+var overflowMap = pcall(fn() { return number.map(1e308, 0 - 1e308, 1e308, 0, 100) })
+io.print(overflowMap.ok)
+var overflowSnap = pcall(fn() { return number.snap(1e308, 1e-308) })
+io.print(overflowSnap.ok)
+var overflowWrap = pcall(fn() { return number.wrap(1e308, 0 - 1e308, 1e308) })
+io.print(overflowWrap.ok)
+io.print(number.snap(17, 5))
+io.print(number.map(5, 0, 10, 0, 100))
+
 ; Scaling before rounding can overflow for a very large value, which has no
 ; fractional part at that precision, so the result stays finite.
 io.print(number.roundTo(1e308, 2) > 1e307)

@@ -42,6 +42,20 @@ static double _lt_number_whole(lt_VM* vm, lt_Value value, const char* what, doub
     return number;
 }
 
+/* Finite arguments are not enough on their own: the arithmetic can still
+   overflow, and a non-finite result is not something the caller asked for, so
+   it is an error rather than an infinity or a NaN. */
+static void _lt_number_push_result(lt_VM* vm, double result, const char* what)
+{
+    if (!isfinite(result))
+    {
+        char message[96];
+        snprintf(message, sizeof(message), "Expected number.%s result to be finite!", what);
+        lt_runtime_error(vm, message);
+    }
+    lt_push(vm, LT_VALUE_NUMBER(result));
+}
+
 /* Shared by number.from: skips surrounding whitespace and reports where the
    meaningful text starts. Returns 0 when the text is blank. */
 static const char* _lt_number_trim(const char* text, const char** end)
@@ -324,7 +338,7 @@ static uint8_t _lt_number_snap(lt_VM* vm, uint8_t argc)
     double value = _lt_number_pop(vm, "snap");
     if (!isfinite(value) || !isfinite(step)) lt_runtime_error(vm, "Expected number.snap arguments to be finite!");
     if (step == 0) lt_runtime_error(vm, "Expected number.snap step to be non-zero!");
-    lt_push(vm, LT_VALUE_NUMBER(round(value / step) * step));
+    _lt_number_push_result(vm, round(value / step) * step, "snap");
     return 1;
 }
 
@@ -340,7 +354,7 @@ static uint8_t _lt_number_wrap(lt_VM* vm, uint8_t argc)
     double span = maximum - minimum;
     double wrapped = fmod(value - minimum, span);
     if (wrapped < 0) wrapped += span;
-    lt_push(vm, LT_VALUE_NUMBER(minimum + wrapped));
+    _lt_number_push_result(vm, minimum + wrapped, "wrap");
     return 1;
 }
 
@@ -354,7 +368,7 @@ static uint8_t _lt_number_pingpong(lt_VM* vm, uint8_t argc)
     double span = length * 2;
     double wrapped = fmod(value, span);
     if (wrapped < 0) wrapped += span;
-    lt_push(vm, LT_VALUE_NUMBER(wrapped > length ? span - wrapped : wrapped));
+    _lt_number_push_result(vm, wrapped > length ? span - wrapped : wrapped, "pingPong");
     return 1;
 }
 
@@ -371,7 +385,10 @@ static uint8_t _lt_number_map(lt_VM* vm, uint8_t argc)
     if (!isfinite(value) || !isfinite(in_min) || !isfinite(in_max) || !isfinite(out_min) || !isfinite(out_max))
         lt_runtime_error(vm, "Expected number.map arguments to be finite!");
     if (in_max == in_min) lt_runtime_error(vm, "Expected number.map input range to be non-empty!");
-    lt_push(vm, LT_VALUE_NUMBER(out_min + (value - in_min) * (out_max - out_min) / (in_max - in_min)));
+    /* The ratio is formed first so the multiply happens on a small number,
+       which keeps an extreme but finite range from overflowing needlessly. */
+    double ratio = (value - in_min) / (in_max - in_min);
+    _lt_number_push_result(vm, out_min + ratio * (out_max - out_min), "map");
     return 1;
 }
 

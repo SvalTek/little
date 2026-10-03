@@ -83,9 +83,11 @@ Discrete parameters - `toBase`'s base, `format`'s and `roundTo`'s decimal
 places - must be whole numbers. A fractional value would be silently truncated
 by the conversion, changing its meaning, so it is an error instead.
 
-The range and rounding helpers (`snap`, `wrap`, `pingPong`, `map`) require
-finite arguments: an infinite operand would otherwise produce a NaN, which
-cannot be stored in the value representation.
+The range and rounding helpers (`snap`, `wrap`, `pingPong`, `map`) take finite
+arguments and return a finite result. An infinite operand, or arithmetic that
+overflows, would otherwise hand back an infinity or a NaN the caller did not ask
+for - and a NaN cannot be stored in the value representation at all - so both
+are errors.
 
 ## Constants
 
