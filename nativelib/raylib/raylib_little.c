@@ -84,6 +84,7 @@ typedef struct {
     Color color;
     char* text;
     void* payload;
+    lt_Value resource;
 } RayCommand;
 
 static const lt_Api* lt = 0;
@@ -98,6 +99,20 @@ static uint8_t has_clear = 0;
 static Color clear_color = { 0, 0, 0, 255 };
 static RayCommand commands[RAY_MAX_COMMANDS];
 static uint32_t command_count = 0;
+
+/* A deferred unload names its payload and kind directly: instance_get_native_data
+   raises when asked for a class outside an instance's chain, so it cannot be
+   used to probe which resource an instance holds. */
+typedef struct {
+    void* payload;
+    uint8_t kind;
+} RayDeferredUnload;
+
+#define RAY_RESOURCE_TEXTURE 0
+#define RAY_RESOURCE_FONT 1
+
+static RayDeferredUnload deferred_unloads[RAY_MAX_COMMANDS];
+static uint32_t deferred_unload_count = 0;
 
 /* raylib's value structs are exposed as native-backed Little classes. Little
    has a fixed type set, so each instance carries the struct as its native
@@ -819,6 +834,7 @@ static void clear_commands(void)
     }
     command_count = 0;
     mode2d_depth = 0;
+    deferred_unload_count = 0;
 }
 
 static void require_draw_target(lt_VM* vm)
@@ -832,6 +848,8 @@ static RayCommand new_command(RayCommandKind kind)
     RayCommand command;
     memset(&command, 0, sizeof(command));
     command.kind = kind;
+    /* Zeroed memory is not LT_VALUE_NULL, so seed the owning-resource slot. */
+    command.resource = LT_VALUE_NULL;
     return command;
 }
 
@@ -855,6 +873,30 @@ static uint8_t table_field_bool(lt_VM* vm, lt_Value table, const char* key, uint
 
 /* ---------------- resource types: Image, Texture, Font ---------------- */
 
+static void unload_texture_payload(Texture2D* texture)
+{
+    if (texture->id > 0)
+    {
+        /* Unloading needs a live GL context; after ray.close the texture is
+           already gone with the context. */
+        if (IsWindowReady()) UnloadTexture(*texture);
+        texture->id = 0;
+        texture->width = 0;
+        texture->height = 0;
+        texture->mipmaps = 0;
+        texture->format = 0;
+    }
+}
+
+static void unload_font_payload(LtFontData* font)
+{
+    if (font->owned && font->font.texture.id > 0)
+    {
+        if (IsWindowReady()) UnloadFont(font->font);
+        memset(&font->font, 0, sizeof(Font));
+    }
+}
+
 static void destroy_image(void* data)
 {
     Image* image = data;
@@ -864,23 +906,49 @@ static void destroy_image(void* data)
 
 static void destroy_texture(void* data)
 {
-    Texture2D* texture = data;
-    /* Unloading needs a live GL context; after ray.close the texture is already
-       gone with the context, so skip the raylib call. */
-    if (texture->id > 0 && IsWindowReady()) UnloadTexture(*texture);
-    free(texture);
+    unload_texture_payload(data);
+    free(data);
 }
 
 static void destroy_font(void* data)
 {
-    LtFontData* font = data;
-    if (font->owned && font->font.texture.id > 0 && IsWindowReady()) UnloadFont(font->font);
-    free(font);
+    unload_font_payload(data);
+    free(data);
 }
 
 static void require_window(lt_VM* vm, const char* message)
 {
     if (!window_open) lt->runtime_error(vm, message);
+}
+
+/* Draw commands replay after the frame callback returns, so a resource a
+   command references has to stay alive until then, and unloading it mid-frame
+   is deferred until the command is finished with it. */
+static uint8_t resource_is_queued(lt_VM* vm, lt_Value instance)
+{
+    for (uint32_t i = 0; i < command_count; ++i)
+    {
+        if (lt->equals(commands[i].resource, instance)) return 1;
+    }
+    return 0;
+}
+
+static void defer_unload(lt_VM* vm, void* payload, uint8_t kind)
+{
+    if (deferred_unload_count >= RAY_MAX_COMMANDS) lt->runtime_error(vm, "Too many deferred ray unloads in one frame!");
+    deferred_unloads[deferred_unload_count].payload = payload;
+    deferred_unloads[deferred_unload_count].kind = kind;
+    deferred_unload_count++;
+}
+
+static void flush_deferred_unloads(void)
+{
+    for (uint32_t i = 0; i < deferred_unload_count; ++i)
+    {
+        if (deferred_unloads[i].kind == RAY_RESOURCE_TEXTURE) unload_texture_payload(deferred_unloads[i].payload);
+        else unload_font_payload(deferred_unloads[i].payload);
+    }
+    deferred_unload_count = 0;
 }
 
 static void attach_image(lt_VM* vm, Image source)
@@ -1038,16 +1106,10 @@ static uint8_t image_to_string(lt_VM* vm, uint8_t argc)
 static uint8_t texture_unload(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
-    Texture2D* texture = texture_data(vm, lt->pop(vm), "Expected a Texture!");
-    if (texture->id > 0)
-    {
-        if (IsWindowReady()) UnloadTexture(*texture);
-        texture->id = 0;
-        texture->width = 0;
-        texture->height = 0;
-        texture->mipmaps = 0;
-        texture->format = 0;
-    }
+    lt_Value instance = lt->pop(vm);
+    Texture2D* texture = texture_data(vm, instance, "Expected a Texture!");
+    if (resource_is_queued(vm, instance)) defer_unload(vm, texture, RAY_RESOURCE_TEXTURE);
+    else unload_texture_payload(texture);
     return 0;
 }
 
@@ -1074,12 +1136,14 @@ static uint8_t texture_draw(lt_VM* vm, uint8_t argc)
     if (argc != 3) lt->runtime_error(vm, "draw expects a Vector2 position and a Color!");
     lt_Value tint = lt->pop(vm);
     LtVector2* position = vector2_data(vm, lt->pop(vm), "Expected a Vector2 position!");
-    Texture2D* texture = texture_data(vm, lt->pop(vm), "Expected a Texture!");
+    lt_Value instance = lt->pop(vm);
+    Texture2D* texture = texture_data(vm, instance, "Expected a Texture!");
     Color color = expect_color(vm, tint, "Expected a Color tint!");
     RayTextureCommand* payload = make_texture_command(vm, texture);
     payload->position.x = (float)position->x;
     payload->position.y = (float)position->y;
     RayCommand command = new_command(RAY_CMD_TEXTURE);
+    command.resource = instance;
     command.color = color;
     command.payload = payload;
     push_command(command);
@@ -1092,13 +1156,15 @@ static uint8_t texture_draw_rec(lt_VM* vm, uint8_t argc)
     lt_Value tint = lt->pop(vm);
     LtVector2* position = vector2_data(vm, lt->pop(vm), "Expected a Vector2 position!");
     LtRectangle* source = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle source!");
-    Texture2D* texture = texture_data(vm, lt->pop(vm), "Expected a Texture!");
+    lt_Value instance = lt->pop(vm);
+    Texture2D* texture = texture_data(vm, instance, "Expected a Texture!");
     Color color = expect_color(vm, tint, "Expected a Color tint!");
     RayTextureCommand* payload = make_texture_command(vm, texture);
     copy_rectangle(&payload->source, source);
     payload->position.x = (float)position->x;
     payload->position.y = (float)position->y;
     RayCommand command = new_command(RAY_CMD_TEXTURE_REC);
+    command.resource = instance;
     command.color = color;
     command.payload = payload;
     push_command(command);
@@ -1113,7 +1179,8 @@ static uint8_t texture_draw_pro(lt_VM* vm, uint8_t argc)
     LtVector2* origin = vector2_data(vm, lt->pop(vm), "Expected a Vector2 origin!");
     LtRectangle* dest = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle dest!");
     LtRectangle* source = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle source!");
-    Texture2D* texture = texture_data(vm, lt->pop(vm), "Expected a Texture!");
+    lt_Value instance = lt->pop(vm);
+    Texture2D* texture = texture_data(vm, instance, "Expected a Texture!");
     expect_number(vm, rotation_value, "Expected a rotation number!");
     Color color = expect_color(vm, tint, "Expected a Color tint!");
     RayTextureCommand* payload = make_texture_command(vm, texture);
@@ -1123,6 +1190,7 @@ static uint8_t texture_draw_pro(lt_VM* vm, uint8_t argc)
     payload->origin.y = (float)origin->y;
     payload->rotation = (float)lt->get_number(rotation_value);
     RayCommand command = new_command(RAY_CMD_TEXTURE_PRO);
+    command.resource = instance;
     command.color = color;
     command.payload = payload;
     push_command(command);
@@ -1142,12 +1210,10 @@ static uint8_t texture_to_string(lt_VM* vm, uint8_t argc)
 static uint8_t font_unload(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt->runtime_error(vm, "unload expects no arguments!");
-    LtFontData* font = font_data(vm, lt->pop(vm), "Expected a Font!");
-    if (font->owned && font->font.texture.id > 0)
-    {
-        if (IsWindowReady()) UnloadFont(font->font);
-        memset(&font->font, 0, sizeof(Font));
-    }
+    lt_Value instance = lt->pop(vm);
+    LtFontData* font = font_data(vm, instance, "Expected a Font!");
+    if (resource_is_queued(vm, instance)) defer_unload(vm, font, RAY_RESOURCE_FONT);
+    else unload_font_payload(font);
     return 0;
 }
 
@@ -1175,7 +1241,8 @@ static uint8_t font_draw(lt_VM* vm, uint8_t argc)
     lt_Value size_value = lt->pop(vm);
     lt_Value position_value = lt->pop(vm);
     lt_Value text_value = lt->pop(vm);
-    LtFontData* font = font_data(vm, lt->pop(vm), "Expected a Font!");
+    lt_Value instance = lt->pop(vm);
+    LtFontData* font = font_data(vm, instance, "Expected a Font!");
     expect_string(vm, text_value, "Expected text to be string!");
     expect_number(vm, size_value, "Expected a font size number!");
     expect_number(vm, spacing_value, "Expected a spacing number!");
@@ -1195,6 +1262,7 @@ static uint8_t font_draw(lt_VM* vm, uint8_t argc)
     payload->size = (float)lt->get_number(size_value);
     payload->spacing = (float)lt->get_number(spacing_value);
     RayCommand command = new_command(RAY_CMD_TEXT_EX);
+    command.resource = instance;
     command.color = color;
     command.text = copy;
     command.payload = payload;
@@ -1853,6 +1921,17 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
         lt->push(vm, LT_VALUE_FALSE);
         return 1;
     }
+    if (mode2d_depth != 0)
+    {
+        clear_commands();
+        lt->runtime_error(vm, "Expected ray.endMode2D before the frame ends!");
+    }
+    /* Commands replay after the callback returns, so keep their resources alive
+       until then. */
+    for (uint32_t i = 0; i < command_count; ++i)
+    {
+        if (!LT_IS_NULL(commands[i].resource)) lt->root(vm, commands[i].resource);
+    }
     BeginDrawing();
     if (has_clear) ClearBackground(clear_color);
     else ClearBackground(BLACK);
@@ -1936,9 +2015,13 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
         }
     }
     EndDrawing();
+    flush_deferred_unloads();
     clear_commands();
-    lt->poll(vm);
-    lt->push(vm, LT_VALUE_TRUE);
+    /* poll_now processes ready async work without sleeping until a pending
+       timer is due, which would otherwise stall the frame. A poll hook may
+       close the window, so report the window state rather than always true. */
+    lt->poll_now(vm);
+    lt->push(vm, window_open ? LT_VALUE_TRUE : LT_VALUE_FALSE);
     return 1;
 }
 

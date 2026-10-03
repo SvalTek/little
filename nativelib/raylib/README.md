@@ -65,10 +65,15 @@ ray.close()
 
 `update()` runs `start` once, then per frame: collects draw commands from the
 `update` callback, replays them inside `BeginDrawing`/`EndDrawing`, polls
-Little async work (`lt->poll`), and returns whether the window is still open.
-A callback that calls `close()` ends the loop cleanly; the frame is not drawn.
-Draw helpers only buffer commands for the current frame (cap 1024); windows and
-GL calls all stay on the calling thread.
+Little async work, and returns whether the window is still open. Async work is
+polled without sleeping (`poll_now`), so a pending `setTimeout` never stalls the
+frame; the return value reflects the window state *after* polling, so a timer
+callback that calls `close()` ends the loop cleanly. Draw helpers only buffer
+commands for the current frame (cap 1024); windows and GL calls all stay on the
+calling thread.
+
+A frame whose draw commands leave `beginMode2D` unclosed is rejected before
+anything is drawn.
 
 `open` accepts an optional fourth argument, a table of window options applied
 before the window is created:
@@ -173,6 +178,11 @@ io.print(font:measure("hello", 24, 1):toString())
 window. `Texture` and `Font` need a live GL context: loading them without
 `ray.open` raises, and `unload()` on a closed window simply drops the handle,
 because the GPU objects died with the context.
+
+A queued draw keeps its resource alive until the frame is replayed, and
+`unload()` called in the same frame as a draw is deferred until after that
+replay, so `font:draw(...)` followed by `font:unload()` is safe. Dropping the
+last script reference to a resource mid-frame is safe for the same reason.
 
 | Type | Fields | Methods |
 | --- | --- | --- |

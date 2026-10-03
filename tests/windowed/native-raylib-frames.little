@@ -1,0 +1,76 @@
+; Frame-loop semantics: async polling must not stall the frame, a queued draw
+; keeps its resource alive, and an unbalanced 2D mode is rejected.
+; tests/run-e2e.ps1 runs this under tests/windowed/ when a window can be opened.
+
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+ray.traceLog(ray.log.none)
+ray.open(64, 48, "frames", { hidden: true })
+
+var camera = ray.Camera2D {
+    offset: ray.Vector2(32, 24)
+    zoom: 1
+}
+
+; A pending timer must not block the frame: update() polls without sleeping.
+setTimeout(fn() { }, 1500)
+var before = ray.time()
+ray.on("update", fn(dt) { })
+io.print(ray.update())
+io.print(ray.time() - before < 1.0)
+
+; The same deferral applies to fonts.
+var font = ray.defaultFont()
+var fontDeferred = pcall(fn() {
+    ray.on("update", fn(dt) {
+        font:draw("hi", ray.Vector2(0, 0), 12, 1, ray.colors.white)
+        font:unload()
+    })
+    return ray.update()
+})
+io.print(fontDeferred.ok)
+
+; A queued draw keeps its resource alive, and unloading mid-frame is deferred
+; until the command has been replayed.
+var texture = ray.loadTextureFromImage(ray.genImageColor(4, 4, ray.colors.red))
+var deferred = pcall(fn() {
+    ray.on("update", fn(dt) {
+        texture:draw(ray.Vector2(0, 0), ray.colors.white)
+        texture:unload()
+    })
+    return ray.update()
+})
+io.print(deferred.ok)
+io.print(texture:toString())
+
+; Dropping the last reference to a queued resource must not break the replay.
+var dropped = pcall(fn() {
+    var temp = ray.loadTextureFromImage(ray.genImageColor(4, 4, ray.colors.lime))
+    ray.on("update", fn(dt) {
+        temp:draw(ray.Vector2(0, 0), ray.colors.white)
+        temp = null
+        gc.collect()
+    })
+    return ray.update()
+})
+io.print(dropped.ok)
+
+; An unbalanced beginMode2D is rejected before the frame is drawn.
+var unbalanced = pcall(fn() {
+    ray.on("update", fn(dt) {
+        ray.beginMode2D(camera)
+    })
+    return ray.update()
+})
+io.print(unbalanced.ok)
+io.print(string.contains(unbalanced.error, "endMode2D"))
+
+; The window is still usable after a rejected frame.
+ray.on("update", fn(dt) {
+    ray.clear(ray.colors.black)
+    ray.rect(ray.Rectangle(0, 0, 4, 4), ray.colors.white)
+    ray.close()
+})
+io.print(ray.update())
+ray.close()
+io.print("frames ok")
