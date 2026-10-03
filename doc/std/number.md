@@ -84,10 +84,14 @@ places - must be whole numbers. A fractional value would be silently truncated
 by the conversion, changing its meaning, so it is an error instead.
 
 The range and rounding helpers (`snap`, `wrap`, `pingPong`, `map`) take finite
-arguments and return a finite result. An infinite operand, or arithmetic that
-overflows, would otherwise hand back an infinity or a NaN the caller did not ask
-for - and a NaN cannot be stored in the value representation at all - so both
-are errors.
+arguments and return a finite result. An infinite operand would otherwise hand
+back an infinity or a NaN the caller did not ask for - and a NaN cannot be
+stored in the value representation at all - so it is an error.
+
+They compute in halved units where a direct expression could overflow, so an
+extreme but representable answer is still produced: `snap(1e300, 1e-300)` is
+`1e300` and `wrap(1e308, -1e308, 1e308)` is `-1e308`. Only a result that cannot
+be represented at all is an error, such as `map(1e308, 0, 1, 0, 1e308)`.
 
 ## Constants
 

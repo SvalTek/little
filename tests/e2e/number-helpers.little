@@ -93,14 +93,18 @@ io.print(infiniteSnap.ok)
 var infiniteMap = pcall(fn() { return number.map(number.infinity, 0, number.infinity, 0, 100) })
 io.print(infiniteMap.ok)
 
-; Finite arguments are not enough on their own: the arithmetic can still
-; overflow, so these helpers guarantee a finite result.
-var overflowMap = pcall(fn() { return number.map(1e308, 0 - 1e308, 1e308, 0, 100) })
-io.print(overflowMap.ok)
-var overflowSnap = pcall(fn() { return number.snap(1e308, 1e-308) })
-io.print(overflowSnap.ok)
-var overflowWrap = pcall(fn() { return number.wrap(1e308, 0 - 1e308, 1e308) })
-io.print(overflowWrap.ok)
+; Extreme but representable cases compute the right answer rather than raising:
+; the helpers work in halved units so an unrepresentable intermediate cannot
+; reject a call whose answer is finite. The halving costs a unit in the last
+; place, so these compare with a tolerance.
+io.print(number.isClose(number.snap(1e300, 1e-300), 1e300))
+io.print(number.isClose(number.wrap(1e308, 0 - 1e308, 1e308), 0 - 1e308))
+io.print(number.isClose(number.pingPong(1.7e308, 9e307), 1e307))
+io.print(number.isClose(number.map(1e308, 0 - 1e308, 1e308, 0, 100), 100))
+
+; A result that genuinely cannot be represented is still an error.
+var unrepresentable = pcall(fn() { return number.map(1e308, 0, 1, 0, 1e308) })
+io.print(unrepresentable.ok)
 io.print(number.snap(17, 5))
 io.print(number.map(5, 0, 10, 0, 100))
 

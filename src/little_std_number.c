@@ -338,7 +338,16 @@ static uint8_t _lt_number_snap(lt_VM* vm, uint8_t argc)
     double value = _lt_number_pop(vm, "snap");
     if (!isfinite(value) || !isfinite(step)) lt_runtime_error(vm, "Expected number.snap arguments to be finite!");
     if (step == 0) lt_runtime_error(vm, "Expected number.snap step to be non-zero!");
-    _lt_number_push_result(vm, round(value / step) * step, "snap");
+    /* When value/step is not representable the step is far below the value's
+       own precision, so the nearest multiple of step is the value itself;
+       raising there would reject a call whose answer is perfectly finite. */
+    double scaled = value / step;
+    if (!isfinite(scaled))
+    {
+        _lt_number_push_result(vm, value, "snap");
+        return 1;
+    }
+    _lt_number_push_result(vm, round(scaled) * step, "snap");
     return 1;
 }
 
@@ -351,10 +360,13 @@ static uint8_t _lt_number_wrap(lt_VM* vm, uint8_t argc)
     if (!isfinite(value) || !isfinite(minimum) || !isfinite(maximum))
         lt_runtime_error(vm, "Expected number.wrap arguments to be finite!");
     if (!(maximum > minimum)) lt_runtime_error(vm, "Expected number.wrap maximum to be greater than minimum!");
-    double span = maximum - minimum;
-    double wrapped = fmod(value - minimum, span);
-    if (wrapped < 0) wrapped += span;
-    _lt_number_push_result(vm, minimum + wrapped, "wrap");
+    /* Halving keeps an extreme range representable, and the helpers are
+       homogeneous, so the wrapped value is unchanged; raising here would
+       reject a call whose answer is finite. */
+    double halfSpan = maximum / 2 - minimum / 2;
+    double wrapped = fmod(value / 2 - minimum / 2, halfSpan);
+    if (wrapped < 0) wrapped += halfSpan;
+    _lt_number_push_result(vm, 2 * (minimum / 2 + wrapped), "wrap");
     return 1;
 }
 
@@ -365,10 +377,13 @@ static uint8_t _lt_number_pingpong(lt_VM* vm, uint8_t argc)
     double value = _lt_number_pop(vm, "pingPong");
     if (!isfinite(value) || !isfinite(length)) lt_runtime_error(vm, "Expected number.pingPong arguments to be finite!");
     if (!(length > 0)) lt_runtime_error(vm, "Expected number.pingPong length to be positive!");
-    double span = length * 2;
-    double wrapped = fmod(value, span);
-    if (wrapped < 0) wrapped += span;
-    _lt_number_push_result(vm, wrapped > length ? span - wrapped : wrapped, "pingPong");
+    /* Work in half-units so length * 2 cannot overflow; the triangle wave is
+       homogeneous, so the answer is the same. In the bounce branch half is
+       within (length/2, length), so the result is bounded by length and cannot
+       overflow for a finite length, which is why this one pushes directly. */
+    double half = fmod(value / 2, length);
+    if (half < 0) half += length;
+    lt_push(vm, LT_VALUE_NUMBER(2 * (half > length / 2 ? length - half : half)));
     return 1;
 }
 
@@ -387,8 +402,8 @@ static uint8_t _lt_number_map(lt_VM* vm, uint8_t argc)
     if (in_max == in_min) lt_runtime_error(vm, "Expected number.map input range to be non-empty!");
     /* The ratio is formed first so the multiply happens on a small number,
        which keeps an extreme but finite range from overflowing needlessly. */
-    double ratio = (value - in_min) / (in_max - in_min);
-    _lt_number_push_result(vm, out_min + ratio * (out_max - out_min), "map");
+    double ratio = (value / 2 - in_min / 2) / (in_max / 2 - in_min / 2);
+    _lt_number_push_result(vm, 2 * (out_min / 2 + ratio * (out_max / 2 - out_min / 2)), "map");
     return 1;
 }
 
