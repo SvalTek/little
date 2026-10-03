@@ -67,6 +67,11 @@ typedef enum {
 
 	LT_OP_JMP, LT_OP_JMPC, LT_OP_JMPN,
 
+	/* Placeholder for `break`; the enclosing loop resolves it to jump past
+	   itself. Kept distinct from JMP so a zero-distance jump emitted by any
+	   other construct cannot be mistaken for an unresolved break. */
+	LT_OP_BREAK,
+
 	LT_OP_RET, LT_OP_RETM,
 } lt_OpCode;
 
@@ -159,6 +164,17 @@ static lt_DebugLoc _lt_get_location(lt_DebugInfo* info, uint32_t pc)
 	return (lt_DebugLoc){ 0, 0 };
 }
 
+/* Native class members are stored as a closure wrapping a native function, so a
+   frame's callee is not always the native object itself. */
+static lt_Object* _lt_native_callee(lt_Object* callee)
+{
+	if (!callee) return 0;
+	if (callee->type == LT_OBJECT_NATIVEFN || callee->type == LT_OBJECT_BOUND_NATIVE) return callee;
+	if (callee->type == LT_OBJECT_CLOSURE && LT_IS_OBJECT(callee->closure.function))
+		return _lt_native_callee(LT_GET_OBJECT(callee->closure.function));
+	return 0;
+}
+
 void lt_runtime_error(lt_VM* vm, const char* message)
 {
 	char sprint_buf[1024];
@@ -191,15 +207,18 @@ void lt_runtime_error(lt_VM* vm, const char* message)
 	{
 		lt_Frame* frame = &vm->callstack[i];
 		lt_DebugInfo* info = _lt_get_debuginfo(frame->callee);
-		if (!info)
+		lt_Object* native = _lt_native_callee(frame->callee);
+		if (native)
 		{
-			/* Native frames have no source; a script frame without debug info
-			   (debug generation disabled) is reported as unknown instead. */
-			lt_ObjectType type = frame->callee ? frame->callee->type : LT_OBJECT_CHUNK;
-			if (type == LT_OBJECT_NATIVEFN || type == LT_OBJECT_BOUND_NATIVE)
-				written = snprintf(sprint_buf + len, 1024 - len, "\n(native)");
-			else
-				written = snprintf(sprint_buf + len, 1024 - len, "\n(<unknown>|0:0)");
+			const char* native_name = 0;
+			if (LT_IS_STRING(native->debug_name)) native_name = lt_get_string(vm, native->debug_name);
+			if (native_name) written = snprintf(sprint_buf + len, 1024 - len, "\n(native|%s)", native_name);
+			else written = snprintf(sprint_buf + len, 1024 - len, "\n(native)");
+		}
+		else if (!info)
+		{
+			/* A script frame without debug info (debug generation disabled). */
+			written = snprintf(sprint_buf + len, 1024 - len, "\n(<unknown>|0:0)");
 		}
 		else
 		{
@@ -377,8 +396,70 @@ static lt_Value _lt_table_get_raw(lt_Table* table, lt_Value key)
 	return pair ? pair->value : LT_VALUE_NULL;
 }
 
+/* Native functions and tables are anonymous objects. Take a debug label from the
+   first string key the value is stored under, so tracebacks can name natives; a
+   native inside a named table is qualified with that table's label. */
+static uint8_t _lt_is_plain_identifier(const char* text)
+{
+	if (!text || !(isalpha((unsigned char)text[0]) || text[0] == '_')) return 0;
+	for (const unsigned char* c = (const unsigned char*)text + 1; *c; ++c)
+		if (!(isalnum(*c) || *c == '_')) return 0;
+	return 1;
+}
+
+/* "parent.key" when both are plain identifiers and it fits, otherwise the key. */
+static lt_Value _lt_qualified_name(lt_VM* vm, lt_Value parent_value, lt_Value key)
+{
+	if (!LT_IS_STRING(parent_value) || !LT_IS_STRING(key)) return key;
+	const char* parent = lt_get_string(vm, parent_value);
+	const char* key_text = lt_get_string(vm, key);
+	char qualified[192];
+	if (!_lt_is_plain_identifier(parent)) return key;
+	if (strlen(parent) + strlen(key_text) + 2 > sizeof(qualified)) return key;
+	snprintf(qualified, sizeof(qualified), "%s.%s", parent, key_text);
+	return lt_make_string(vm, qualified);
+}
+
+/* A table that just got a name may already hold natives labelled with their bare
+   key; qualify those, since the table is named only once it is registered. */
+static void _lt_qualify_table_natives(lt_VM* vm, lt_Object* table_obj)
+{
+	for (uint16_t i = 0; i < 16; ++i)
+	{
+		lt_Buffer* bucket = table_obj->table.buckets + i;
+		for (uint32_t j = 0; j < bucket->length; ++j)
+		{
+			lt_TablePair* pair = lt_buffer_at(bucket, j);
+			if (!LT_IS_STRING(pair->key) || !LT_IS_OBJECT(pair->value)) continue;
+			lt_Object* native = _lt_native_callee(LT_GET_OBJECT(pair->value));
+			if (!native) continue;
+			if (!LT_IS_STRING(native->debug_name) || native->debug_name != pair->key) continue;
+			native->debug_name = _lt_qualified_name(vm, table_obj->debug_name, pair->key);
+		}
+	}
+}
+
+static void _lt_name_value(lt_VM* vm, lt_Value parent_name, lt_Value key, lt_Value val)
+{
+	if (!LT_IS_STRING(key) || !LT_IS_OBJECT(val)) return;
+	lt_Object* obj = LT_GET_OBJECT(val);
+	lt_Object* native = _lt_native_callee(obj);
+	if (!native && obj->type != LT_OBJECT_TABLE) return;
+	if (!LT_IS_NULL((native ? native : obj)->debug_name)) return;
+
+	if (native)
+	{
+		native->debug_name = _lt_qualified_name(vm, parent_name, key);
+		return;
+	}
+
+	obj->debug_name = key;
+	_lt_qualify_table_natives(vm, obj);
+}
+
 static lt_Value _lt_table_set_raw(lt_VM* vm, lt_Table* table, lt_Value key, lt_Value val)
 {
+	_lt_name_value(vm, LT_VALUE_NULL, key, val);
 	lt_TablePair* pair = _lt_table_index_raw(vm, table, key, 1);
 	if (pair)
 	{
@@ -2403,6 +2484,7 @@ lt_Object* lt_allocate(lt_VM* vm, lt_ObjectType type)
 	lt_Object* obj = vm->alloc(sizeof(lt_Object));
 	memset(obj, 0, sizeof(lt_Object));
 	obj->type = type;
+	obj->debug_name = LT_VALUE_NULL;
 
 	lt_buffer_push(vm, &vm->heap, &obj);
 
@@ -2524,6 +2606,10 @@ void lt_sweep(lt_VM* vm, lt_Object* obj)
 	} break;
 	case LT_OBJECT_BOUND_NATIVE: {
 		lt_sweep_v(vm, obj->bound_native.receiver);
+		lt_sweep_v(vm, obj->debug_name);
+	} break;
+	case LT_OBJECT_NATIVEFN: {
+		lt_sweep_v(vm, obj->debug_name);
 	} break;
 	case LT_OBJECT_FN: {
 		if (obj->fn.owner_class) lt_sweep(vm, obj->fn.owner_class);
@@ -2533,6 +2619,7 @@ void lt_sweep(lt_VM* vm, lt_Object* obj)
 		}
 	} break;
 	case LT_OBJECT_TABLE: {
+		lt_sweep_v(vm, obj->debug_name);
 		for (uint16_t i = 0; i < 16; ++i)
 		{
 			lt_Buffer* bucket = obj->table.buckets + i;
@@ -2773,6 +2860,10 @@ static void _lt_class_set_member(lt_VM* vm, lt_Value class_value, lt_Value key, 
 	lt_ClassMemberType type = (lt_ClassMemberType)(encoded & 0x0F);
 	lt_Visibility visibility = (encoded & 0x10) ? LT_VIS_PRIVATE : LT_VIS_PUBLIC;
 	uint8_t is_override = (encoded & 0x20) != 0;
+
+	/* Label native members before storing, so they are qualified with the class
+	   name rather than the bare member key. */
+	_lt_name_value(vm, klass->class_def.name, key, value);
 
 	if (type == LT_CLASS_CONSTRUCTOR)
 	{
@@ -3693,7 +3784,10 @@ inst_loop:
 		PUSH(result);
 	} NEXT;
 
-	case LT_OP_JMP: frame->pc += current.arg; NEXT;
+	case LT_OP_JMP:
+	case LT_OP_BREAK: /* `break` placeholder, resolved by its loop at compile time */
+		frame->pc += current.arg;
+		NEXT;
 	case LT_OP_JMPC: {
 		lt_Value cond = POP();
 		if (!LT_IS_TRUTHY(cond)) frame->pc += current.arg;
@@ -3890,7 +3984,7 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		}
 	} break;
 	case LT_AST_NODE_BREAK: {
-		OPARG(JMP, 0);
+		OPARG(BREAK, 0);
 	} break;
 	case LT_AST_NODE_TABLE: {
 		uint16_t size = node->table.keys.length;
@@ -4234,7 +4328,7 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		for (uint32_t i = loop_start; i < code_body->length; ++i)
 		{
 			lt_Op* current = lt_buffer_at(code_body, i);
-			if (current->op == LT_OP_JMP && current->arg == 0)
+			if (current->op == LT_OP_BREAK)
 				current->arg = code_body->length - i - 1;
 		}
 	} break;
@@ -4254,7 +4348,7 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		for (uint32_t i = loop_start; i < code_body->length; ++i)
 		{
 			lt_Op* current = lt_buffer_at(code_body, i);
-			if (current->op == LT_OP_JMP && current->arg == 0)
+			if (current->op == LT_OP_BREAK)
 				current->arg = code_body->length - i - 1;
 		}
 	} break;
@@ -4464,6 +4558,7 @@ lt_Value lt_make_table(lt_VM* vm)
 lt_Value lt_table_set(lt_VM* vm, lt_Value table, lt_Value key, lt_Value val)
 {
 	if (!LT_IS_TABLE(table)) return LT_VALUE_NULL;
+	_lt_name_value(vm, LT_GET_OBJECT(table)->debug_name, key, val);
 	if (LT_GET_OBJECT(table)->type == LT_OBJECT_SHARED_TABLE)
 		return ltshared_table_set(vm, LT_GET_OBJECT(table)->shared, key, val);
 	lt_TablePair* p = _lt_table_index(vm, table, key, 1);
