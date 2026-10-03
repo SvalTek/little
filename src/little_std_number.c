@@ -360,12 +360,13 @@ static uint8_t _lt_number_wrap(lt_VM* vm, uint8_t argc)
     if (!isfinite(value) || !isfinite(minimum) || !isfinite(maximum))
         lt_runtime_error(vm, "Expected number.wrap arguments to be finite!");
     if (!(maximum > minimum)) lt_runtime_error(vm, "Expected number.wrap maximum to be greater than minimum!");
-    /* Use the direct form whenever its span is representable, because halving
-       a subnormal would collapse it to zero. Only an unrepresentable span
-       needs the halved form, which is exact for normal operands and
-       homogeneous, so the wrapped value is the same. */
+    /* The direct form needs every intermediate finite, not just the span:
+       value - minimum can overflow on its own. Halving is exact for normal
+       operands and homogeneous, so the wrapped value is the same, and it is
+       only skipped for a subnormal span, where halving would collapse to
+       zero. */
     double span = maximum - minimum;
-    if (isfinite(span))
+    if (isfinite(span) && isfinite(value - minimum))
     {
         double wrapped = fmod(value - minimum, span);
         if (wrapped < 0) wrapped += span;
@@ -418,12 +419,12 @@ static uint8_t _lt_number_map(lt_VM* vm, uint8_t argc)
     if (!isfinite(value) || !isfinite(in_min) || !isfinite(in_max) || !isfinite(out_min) || !isfinite(out_max))
         lt_runtime_error(vm, "Expected number.map arguments to be finite!");
     if (in_max == in_min) lt_runtime_error(vm, "Expected number.map input range to be non-empty!");
-    /* Direct when both spans are representable, so a subnormal range keeps its
-       precision; halving would collapse it to zero. Otherwise halve, which is
-       exact for normal operands and homogeneous. */
+    /* Direct when every intermediate is finite, including value - in_min,
+       which can overflow on its own even with finite spans; otherwise halve,
+       which is exact for normal operands. */
     double in_span = in_max - in_min;
     double out_span = out_max - out_min;
-    if (isfinite(in_span) && isfinite(out_span))
+    if (isfinite(in_span) && isfinite(out_span) && isfinite(value - in_min))
     {
         _lt_number_push_result(vm, out_min + (value - in_min) / in_span * out_span, "map");
         return 1;

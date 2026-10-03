@@ -102,6 +102,11 @@ io.print(number.isClose(number.wrap(1e308, 0 - 1e308, 1e308), 0 - 1e308))
 io.print(number.isClose(number.pingPong(1.7e308, 9e307), 1e307))
 io.print(number.isClose(number.map(1e308, 0 - 1e308, 1e308, 0, 100), 100))
 
+; The direct form needs every intermediate finite, not just the span:
+; value - minimum can overflow on its own, so these take the halved path.
+io.print(number.isClose(number.wrap(1e308, 0 - 1e308, 1e307), 0 - 1e307))
+io.print(number.isClose(number.map(1e308, 0 - 1e308, 1e307, 0, 100), 181.8181818181818))
+
 ; A subnormal range must not collapse: halving 5e-324 underflows to zero, so
 ; the direct form is used whenever its span is representable.
 io.print(number.wrap(0, 0, 5e-324))
