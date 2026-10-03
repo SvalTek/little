@@ -360,9 +360,18 @@ static uint8_t _lt_number_wrap(lt_VM* vm, uint8_t argc)
     if (!isfinite(value) || !isfinite(minimum) || !isfinite(maximum))
         lt_runtime_error(vm, "Expected number.wrap arguments to be finite!");
     if (!(maximum > minimum)) lt_runtime_error(vm, "Expected number.wrap maximum to be greater than minimum!");
-    /* Halving keeps an extreme range representable, and the helpers are
-       homogeneous, so the wrapped value is unchanged; raising here would
-       reject a call whose answer is finite. */
+    /* Use the direct form whenever its span is representable, because halving
+       a subnormal would collapse it to zero. Only an unrepresentable span
+       needs the halved form, which is exact for normal operands and
+       homogeneous, so the wrapped value is the same. */
+    double span = maximum - minimum;
+    if (isfinite(span))
+    {
+        double wrapped = fmod(value - minimum, span);
+        if (wrapped < 0) wrapped += span;
+        _lt_number_push_result(vm, minimum + wrapped, "wrap");
+        return 1;
+    }
     double halfSpan = maximum / 2 - minimum / 2;
     double wrapped = fmod(value / 2 - minimum / 2, halfSpan);
     if (wrapped < 0) wrapped += halfSpan;
@@ -377,10 +386,19 @@ static uint8_t _lt_number_pingpong(lt_VM* vm, uint8_t argc)
     double value = _lt_number_pop(vm, "pingPong");
     if (!isfinite(value) || !isfinite(length)) lt_runtime_error(vm, "Expected number.pingPong arguments to be finite!");
     if (!(length > 0)) lt_runtime_error(vm, "Expected number.pingPong length to be positive!");
-    /* Work in half-units so length * 2 cannot overflow; the triangle wave is
-       homogeneous, so the answer is the same. In the bounce branch half is
-       within (length/2, length), so the result is bounded by length and cannot
-       overflow for a finite length, which is why this one pushes directly. */
+    /* Direct when the doubled length is representable, so a subnormal length
+       keeps its precision; halving would collapse it to zero. Otherwise work
+       in half-units, which is exact for normal operands and homogeneous. In
+       the bounce branch the result is bounded by length, so this pushes
+       directly either way. */
+    double span = length * 2;
+    if (isfinite(span))
+    {
+        double wrapped = fmod(value, span);
+        if (wrapped < 0) wrapped += span;
+        lt_push(vm, LT_VALUE_NUMBER(wrapped > length ? span - wrapped : wrapped));
+        return 1;
+    }
     double half = fmod(value / 2, length);
     if (half < 0) half += length;
     lt_push(vm, LT_VALUE_NUMBER(2 * (half > length / 2 ? length - half : half)));
@@ -400,8 +418,16 @@ static uint8_t _lt_number_map(lt_VM* vm, uint8_t argc)
     if (!isfinite(value) || !isfinite(in_min) || !isfinite(in_max) || !isfinite(out_min) || !isfinite(out_max))
         lt_runtime_error(vm, "Expected number.map arguments to be finite!");
     if (in_max == in_min) lt_runtime_error(vm, "Expected number.map input range to be non-empty!");
-    /* The ratio is formed first so the multiply happens on a small number,
-       which keeps an extreme but finite range from overflowing needlessly. */
+    /* Direct when both spans are representable, so a subnormal range keeps its
+       precision; halving would collapse it to zero. Otherwise halve, which is
+       exact for normal operands and homogeneous. */
+    double in_span = in_max - in_min;
+    double out_span = out_max - out_min;
+    if (isfinite(in_span) && isfinite(out_span))
+    {
+        _lt_number_push_result(vm, out_min + (value - in_min) / in_span * out_span, "map");
+        return 1;
+    }
     double ratio = (value / 2 - in_min / 2) / (in_max / 2 - in_min / 2);
     _lt_number_push_result(vm, 2 * (out_min / 2 + ratio * (out_max / 2 - out_min / 2)), "map");
     return 1;

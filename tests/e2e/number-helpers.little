@@ -102,6 +102,12 @@ io.print(number.isClose(number.wrap(1e308, 0 - 1e308, 1e308), 0 - 1e308))
 io.print(number.isClose(number.pingPong(1.7e308, 9e307), 1e307))
 io.print(number.isClose(number.map(1e308, 0 - 1e308, 1e308, 0, 100), 100))
 
+; A subnormal range must not collapse: halving 5e-324 underflows to zero, so
+; the direct form is used whenever its span is representable.
+io.print(number.wrap(0, 0, 5e-324))
+io.print(number.map(0, 0, 5e-324, 0, 10))
+io.print(number.pingPong(0, 5e-324))
+
 ; A result that genuinely cannot be represented is still an error.
 var unrepresentable = pcall(fn() { return number.map(1e308, 0, 1, 0, 1e308) })
 io.print(unrepresentable.ok)
