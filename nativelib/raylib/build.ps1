@@ -30,6 +30,10 @@ $sources = @(
     (Join-Path $raylibVendor "raudio.c")
 )
 $defines = @("-DPLATFORM_DESKTOP", "-DGRAPHICS_API_OPENGL_33", "-DUNICODE", "-D_GNU_SOURCE")
+if ($env:OS -ne "Windows_NT" -and -not $IsMacOS) {
+    # GLFW's bundled sources need an explicit platform outside Windows and macOS.
+    $defines += "-D_GLFW_X11"
+}
 $flags = @("-std=c99", $sharedLibraryFlag) + $IncludeFlags + @(
     "-I", (Join-Path $repo "src"),
     "-I", $raylibVendor,
