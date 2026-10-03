@@ -75,6 +75,10 @@ static uint8_t api_members(lt_VM* vm, uint8_t argc)
     lt->table_set(vm, report, lt->make_string(vm, "hasRoot"), lt->root ? LT_VALUE_TRUE : LT_VALUE_FALSE);
     lt->table_set(vm, report, lt->make_string(vm, "hasUnroot"), lt->unroot ? LT_VALUE_TRUE : LT_VALUE_FALSE);
     lt->table_set(vm, report, lt->make_string(vm, "hasEquals"), lt->equals ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    lt->table_set(vm, report, lt->make_string(vm, "hasPersistentRoot"),
+                  lt->root_persistent ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    lt->table_set(vm, report, lt->make_string(vm, "hasPersistentUnroot"),
+                  lt->unroot_persistent ? LT_VALUE_TRUE : LT_VALUE_FALSE);
     lt->table_set(vm, report, lt->make_string(vm, "sizeOk"),
                   lt->size >= sizeof(lt_Api) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
     lt->push(vm, report);
@@ -96,6 +100,44 @@ static uint8_t equals_native(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+static lt_Value persistent_value = LT_VALUE_NULL;
+
+static uint8_t persistent_hold(lt_VM* vm, uint8_t argc)
+{
+    lt_Value value;
+    if (argc != 1)
+    {
+        while (argc--) lt->pop(vm);
+        lt->push(vm, LT_VALUE_NULL);
+        return 1;
+    }
+    value = lt->pop(vm);
+    if (LT_IS_OBJECT(value)) lt->root_persistent(vm, value);
+    if (LT_IS_OBJECT(persistent_value)) lt->unroot_persistent(vm, persistent_value);
+    persistent_value = value;
+    lt->push(vm, LT_VALUE_TRUE);
+    return 1;
+}
+
+static uint8_t persistent_call(lt_VM* vm, uint8_t argc)
+{
+    while (argc--) lt->pop(vm);
+    if (persistent_value == LT_VALUE_NULL)
+    {
+        lt->push(vm, LT_VALUE_NULL);
+        return 1;
+    }
+    return (uint8_t)lt->exec(vm, persistent_value, 0);
+}
+
+static uint8_t persistent_clear(lt_VM* vm, uint8_t argc)
+{
+    while (argc--) lt->pop(vm);
+    if (LT_IS_OBJECT(persistent_value)) lt->unroot_persistent(vm, persistent_value);
+    persistent_value = LT_VALUE_NULL;
+    return 0;
+}
+
 static void set_native(lt_VM* vm, lt_Value module, const char* name, lt_NativeFn fn)
 {
     lt->table_set(vm, module, lt->make_string(vm, name), lt->make_native(vm, fn));
@@ -114,5 +156,8 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_native(vm, module, "rootCount", root_count);
     set_native(vm, module, "apiMembers", api_members);
     set_native(vm, module, "equals", equals_native);
+    set_native(vm, module, "persistentHold", persistent_hold);
+    set_native(vm, module, "persistentCall", persistent_call);
+    set_native(vm, module, "persistentClear", persistent_clear);
     return module;
 }

@@ -137,8 +137,10 @@ The VM starts without standard libraries. Use `ltstd_open_all` for the tradition
 
 `ltstd_open_term(vm)` exposes the optional interactive `term` module. It is
 separate from `ltstd_open_all` because it owns terminal state. Call
-`ltstd_close_term()` before destroying a VM if the terminal module may have
-been opened.
+`ltstd_close_term()` to shut down the process-wide terminal integration before
+destroying VMs that may have opened it. Shutdown unregisters the terminal poll
+hook and clears the per-VM module associations; call `ltstd_open_term(vm)` again
+before using terminal support after shutdown.
 
 `loadLibrary(path)` loads a platform-native library and calls its exported
 `ltopen(lt_VM* vm, const lt_Api* lt)` function. The `ltopen` function returns
@@ -176,12 +178,20 @@ returning from one does not discard roots held by its caller. `unroot` only
 removes roots added in the current callback. These temporary roots are also
 discarded if a runtime error unwinds the native call.
 
+`root_persistent` keeps an object alive beyond the current native callback.
+The native library must call `unroot_persistent` when it no longer needs the
+object. Persistent roots are not released automatically when a callback returns
+or errors, so libraries must balance each root with an unroot during replacement
+and shutdown. Non-object values do not need rooting.
+
 `equals` exposes the language's value equality operation to native libraries,
 so they can compare values without linking against the host executable.
 
 API v3 also appends the native-backed class functions below. Native libraries
 must use the passed API table and check that it is API v3. Within API v3, the
-table's `size` determines whether these appended members are available.
+table's `size` determines whether these appended members are available. These
+class entries follow `equals`; the persistent-root entries follow the class
+entries in the `lt_Api` layout.
 
 ```c
 lt_Value (*class_create)(lt_VM* vm, const char* name);
@@ -194,6 +204,11 @@ void (*instance_set_native_data)(lt_VM* vm, lt_Value instance, lt_Value native_c
 void* (*instance_get_native_data)(lt_VM* vm, lt_Value instance, lt_Value native_class);
 void (*instance_dispose_native_data)(lt_VM* vm, lt_Value instance);
 void (*instance_clear_native_data)(lt_VM* vm, lt_Value instance);
+```
+
+```c
+void (*root_persistent)(lt_VM* vm, lt_Value value);
+void (*unroot_persistent)(lt_VM* vm, lt_Value value);
 ```
 
 `class_create` creates a callable Little class with no superclass. Register its
