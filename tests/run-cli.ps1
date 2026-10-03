@@ -135,7 +135,7 @@ try {
     & $Exe --bundle $bundleErrorEntry --include $bundleErrorSource -o $bundleErrorExe
     if ($LASTEXITCODE -ne 0) { throw "Error bundle creation failed with exit code $LASTEXITCODE" }
     Remove-Item -LiteralPath $bundleErrorSource -Recurse -Force
-    Assert-Fails "bundled error locations" 1 "LT ERROR: <unknown>|0:0: Expected first argument to unpack to be array!`ntraceback:`n(<unknown>|0:0)`n(lib/fail.little|1:0)`n(<unknown>|0:0)`n(main.little|1:0)" { & $bundleErrorExe --no-config }
+    Assert-Fails "bundled error locations" 1 "LT ERROR: lib/fail.little|1:14: Expected first argument to unpack to be array!`ntraceback:`n(native)`n(lib/fail.little|1:14)`n(native)`n(main.little|1:11)" { & $bundleErrorExe --no-config }
 }
 finally {
     Remove-Item -LiteralPath $bundleErrorSource, $bundleErrorExe -Recurse -Force -ErrorAction SilentlyContinue

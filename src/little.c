@@ -163,13 +163,26 @@ void lt_runtime_error(lt_VM* vm, const char* message)
 {
 	char sprint_buf[1024];
 
-	lt_Frame* topmost = vm->depth ? &vm->callstack[vm->depth - 1] : 0;
-	lt_DebugInfo* info = topmost ? _lt_get_debuginfo(topmost->callee) : 0;
-	uint32_t pc = topmost && topmost->pc > 0 ? topmost->pc - 1 : 0;
-	lt_DebugLoc loc = _lt_get_location(info, pc);
+	/* The innermost frame is frequently a native function, which carries no
+	   source information. Report the nearest frame that has debug info, so the
+	   message points at the script location that triggered the error. */
+	lt_Frame* reported = 0;
+	lt_DebugInfo* reported_info = 0;
+	for (int32_t i = (int32_t)vm->depth - 1; i >= 0; --i)
+	{
+		lt_DebugInfo* info = _lt_get_debuginfo(vm->callstack[i].callee);
+		if (info)
+		{
+			reported = &vm->callstack[i];
+			reported_info = info;
+			break;
+		}
+	}
 
 	const char* name = "<unknown>";
-	if (info) name = info->module_name;
+	if (reported_info) name = reported_info->module_name;
+	uint32_t pc = reported && reported->pc > 0 ? reported->pc - 1 : 0;
+	lt_DebugLoc loc = _lt_get_location(reported_info, pc);
 
 	int written = snprintf(sprint_buf, 1024, "%s|%d:%d: %s\ntraceback:", name, loc.line, loc.col, message);
 	uint32_t len = written > 0 ? (uint32_t)written : 0;
@@ -178,11 +191,23 @@ void lt_runtime_error(lt_VM* vm, const char* message)
 	{
 		lt_Frame* frame = &vm->callstack[i];
 		lt_DebugInfo* info = _lt_get_debuginfo(frame->callee);
-		lt_DebugLoc loc = _lt_get_location(info, 0);
-
-		const char* name = "<unknown>";
-		if (info) name = info->module_name;
-		written = snprintf(sprint_buf + len, 1024 - len, "\n(%s|%d:%d)", name, loc.line, loc.col);
+		if (!info)
+		{
+			/* Native frames have no source; a script frame without debug info
+			   (debug generation disabled) is reported as unknown instead. */
+			lt_ObjectType type = frame->callee ? frame->callee->type : LT_OBJECT_CHUNK;
+			if (type == LT_OBJECT_NATIVEFN || type == LT_OBJECT_BOUND_NATIVE)
+				written = snprintf(sprint_buf + len, 1024 - len, "\n(native)");
+			else
+				written = snprintf(sprint_buf + len, 1024 - len, "\n(<unknown>|0:0)");
+		}
+		else
+		{
+			/* Each frame reports its own call site, not the start of its code. */
+			uint32_t frame_pc = frame->pc > 0 ? frame->pc - 1 : 0;
+			lt_DebugLoc frame_loc = _lt_get_location(info, frame_pc);
+			written = snprintf(sprint_buf + len, 1024 - len, "\n(%s|%d:%d)", info->module_name, frame_loc.line, frame_loc.col);
+		}
 		if (written > 0) len += (uint32_t)written;
 		if (len >= 1024) { len = 1023; break; }
 	}
@@ -4174,7 +4199,14 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 			for (uint32_t i = 0; i < n_branches; i++)
 			{
 				uint32_t loc = branch_stack[i];
-				*((lt_Op*)lt_buffer_at(code_body, loc)) = (lt_Op) { LT_OP_JMP, code_body->length - loc - 1 };
+				uint32_t arg = code_body->length - loc - 1;
+				/* A jump to the next instruction is a no-op. Emitting NOP keeps
+				   this from looking like an unresolved `break` placeholder, which
+				   the enclosing loop's post-pass would rewrite to jump past the
+				   loop. */
+				*((lt_Op*)lt_buffer_at(code_body, loc)) = (arg == 0)
+					? (lt_Op) { LT_OP_NOP, 0 }
+					: (lt_Op) { LT_OP_JMP, arg };
 			}
 		}
 	} break;
