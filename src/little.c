@@ -4329,7 +4329,12 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		{
 			lt_Op* current = lt_buffer_at(code_body, i);
 			if (current->op == LT_OP_BREAK)
+			{
+				/* Flip to JMP so an enclosing loop's pass cannot resolve it
+				   again and redirect it past the outer loop. */
+				current->op = LT_OP_JMP;
 				current->arg = code_body->length - i - 1;
+			}
 		}
 	} break;
 
@@ -4349,7 +4354,12 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		{
 			lt_Op* current = lt_buffer_at(code_body, i);
 			if (current->op == LT_OP_BREAK)
+			{
+				/* Flip to JMP so an enclosing loop's pass cannot resolve it
+				   again and redirect it past the outer loop. */
+				current->op = LT_OP_JMP;
 				current->arg = code_body->length - i - 1;
+			}
 		}
 	} break;
 
