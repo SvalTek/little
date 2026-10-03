@@ -1,6 +1,8 @@
+temp/
+.kilo/
+.task/
 build/
 dist/
-.task/
 vendor/*
 !vendor/webui/
 !vendor/webui/**
