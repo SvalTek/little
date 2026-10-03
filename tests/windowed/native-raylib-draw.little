@@ -55,6 +55,12 @@ var unbalanced = pcall(fn() { return ray.endMode2D() })
 io.print(unbalanced.ok)
 io.print(string.contains(unbalanced.error, "beginMode2D"))
 
+ray.setWindowTitle("renamed")
+ray.setWindowSize(240, 180)
+io.print(ray.windowSize():toString())
+ray.screenshot("build/raylib-screenshot.png")
+io.print(ray.screenToWorld(ray.worldToScreen(ray.Vector2(10, 10), camera), camera):distance(ray.Vector2(10, 10)) < 0.001)
+
 var frames = 0
 ray.on("start", fn() {
     ray.setFPS(60)

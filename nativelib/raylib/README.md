@@ -126,8 +126,8 @@ io.print(ray.Vector2(1, 2):equals(ray.Vector2(1, 2)))     ; true
 
 | Type | Fields | Methods |
 | --- | --- | --- |
-| `Vector2` | `x`, `y` | `add`, `sub`, `mul`, `scale`, `dot`, `length`, `lengthSq`, `normalize`, `distance`, `clone`, `equals`, `toString` |
-| `Vector3` | `x`, `y`, `z` | `add`, `sub`, `mul`, `scale`, `dot`, `cross`, `length`, `lengthSq`, `normalize`, `distance`, `clone`, `equals`, `toString` |
+| `Vector2` | `x`, `y` | `add`, `sub`, `mul`, `scale`, `dot`, `length`, `lengthSq`, `normalize`, `distance`, `rotate`, `lerp`, `reflect`, `clone`, `equals`, `toString` |
+| `Vector3` | `x`, `y`, `z` | `add`, `sub`, `mul`, `scale`, `dot`, `cross`, `length`, `lengthSq`, `normalize`, `distance`, `lerp`, `clone`, `equals`, `toString` |
 | `Color` | `r`, `g`, `b`, `a` | `equals`, `withAlpha`, `toString` |
 | `Rectangle` | `x`, `y`, `width`, `height` | `equals`, `contains`, `center`, `toString` |
 | `Camera2D` | `offset`, `target` (`Vector2`), `rotation`, `zoom` | `toString` |
@@ -200,6 +200,36 @@ rotation. `font:draw(text, position, size, spacing, tint)` and
 `font:measure(text, size, spacing)` mirror `DrawTextEx`/`MeasureTextEx`;
 `measure` returns a `Vector2`.
 
+## Collision, colour, and transforms
+
+These helpers are pure math and need no window.
+
+| Helper | Meaning |
+| --- | --- |
+| `checkCollisionRecs(a, b)` | Whether two `Rectangle`s overlap |
+| `checkCollisionCircles(centerA, radiusA, centerB, radiusB)` | Whether two circles overlap |
+| `checkCollisionPointRec(point, rec)` | Whether a point is inside a rectangle |
+| `checkCollisionPointCircle(point, center, radius)` | Whether a point is inside a circle |
+| `getCollisionRec(a, b)` | Overlap of two rectangles as a `Rectangle` |
+| `worldToScreen(position, camera)` / `screenToWorld(position, camera)` | Convert between world and screen space through a `Camera2D` |
+| `fade(color, alpha)` | Color with scaled alpha, `alpha` in `0.0`-`1.0` |
+| `colorLerp(a, b, factor)` | Color interpolation, `factor` in `0.0`-`1.0` |
+| `colorBrightness(color, factor)` | Color brightness, `factor` in `-1.0`-`1.0` |
+| `colorTint(color, tint)` | Component-wise color multiply |
+| `colorFromHSV(hue, saturation, value)` | Color from HSV (`hue` in degrees) |
+| `colorToInt(color)` | Color as `0xRRGGBBAA` |
+
+`fade` takes a `0.0`-`1.0` factor, while `color:withAlpha(a)` takes `0`-`255`.
+
+## Window control
+
+| Helper | Meaning |
+| --- | --- |
+| `setWindowTitle(title)` | Change the window title |
+| `setWindowSize(width, height)` | Resize the window (the platform may clamp small sizes) |
+| `toggleFullscreen()` | Toggle fullscreen |
+| `screenshot(path)` | Write the current frame to an image file |
+
 ## API
 
 | Little API | Meaning |
@@ -233,6 +263,10 @@ rotation. `font:draw(text, position, size, spacing, tint)` and
 | `gamepadAxis(pad, axis)` | Gamepad axis value |
 | `windowSize()` | Window client size as a `Vector2` (window required) |
 | `setFPS(n)` | Cap the frame rate |
+| `checkCollisionRecs(a, b)`, `checkCollisionCircles(c1, r1, c2, r2)`, `checkCollisionPointRec(p, r)`, `checkCollisionPointCircle(p, c, r)`, `getCollisionRec(a, b)` | Collision helpers |
+| `worldToScreen(p, camera)` / `screenToWorld(p, camera)` | Convert through a `Camera2D` |
+| `fade(c, a)`, `colorLerp(a, b, f)`, `colorBrightness(c, f)`, `colorTint(c, t)`, `colorFromHSV(h, s, v)`, `colorToInt(c)` | Colour helpers |
+| `setWindowTitle(t)`, `setWindowSize(w, h)`, `toggleFullscreen()`, `screenshot(path)` | Window control |
 | `time()` / `fps()` | Seconds since init / current frame rate |
 | `traceLog(level)` | Set the raylib log threshold (`ray.log.*`) |
 | `loadImage(path)`, `genImageColor(w, h, color)` | Create an `Image` |

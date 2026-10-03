@@ -2,6 +2,11 @@
 
 #include "raylib.h"
 
+/* raymath is header-only; raylib's own sources define RAYMATH_IMPLEMENTATION,
+   so request file-local inline definitions for this translation unit only. */
+#define RAYMATH_STATIC_INLINE
+#include "raymath.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -217,6 +222,12 @@ static lt_Value make_color(lt_VM* vm, double r, double g, double b, double a)
 {
     double args[4] = { r, g, b, a };
     return construct(vm, color_class, args, 4);
+}
+
+static lt_Value make_rectangle(lt_VM* vm, double x, double y, double width, double height)
+{
+    double args[4] = { x, y, width, height };
+    return construct(vm, rectangle_class, args, 4);
 }
 
 static double table_field_number(lt_VM* vm, lt_Value table, const char* key, double fallback, const char* message)
@@ -539,6 +550,44 @@ static uint8_t vector2_to_string(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+static uint8_t vector2_rotate(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "rotate expects one angle!");
+    lt_Value angle_value = lt->pop(vm);
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    expect_number(vm, angle_value, "Expected a rotation angle number!");
+    Vector2 source = { (float)self->x, (float)self->y };
+    Vector2 result = Vector2Rotate(source, (float)lt->get_number(angle_value));
+    lt->push(vm, make_vector2(vm, (double)result.x, (double)result.y));
+    return 1;
+}
+
+static uint8_t vector2_lerp(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "lerp expects a Vector2 target and an amount!");
+    lt_Value amount_value = lt->pop(vm);
+    LtVector2* target = vector2_data(vm, lt->pop(vm), "Expected a Vector2 target!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    expect_number(vm, amount_value, "Expected a lerp amount number!");
+    Vector2 source = { (float)self->x, (float)self->y };
+    Vector2 end = { (float)target->x, (float)target->y };
+    Vector2 result = Vector2Lerp(source, end, (float)lt->get_number(amount_value));
+    lt->push(vm, make_vector2(vm, (double)result.x, (double)result.y));
+    return 1;
+}
+
+static uint8_t vector2_reflect(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "reflect expects one normal Vector2!");
+    LtVector2* normal = vector2_data(vm, lt->pop(vm), "Expected a Vector2 normal!");
+    LtVector2* self = vector2_data(vm, lt->pop(vm), "Expected a Vector2!");
+    Vector2 source = { (float)self->x, (float)self->y };
+    Vector2 axis = { (float)normal->x, (float)normal->y };
+    Vector2 result = Vector2Reflect(source, axis);
+    lt->push(vm, make_vector2(vm, (double)result.x, (double)result.y));
+    return 1;
+}
+
 static double vector3_length_value(LtVector3* data)
 {
     return sqrt(data->x * data->x + data->y * data->y + data->z * data->z);
@@ -664,6 +713,20 @@ static uint8_t vector3_to_string(lt_VM* vm, uint8_t argc)
     char text[80];
     snprintf(text, sizeof(text), "(%g, %g, %g)", self->x, self->y, self->z);
     lt->push(vm, lt->make_string(vm, text));
+    return 1;
+}
+
+static uint8_t vector3_lerp(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "lerp expects a Vector3 target and an amount!");
+    lt_Value amount_value = lt->pop(vm);
+    LtVector3* target = vector3_data(vm, lt->pop(vm), "Expected a Vector3 target!");
+    LtVector3* self = vector3_data(vm, lt->pop(vm), "Expected a Vector3!");
+    expect_number(vm, amount_value, "Expected a lerp amount number!");
+    Vector3 source = { (float)self->x, (float)self->y, (float)self->z };
+    Vector3 end = { (float)target->x, (float)target->y, (float)target->z };
+    Vector3 result = Vector3Lerp(source, end, (float)lt->get_number(amount_value));
+    lt->push(vm, make_vector3(vm, (double)result.x, (double)result.y, (double)result.z));
     return 1;
 }
 
@@ -1475,6 +1538,213 @@ static uint8_t native_end_mode2d(lt_VM* vm, uint8_t argc)
     return 0;
 }
 
+/* ---------------- collision, colour, transforms, window control ---------------- */
+
+static uint8_t native_check_collision_recs(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected two Rectangles for ray.checkCollisionRecs!");
+    LtRectangle* second = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle for ray.checkCollisionRecs!");
+    LtRectangle* first = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle for ray.checkCollisionRecs!");
+    Rectangle a;
+    Rectangle b;
+    copy_rectangle(&a, first);
+    copy_rectangle(&b, second);
+    lt->push(vm, CheckCollisionRecs(a, b) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
+static uint8_t native_check_collision_circles(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4) lt->runtime_error(vm, "Expected two Vector2 centers and two radii for ray.checkCollisionCircles!");
+    lt_Value radius2_value = lt->pop(vm);
+    LtVector2* center2 = vector2_data(vm, lt->pop(vm), "Expected a second Vector2 center!");
+    lt_Value radius1_value = lt->pop(vm);
+    LtVector2* center1 = vector2_data(vm, lt->pop(vm), "Expected a first Vector2 center!");
+    expect_number(vm, radius1_value, "Expected a first radius number!");
+    expect_number(vm, radius2_value, "Expected a second radius number!");
+    Vector2 a = { (float)center1->x, (float)center1->y };
+    Vector2 b = { (float)center2->x, (float)center2->y };
+    uint8_t hit = CheckCollisionCircles(a, (float)lt->get_number(radius1_value), b, (float)lt->get_number(radius2_value));
+    lt->push(vm, hit ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
+static uint8_t native_check_collision_point_rec(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a Vector2 point and a Rectangle for ray.checkCollisionPointRec!");
+    LtRectangle* bounds = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle for ray.checkCollisionPointRec!");
+    LtVector2* point = vector2_data(vm, lt->pop(vm), "Expected a Vector2 point!");
+    Rectangle rec;
+    copy_rectangle(&rec, bounds);
+    Vector2 position = { (float)point->x, (float)point->y };
+    lt->push(vm, CheckCollisionPointRec(position, rec) ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
+static uint8_t native_check_collision_point_circle(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected a Vector2 point, a Vector2 center, and a radius for ray.checkCollisionPointCircle!");
+    lt_Value radius_value = lt->pop(vm);
+    LtVector2* center = vector2_data(vm, lt->pop(vm), "Expected a Vector2 center!");
+    LtVector2* point = vector2_data(vm, lt->pop(vm), "Expected a Vector2 point!");
+    expect_number(vm, radius_value, "Expected a radius number!");
+    Vector2 position = { (float)point->x, (float)point->y };
+    Vector2 origin = { (float)center->x, (float)center->y };
+    uint8_t hit = CheckCollisionPointCircle(position, origin, (float)lt->get_number(radius_value));
+    lt->push(vm, hit ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
+static uint8_t native_get_collision_rec(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected two Rectangles for ray.getCollisionRec!");
+    LtRectangle* second = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle for ray.getCollisionRec!");
+    LtRectangle* first = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle for ray.getCollisionRec!");
+    Rectangle a;
+    Rectangle b;
+    copy_rectangle(&a, first);
+    copy_rectangle(&b, second);
+    Rectangle result = GetCollisionRec(a, b);
+    lt->push(vm, make_rectangle(vm, result.x, result.y, result.width, result.height));
+    return 1;
+}
+
+static uint8_t native_fade(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a Color and an alpha for ray.fade!");
+    lt_Value alpha_value = lt->pop(vm);
+    lt_Value color_value = lt->pop(vm);
+    expect_number(vm, alpha_value, "Expected an alpha number!");
+    Color source = expect_color(vm, color_value, "Expected a Color for ray.fade!");
+    Color result = Fade(source, (float)lt->get_number(alpha_value));
+    lt->push(vm, make_color(vm, result.r, result.g, result.b, result.a));
+    return 1;
+}
+
+static uint8_t native_color_lerp(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected two Colors and a factor for ray.colorLerp!");
+    lt_Value factor_value = lt->pop(vm);
+    lt_Value second_value = lt->pop(vm);
+    lt_Value first_value = lt->pop(vm);
+    expect_number(vm, factor_value, "Expected a color lerp factor number!");
+    Color first = expect_color(vm, first_value, "Expected a Color for ray.colorLerp!");
+    Color second = expect_color(vm, second_value, "Expected a Color for ray.colorLerp!");
+    Color result = ColorLerp(first, second, (float)lt->get_number(factor_value));
+    lt->push(vm, make_color(vm, result.r, result.g, result.b, result.a));
+    return 1;
+}
+
+static uint8_t native_color_brightness(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a Color and a factor for ray.colorBrightness!");
+    lt_Value factor_value = lt->pop(vm);
+    lt_Value color_value = lt->pop(vm);
+    expect_number(vm, factor_value, "Expected a brightness factor number!");
+    Color source = expect_color(vm, color_value, "Expected a Color for ray.colorBrightness!");
+    Color result = ColorBrightness(source, (float)lt->get_number(factor_value));
+    lt->push(vm, make_color(vm, result.r, result.g, result.b, result.a));
+    return 1;
+}
+
+static uint8_t native_color_tint(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected two Colors for ray.colorTint!");
+    lt_Value tint_value = lt->pop(vm);
+    lt_Value color_value = lt->pop(vm);
+    Color source = expect_color(vm, color_value, "Expected a Color for ray.colorTint!");
+    Color tint = expect_color(vm, tint_value, "Expected a tint Color for ray.colorTint!");
+    Color result = ColorTint(source, tint);
+    lt->push(vm, make_color(vm, result.r, result.g, result.b, result.a));
+    return 1;
+}
+
+static uint8_t native_color_from_hsv(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 3) lt->runtime_error(vm, "Expected hue, saturation, and value for ray.colorFromHSV!");
+    lt_Value value_value = lt->pop(vm);
+    lt_Value saturation_value = lt->pop(vm);
+    lt_Value hue_value = lt->pop(vm);
+    expect_number(vm, hue_value, "Expected a hue number!");
+    expect_number(vm, saturation_value, "Expected a saturation number!");
+    expect_number(vm, value_value, "Expected a value number!");
+    Color result = ColorFromHSV((float)lt->get_number(hue_value), (float)lt->get_number(saturation_value), (float)lt->get_number(value_value));
+    lt->push(vm, make_color(vm, result.r, result.g, result.b, result.a));
+    return 1;
+}
+
+static uint8_t native_color_to_int(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a Color for ray.colorToInt!");
+    Color source = expect_color(vm, lt->pop(vm), "Expected a Color for ray.colorToInt!");
+    lt->push(vm, lt->make_number((double)ColorToInt(source)));
+    return 1;
+}
+
+static uint8_t native_world_to_screen(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a Vector2 position and a Camera2D for ray.worldToScreen!");
+    Camera2D* camera = camera2d_data(vm, lt->pop(vm), "Expected a Camera2D for ray.worldToScreen!");
+    LtVector2* position = vector2_data(vm, lt->pop(vm), "Expected a Vector2 position!");
+    Vector2 point = { (float)position->x, (float)position->y };
+    Camera2D camera_copy = *camera;
+    Vector2 result = GetWorldToScreen2D(point, camera_copy);
+    lt->push(vm, make_vector2(vm, (double)result.x, (double)result.y));
+    return 1;
+}
+
+static uint8_t native_screen_to_world(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected a Vector2 position and a Camera2D for ray.screenToWorld!");
+    Camera2D* camera = camera2d_data(vm, lt->pop(vm), "Expected a Camera2D for ray.screenToWorld!");
+    LtVector2* position = vector2_data(vm, lt->pop(vm), "Expected a Vector2 position!");
+    Vector2 point = { (float)position->x, (float)position->y };
+    Camera2D camera_copy = *camera;
+    Vector2 result = GetScreenToWorld2D(point, camera_copy);
+    lt->push(vm, make_vector2(vm, (double)result.x, (double)result.y));
+    return 1;
+}
+
+static uint8_t native_set_window_title(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a title string for ray.setWindowTitle!");
+    lt_Value title = lt->pop(vm);
+    expect_string(vm, title, "Expected a window title string!");
+    require_window(vm, "Expected ray.open before ray.setWindowTitle!");
+    SetWindowTitle(lt->get_string(vm, title));
+    return 0;
+}
+
+static uint8_t native_set_window_size(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected width and height for ray.setWindowSize!");
+    lt_Value height_value = lt->pop(vm);
+    lt_Value width_value = lt->pop(vm);
+    expect_number(vm, width_value, "Expected a window width number!");
+    expect_number(vm, height_value, "Expected a window height number!");
+    require_window(vm, "Expected ray.open before ray.setWindowSize!");
+    SetWindowSize((int)lt->get_number(width_value), (int)lt->get_number(height_value));
+    return 0;
+}
+
+static uint8_t native_toggle_fullscreen(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.toggleFullscreen!");
+    require_window(vm, "Expected ray.open before ray.toggleFullscreen!");
+    ToggleFullscreen();
+    return 0;
+}
+
+static uint8_t native_screenshot(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt->runtime_error(vm, "Expected a path for ray.screenshot!");
+    lt_Value path = lt->pop(vm);
+    expect_string(vm, path, "Expected a screenshot path string!");
+    require_window(vm, "Expected ray.open before ray.screenshot!");
+    TakeScreenshot(lt->get_string(vm, path));
+    return 0;
+}
+
 static uint8_t native_open(lt_VM* vm, uint8_t argc)
 {
     if (argc != 3 && argc != 4) lt->runtime_error(vm, "Expected width, height, title, and optional window options for ray.open!");
@@ -1881,6 +2151,9 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     RAY_CLASS_METHOD(vector2_class, "lengthSq", vector2_length_sq);
     RAY_CLASS_METHOD(vector2_class, "normalize", vector2_normalize);
     RAY_CLASS_METHOD(vector2_class, "distance", vector2_distance);
+    RAY_CLASS_METHOD(vector2_class, "rotate", vector2_rotate);
+    RAY_CLASS_METHOD(vector2_class, "lerp", vector2_lerp);
+    RAY_CLASS_METHOD(vector2_class, "reflect", vector2_reflect);
     RAY_CLASS_METHOD(vector2_class, "clone", vector2_clone);
     RAY_CLASS_METHOD(vector2_class, "equals", vector2_equals);
     RAY_CLASS_METHOD(vector2_class, "toString", vector2_to_string);
@@ -1905,6 +2178,7 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     RAY_CLASS_METHOD(vector3_class, "lengthSq", vector3_length_sq);
     RAY_CLASS_METHOD(vector3_class, "normalize", vector3_normalize);
     RAY_CLASS_METHOD(vector3_class, "distance", vector3_distance);
+    RAY_CLASS_METHOD(vector3_class, "lerp", vector3_lerp);
     RAY_CLASS_METHOD(vector3_class, "clone", vector3_clone);
     RAY_CLASS_METHOD(vector3_class, "equals", vector3_equals);
     RAY_CLASS_METHOD(vector3_class, "toString", vector3_to_string);
@@ -2033,6 +2307,23 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_native(vm, module_value, "setFPS", native_set_fps);
     set_native(vm, module_value, "time", native_time);
     set_native(vm, module_value, "fps", native_fps);
+    set_native(vm, module_value, "checkCollisionRecs", native_check_collision_recs);
+    set_native(vm, module_value, "checkCollisionCircles", native_check_collision_circles);
+    set_native(vm, module_value, "checkCollisionPointRec", native_check_collision_point_rec);
+    set_native(vm, module_value, "checkCollisionPointCircle", native_check_collision_point_circle);
+    set_native(vm, module_value, "getCollisionRec", native_get_collision_rec);
+    set_native(vm, module_value, "fade", native_fade);
+    set_native(vm, module_value, "colorLerp", native_color_lerp);
+    set_native(vm, module_value, "colorBrightness", native_color_brightness);
+    set_native(vm, module_value, "colorTint", native_color_tint);
+    set_native(vm, module_value, "colorFromHSV", native_color_from_hsv);
+    set_native(vm, module_value, "colorToInt", native_color_to_int);
+    set_native(vm, module_value, "worldToScreen", native_world_to_screen);
+    set_native(vm, module_value, "screenToWorld", native_screen_to_world);
+    set_native(vm, module_value, "setWindowTitle", native_set_window_title);
+    set_native(vm, module_value, "setWindowSize", native_set_window_size);
+    set_native(vm, module_value, "toggleFullscreen", native_toggle_fullscreen);
+    set_native(vm, module_value, "screenshot", native_screenshot);
 
     lt->table_set(vm, module_value, lt->make_string(vm, "version"), lt->make_string(vm, RAYLIB_VERSION));
 
