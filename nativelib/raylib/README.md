@@ -331,6 +331,28 @@ the last completed frame rather than the one being built.
 a texture and then draw that texture on screen. All three modes must be balanced
 before the frame ends.
 
+## Drawing
+
+Draw helpers queue commands for the current frame and take either the value
+types or plain numbers, so game code does not build a `Rectangle` or `Vector2`
+for every call:
+
+```js
+ray.rect(ray.Rectangle(10, 10, 40, 20), ray.colors.red)
+ray.rect(10, 10, 40, 20, ray.colors.red)          ; the same draw
+ray.circle(ray.Vector2(80, 40), 12, ray.colors.lime)
+ray.circle(80, 40, 12, ray.colors.lime)
+ray.text("hud", 8, 8, 14, ray.colors.white)
+ray.textCentered("centered on the window", 100, 20, ray.colors.white)
+ray.drawFPS(8, 8)
+```
+
+`textCentered(text, y, size, color)` centres on the window width, and
+`textCentered(text, x, y, size, color)` centres on `x`; both measure raylib's
+default font for you. `drawFPS(x, y)` queues raylib's frame-rate counter. The
+value-type form remains available everywhere, including the helpers without a
+numeric overload (`lineEx`, `triangle*`, `polygon*`, `ring`).
+
 ## 3D shapes
 
 These queue draws for the current frame, like the 2D helpers. They must sit

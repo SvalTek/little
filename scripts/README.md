@@ -41,5 +41,6 @@ The module tutorial imports fixture modules from `scripts/tutorial_modules/` and
 `scripts/tutorial_packages/`; those nested files are support material, not
 standalone gallery entries.
 
-`scripts/raylib/demo.little`, `scripts/raylib/demo3d.little`, and
-`scripts/webui/` need a display or browser and are not part of the gallery run.
+`scripts/raylib/demo.little`, `scripts/raylib/demo3d.little`,
+`scripts/raylib/game.little`, and `scripts/webui/` need a display or browser
+and are not part of the gallery run.

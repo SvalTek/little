@@ -42,6 +42,7 @@ typedef enum {
     RAY_CMD_SHAPE,
     RAY_CMD_SHAPE3D,
     RAY_CMD_CLEAR,
+    RAY_CMD_FPS,
     RAY_CMD_SCREENSHOT,
     RAY_CMD_BEGIN_2D,
     RAY_CMD_END_2D,
@@ -960,6 +961,55 @@ static Vector3 expect_vector3(lt_VM* vm, lt_Value value, const char* message)
     return point;
 }
 
+/* Draw helpers take either the value types or plain numbers, so game code can
+   draw from computed values without building an instance per call. `count` is
+   the number of arguments left on the stack for the geometry. */
+static Rectangle read_rectangle_arg(lt_VM* vm, uint8_t count, const char* message)
+{
+    Rectangle result;
+    if (count == 1)
+    {
+        LtRectangle* source = rectangle_data(vm, lt->pop(vm), message);
+        result.x = (float)source->x;
+        result.y = (float)source->y;
+        result.width = (float)source->width;
+        result.height = (float)source->height;
+        return result;
+    }
+    lt_Value height = lt->pop(vm);
+    lt_Value width = lt->pop(vm);
+    lt_Value y = lt->pop(vm);
+    lt_Value x = lt->pop(vm);
+    expect_number(vm, x, "Expected a rectangle x number!");
+    expect_number(vm, y, "Expected a rectangle y number!");
+    expect_number(vm, width, "Expected a rectangle width number!");
+    expect_number(vm, height, "Expected a rectangle height number!");
+    result.x = (float)lt->get_number(x);
+    result.y = (float)lt->get_number(y);
+    result.width = (float)lt->get_number(width);
+    result.height = (float)lt->get_number(height);
+    return result;
+}
+
+static Vector2 read_vector2_arg(lt_VM* vm, uint8_t count, const char* message)
+{
+    Vector2 result;
+    if (count == 1)
+    {
+        LtVector2* source = vector2_data(vm, lt->pop(vm), message);
+        result.x = (float)source->x;
+        result.y = (float)source->y;
+        return result;
+    }
+    lt_Value y = lt->pop(vm);
+    lt_Value x = lt->pop(vm);
+    expect_number(vm, x, "Expected a Vector2 x number!");
+    expect_number(vm, y, "Expected a Vector2 y number!");
+    result.x = (float)lt->get_number(x);
+    result.y = (float)lt->get_number(y);
+    return result;
+}
+
 static void clear_commands(lt_VM* vm)
 {
     for (uint32_t i = 0; i < command_count; ++i)
@@ -1457,15 +1507,14 @@ static void copy_rectangle(Rectangle* dest, LtRectangle* source)
 
 static uint8_t texture_draw(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 3) lt->runtime_error(vm, "draw expects a Vector2 position and a Color!");
+    if (argc != 3 && argc != 4) lt->runtime_error(vm, "draw expects a Vector2 position and a Color, or x, y, and a Color!");
     lt_Value tint = lt->pop(vm);
-    LtVector2* position = vector2_data(vm, lt->pop(vm), "Expected a Vector2 position!");
+    Vector2 position = read_vector2_arg(vm, argc == 3 ? 1 : 2, "Expected a Vector2 position!");
     lt_Value instance = lt->pop(vm);
     Texture2D* texture = texture_data(vm, instance, "Expected a Texture!");
     Color color = expect_color(vm, tint, "Expected a Color tint!");
     RayTextureCommand* payload = make_texture_command(vm, texture);
-    payload->position.x = (float)position->x;
-    payload->position.y = (float)position->y;
+    payload->position = position;
     RayCommand command = new_command(RAY_CMD_TEXTURE);
     command.resource = instance;
     command.color = color;
@@ -2085,12 +2134,12 @@ static void set_point(Vector2* point, LtVector2* source)
 
 static uint8_t native_rect_lines(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 2) lt->runtime_error(vm, "Expected a Rectangle and a Color for ray.rectLines!");
+    if (argc != 2 && argc != 5) lt->runtime_error(vm, "Expected a Rectangle and a Color, or x, y, width, height, and a Color for ray.rectLines!");
     lt_Value color_value = lt->pop(vm);
-    LtRectangle* bounds = rectangle_data(vm, lt->pop(vm), "Expected a Rectangle for ray.rectLines!");
     Color color = expect_color(vm, color_value, "Expected a Color for ray.rectLines!");
+    Rectangle bounds = read_rectangle_arg(vm, argc - 1, "Expected a Rectangle for ray.rectLines!");
     RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_RECT_LINES);
-    copy_rectangle(&payload->bounds, bounds);
+    payload->bounds = bounds;
     payload->thickness = 1.0f;
     push_shape_command(payload, color);
     return 0;
@@ -2098,14 +2147,14 @@ static uint8_t native_rect_lines(lt_VM* vm, uint8_t argc)
 
 static uint8_t native_circle(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 3) lt->runtime_error(vm, "Expected a Vector2 center, a radius, and a Color for ray.circle!");
+    if (argc != 3 && argc != 4) lt->runtime_error(vm, "Expected a Vector2 center, a radius, and a Color, or x, y, a radius, and a Color for ray.circle!");
     lt_Value color_value = lt->pop(vm);
     lt_Value radius_value = lt->pop(vm);
-    LtVector2* center = vector2_data(vm, lt->pop(vm), "Expected a Vector2 center for ray.circle!");
     expect_number(vm, radius_value, "Expected a circle radius number!");
     Color color = expect_color(vm, color_value, "Expected a Color for ray.circle!");
+    Vector2 center = read_vector2_arg(vm, argc - 2, "Expected a Vector2 center for ray.circle!");
     RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_CIRCLE);
-    set_point(&payload->points[0], center);
+    payload->points[0] = center;
     payload->radius = (float)lt->get_number(radius_value);
     push_shape_command(payload, color);
     return 0;
@@ -2113,14 +2162,14 @@ static uint8_t native_circle(lt_VM* vm, uint8_t argc)
 
 static uint8_t native_circle_lines(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 3) lt->runtime_error(vm, "Expected a Vector2 center, a radius, and a Color for ray.circleLines!");
+    if (argc != 3 && argc != 4) lt->runtime_error(vm, "Expected a Vector2 center, a radius, and a Color, or x, y, a radius, and a Color for ray.circleLines!");
     lt_Value color_value = lt->pop(vm);
     lt_Value radius_value = lt->pop(vm);
-    LtVector2* center = vector2_data(vm, lt->pop(vm), "Expected a Vector2 center for ray.circleLines!");
     expect_number(vm, radius_value, "Expected a circle radius number!");
     Color color = expect_color(vm, color_value, "Expected a Color for ray.circleLines!");
+    Vector2 center = read_vector2_arg(vm, argc - 2, "Expected a Vector2 center for ray.circleLines!");
     RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_CIRCLE_LINES);
-    set_point(&payload->points[0], center);
+    payload->points[0] = center;
     payload->radius = (float)lt->get_number(radius_value);
     push_shape_command(payload, color);
     return 0;
@@ -2128,14 +2177,15 @@ static uint8_t native_circle_lines(lt_VM* vm, uint8_t argc)
 
 static uint8_t native_line(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 3) lt->runtime_error(vm, "Expected two Vector2 points and a Color for ray.line!");
+    if (argc != 3 && argc != 5) lt->runtime_error(vm, "Expected two Vector2 points and a Color, or x, y, x, y, and a Color for ray.line!");
     lt_Value color_value = lt->pop(vm);
-    LtVector2* end = vector2_data(vm, lt->pop(vm), "Expected a Vector2 end point for ray.line!");
-    LtVector2* start = vector2_data(vm, lt->pop(vm), "Expected a Vector2 start point for ray.line!");
     Color color = expect_color(vm, color_value, "Expected a Color for ray.line!");
+    uint8_t count = argc == 3 ? 1 : 2;
+    Vector2 end = read_vector2_arg(vm, count, "Expected a Vector2 end point for ray.line!");
+    Vector2 start = read_vector2_arg(vm, count, "Expected a Vector2 start point for ray.line!");
     RayShapeCommand* payload = make_shape_command(vm, RAY_SHAPE_LINE);
-    set_point(&payload->points[0], start);
-    set_point(&payload->points[1], end);
+    payload->points[0] = start;
+    payload->points[1] = end;
     push_shape_command(payload, color);
     return 0;
 }
@@ -3884,6 +3934,9 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
         case RAY_CMD_SCREENSHOT:
             TakeScreenshot(command->text);
             break;
+        case RAY_CMD_FPS:
+            DrawFPS(command->x, command->y);
+            break;
         case RAY_CMD_BEGIN_3D:
             BeginMode3D(*(Camera3D*)command->payload);
             break;
@@ -3930,6 +3983,64 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+static uint8_t native_draw_fps(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt->runtime_error(vm, "Expected x and y for ray.drawFPS!");
+    lt_Value y_value = lt->pop(vm);
+    lt_Value x_value = lt->pop(vm);
+    expect_number(vm, x_value, "Expected a drawFPS x number!");
+    expect_number(vm, y_value, "Expected a drawFPS y number!");
+    require_window(vm, "Expected ray.open before ray.drawFPS!");
+    require_draw_target(vm);
+    RayCommand command = new_command(RAY_CMD_FPS);
+    command.x = (int)lt->get_number(x_value);
+    command.y = (int)lt->get_number(y_value);
+    push_command(command);
+    return 0;
+}
+
+/* Centring text otherwise means measuring the default font by hand and doing
+   the arithmetic at every call site, which is most of what a HUD does. */
+static uint8_t native_text_centered(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 4 && argc != 5) lt->runtime_error(vm, "Expected text, a y, a size, and a Color, or text, x, y, a size, and a Color for ray.textCentered!");
+    require_window(vm, "Expected ray.open before ray.textCentered!");
+    lt_Value color_value = lt->pop(vm);
+    lt_Value size_value = lt->pop(vm);
+    lt_Value y_value = lt->pop(vm);
+    lt_Value x_value = argc == 5 ? lt->pop(vm) : LT_VALUE_NULL;
+    lt_Value message = lt->pop(vm);
+    expect_string(vm, message, "Expected ray text to be string!");
+    expect_number(vm, size_value, "Expected ray text size to be number!");
+    expect_number(vm, y_value, "Expected ray text y number!");
+    int size = (int)lt->get_number(size_value);
+    if (size <= 0) lt->runtime_error(vm, "Expected ray text size to be positive!");
+    if (!LT_IS_NULL(x_value)) expect_number(vm, x_value, "Expected ray text x number!");
+    Color color = expect_color(vm, color_value, "Expected a Color for ray.textCentered!");
+    const char* source = lt->get_string(vm, message);
+    Vector2 measured = MeasureTextEx(GetFontDefault(), source, (float)size, 1.0f);
+    float center = LT_IS_NULL(x_value) ? (float)GetScreenWidth() / 2.0f : (float)lt->get_number(x_value);
+    require_draw_target(vm);
+    RayCommand command = new_command(RAY_CMD_TEXT);
+    command.x = (int)(center - measured.x / 2.0f);
+    command.y = (int)lt->get_number(y_value);
+    command.size = size;
+    command.color = color;
+    command.text = malloc(strlen(source) + 1);
+    if (!command.text) lt->runtime_error(vm, "Out of memory!");
+    memcpy(command.text, source, strlen(source) + 1);
+    push_command(command);
+    return 0;
+}
+
+static uint8_t native_window_focused(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 0) lt->runtime_error(vm, "Expected no arguments to ray.windowFocused!");
+    require_window(vm, "Expected ray.open before ray.windowFocused!");
+    lt->push(vm, IsWindowFocused() ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
 static uint8_t native_clear(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt->runtime_error(vm, "Expected a Color for ray.clear!");
@@ -3945,16 +4056,15 @@ static uint8_t native_clear(lt_VM* vm, uint8_t argc)
 
 static uint8_t native_rect(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 2) lt->runtime_error(vm, "Expected a Rectangle and a Color for ray.rect!");
+    if (argc != 2 && argc != 5) lt->runtime_error(vm, "Expected a Rectangle and a Color, or x, y, width, height, and a Color for ray.rect!");
     lt_Value color_value = lt->pop(vm);
-    lt_Value bounds_value = lt->pop(vm);
     Color color = expect_color(vm, color_value, "Expected a Color for ray.rect!");
-    LtRectangle* bounds = rectangle_data(vm, bounds_value, "Expected a Rectangle for ray.rect!");
+    Rectangle bounds = read_rectangle_arg(vm, argc - 1, "Expected a Rectangle for ray.rect!");
     RayCommand command = new_command(RAY_CMD_RECT);
-    command.x = (int)bounds->x;
-    command.y = (int)bounds->y;
-    command.w = (int)bounds->width;
-    command.h = (int)bounds->height;
+    command.x = (int)bounds.x;
+    command.y = (int)bounds.y;
+    command.w = (int)bounds.width;
+    command.h = (int)bounds.height;
     command.color = color;
     require_draw_target(vm);
     push_command(command);
@@ -3963,21 +4073,20 @@ static uint8_t native_rect(lt_VM* vm, uint8_t argc)
 
 static uint8_t native_text(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 4) lt->runtime_error(vm, "Expected text, a Vector2, a size, and a Color for ray.text!");
+    if (argc != 4 && argc != 5) lt->runtime_error(vm, "Expected text, a Vector2, a size, and a Color, or text, x, y, a size, and a Color for ray.text!");
     lt_Value color_value = lt->pop(vm);
     lt_Value size_value = lt->pop(vm);
-    lt_Value position_value = lt->pop(vm);
+    Vector2 position = read_vector2_arg(vm, argc == 4 ? 1 : 2, "Expected a Vector2 for ray.text!");
     lt_Value message = lt->pop(vm);
     expect_string(vm, message, "Expected ray text to be string!");
     expect_number(vm, size_value, "Expected ray text size to be number!");
     int size = (int)lt->get_number(size_value);
     if (size <= 0) lt->runtime_error(vm, "Expected ray text size to be positive!");
-    LtVector2* position = vector2_data(vm, position_value, "Expected a Vector2 for ray.text!");
     Color color = expect_color(vm, color_value, "Expected a Color for ray.text!");
     require_draw_target(vm);
     RayCommand command = new_command(RAY_CMD_TEXT);
-    command.x = (int)position->x;
-    command.y = (int)position->y;
+    command.x = (int)position.x;
+    command.y = (int)position.y;
     command.size = size;
     command.color = color;
     const char* source = lt->get_string(vm, message);
@@ -4378,6 +4487,9 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     set_native(vm, module_value, "clear", native_clear);
     set_native(vm, module_value, "rect", native_rect);
     set_native(vm, module_value, "text", native_text);
+    set_native(vm, module_value, "textCentered", native_text_centered);
+    set_native(vm, module_value, "drawFPS", native_draw_fps);
+    set_native(vm, module_value, "windowFocused", native_window_focused);
     set_native(vm, module_value, "rectLines", native_rect_lines);
     set_native(vm, module_value, "circle", native_circle);
     set_native(vm, module_value, "circleLines", native_circle_lines);
