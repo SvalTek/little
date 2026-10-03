@@ -86,6 +86,13 @@ io.print(infiniteWrap.ok)
 var infinitePingPong = pcall(fn() { return number.pingPong(number.infinity, 10) })
 io.print(infinitePingPong.ok)
 
+; snap and map can produce a NaN the same way - infinity over infinity - so
+; they require finite arguments too.
+var infiniteSnap = pcall(fn() { return number.snap(5, number.infinity) })
+io.print(infiniteSnap.ok)
+var infiniteMap = pcall(fn() { return number.map(number.infinity, 0, number.infinity, 0, 100) })
+io.print(infiniteMap.ok)
+
 ; Scaling before rounding can overflow for a very large value, which has no
 ; fractional part at that precision, so the result stays finite.
 io.print(number.roundTo(1e308, 2) > 1e307)

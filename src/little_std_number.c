@@ -322,6 +322,7 @@ static uint8_t _lt_number_snap(lt_VM* vm, uint8_t argc)
     if (argc != 2) lt_runtime_error(vm, "Expected a number and a step to number.snap!");
     double step = _lt_number_pop(vm, "snap");
     double value = _lt_number_pop(vm, "snap");
+    if (!isfinite(value) || !isfinite(step)) lt_runtime_error(vm, "Expected number.snap arguments to be finite!");
     if (step == 0) lt_runtime_error(vm, "Expected number.snap step to be non-zero!");
     lt_push(vm, LT_VALUE_NUMBER(round(value / step) * step));
     return 1;
@@ -365,6 +366,10 @@ static uint8_t _lt_number_map(lt_VM* vm, uint8_t argc)
     double in_max = _lt_number_pop(vm, "map");
     double in_min = _lt_number_pop(vm, "map");
     double value = _lt_number_pop(vm, "map");
+    /* An infinite bound can make the mapping NaN - infinity over infinity - so
+       every argument is required to be finite, like the other range helpers. */
+    if (!isfinite(value) || !isfinite(in_min) || !isfinite(in_max) || !isfinite(out_min) || !isfinite(out_max))
+        lt_runtime_error(vm, "Expected number.map arguments to be finite!");
     if (in_max == in_min) lt_runtime_error(vm, "Expected number.map input range to be non-empty!");
     lt_push(vm, LT_VALUE_NUMBER(out_min + (value - in_min) * (out_max - out_min) / (in_max - in_min)));
     return 1;

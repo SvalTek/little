@@ -81,9 +81,11 @@ number.isClose(0.1 + 0.2, 0.3)           ; true
 
 Discrete parameters - `toBase`'s base, `format`'s and `roundTo`'s decimal
 places - must be whole numbers. A fractional value would be silently truncated
-by the conversion, changing its meaning, so it is an error instead. The range
-helpers (`wrap`, `pingPong`, `map`) take ordinary numbers and require finite
-arguments.
+by the conversion, changing its meaning, so it is an error instead.
+
+The range and rounding helpers (`snap`, `wrap`, `pingPong`, `map`) require
+finite arguments: an infinite operand would otherwise produce a NaN, which
+cannot be stored in the value representation.
 
 ## Constants
 
