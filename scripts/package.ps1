@@ -18,7 +18,7 @@ if (!(Test-Path $binarySource)) {
     throw "Expected built CLI at $binarySource"
 }
 
-foreach ($library in @("json", "webui")) {
+foreach ($library in @("json", "webui", "raylib")) {
     $source = Join-Path $repo "nativelib/$library/build/$library$nativeExt"
     if (!(Test-Path $source)) {
         throw "Expected built native library at $source"
@@ -31,7 +31,7 @@ if (Test-Path $packageStage) {
 New-Item -ItemType Directory -Force -Path $packageStage, $dist | Out-Null
 Copy-Item -LiteralPath $binarySource -Destination (Join-Path $packageStage "little$binaryExt")
 
-foreach ($library in @("json", "webui")) {
+foreach ($library in @("json", "webui", "raylib")) {
     $libraryStage = Join-Path $packageStage "libs/$library"
     New-Item -ItemType Directory -Force -Path $libraryStage | Out-Null
     Copy-Item -LiteralPath (Join-Path $repo "nativelib/$library/build/$library$nativeExt") -Destination (Join-Path $libraryStage "$library$nativeExt")

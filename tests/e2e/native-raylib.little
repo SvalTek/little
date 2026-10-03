@@ -1,0 +1,40 @@
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+io.print(ray.version isnt null)
+io.print(ray.keys.space is 32)
+io.print(ray.keys.escape is 256)
+io.print(ray.colors.white.r is 255)
+io.print(ray.colors.black.r is 0)
+
+ray.on("start", fn() { io.print("started") })
+ray.on("update", fn(dt) { io.print(dt >= 0) })
+
+var noWindow = pcall(fn() { return ray.update() })
+io.print(noWindow.ok)
+io.print(string.contains(noWindow.error, "ray.open"))
+
+var badHook = pcall(fn() { ray.on("nope", fn() {}) })
+io.print(badHook.ok)
+io.print(string.contains(badHook.error, "start or update"))
+
+var badArity = pcall(fn() { ray.open(800, 450) })
+io.print(badArity.ok)
+
+var badColor = pcall(fn() { ray.clear("red") })
+io.print(badColor.ok)
+
+var badRectArity = pcall(fn() { return ray.rect(1, 2, 3, 4, 5) })
+io.print(badRectArity.ok)
+
+var badRectType = pcall(fn() { return ray.rect(ray.Vector2(1, 2), ray.colors.white) })
+io.print(badRectType.ok)
+
+var noWindowDraw = pcall(fn() { return ray.rect(ray.Rectangle(1, 2, 3, 4), ray.colors.white) })
+io.print(noWindowDraw.ok)
+io.print(string.contains(noWindowDraw.error, "ray.open"))
+
+var badTextSize = pcall(fn() { return ray.text("hi", ray.Vector2(1, 2), 0, ray.colors.white) })
+io.print(badTextSize.ok)
+io.print(string.contains(badTextSize.error, "positive"))
+
+io.print(ray.version)

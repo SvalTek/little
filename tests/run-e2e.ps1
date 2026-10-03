@@ -157,10 +157,78 @@ if (!$SkipBuild) {
             throw "Native library fixture build failed with exit code $LASTEXITCODE"
         }
     }
+
+    $raylibVendor = Join-Path $repo "vendor/raylib/src"
+    if (Test-Path $raylibVendor) {
+        & (Join-Path $repo "nativelib/raylib/build.ps1") -Compiler $Compiler -IncludeFlags $includeFlags
+    }
+    else {
+        Write-Warning "vendor/raylib is not initialized; the native-raylib e2e test will fail. Run 'git submodule update --init vendor/raylib'."
+    }
 }
 
 function Normalize([string]$Text) {
     return ($Text -replace "`r`n", "`n").TrimEnd()
+}
+
+# tests/windowed creates a real window. Probe once so headless environments skip
+# it instead of failing; CI runs the test job under xvfb-run, which makes the
+# probe succeed and the windowed tests run for real.
+$windowedDir = Join-Path $PSScriptRoot "windowed"
+$windowAvailable = $false
+# A display is expected on Windows and macOS, and on Linux when one is
+# advertised. A display that exists but cannot create a window is a failure
+# rather than something to skip, so a raylib regression cannot hide behind a
+# SKIP in CI.
+$displayExpected = $true
+if ($env:OS -ne "Windows_NT" -and -not $IsMacOS) {
+    $displayExpected = [bool]($env:DISPLAY -or $env:WAYLAND_DISPLAY)
+}
+elseif ($env:CI) {
+    # CI runners have no interactive desktop session, so a window may not be
+    # creatable even on a platform that normally has a display.
+    $displayExpected = $false
+}
+if ((Test-Path $windowedDir) -and (Test-Path $exe)) {
+    New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+    $probeScript = Join-Path $buildDir "raylib-window-probe.little"
+    $probeOut = Join-Path $buildDir "raylib-window-probe.out"
+    $probeErr = Join-Path $buildDir "raylib-window-probe.err"
+    @'
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+ray.traceLog(ray.log.none)
+ray.open(16, 16, "probe", { hidden: true })
+io.print("window-ok")
+ray.close()
+'@ | Set-Content -Path $probeScript -Encoding utf8
+    try {
+        $probe = Start-Process -FilePath $exe -ArgumentList @($probeScript) -NoNewWindow -PassThru `
+            -RedirectStandardOutput $probeOut -RedirectStandardError $probeErr
+        if (!$probe.WaitForExit(30000)) {
+            try { $probe.Kill() } catch { }
+            $probe.WaitForExit()
+        }
+        if ((Test-Path $probeOut) -and ((Get-Content -Raw $probeOut) -match "window-ok")) {
+            $windowAvailable = $true
+        }
+    }
+    catch {
+        $windowAvailable = $false
+    }
+    if (!$windowAvailable -and $displayExpected) {
+        $probeDetail = [string](Get-Content -Raw $probeErr -ErrorAction SilentlyContinue)
+        $probeDetail = $probeDetail.Trim()
+        Remove-Item -Force $probeScript, $probeOut, $probeErr -ErrorAction SilentlyContinue
+        throw "A display is available but the raylib window probe failed, so tests/windowed cannot run: $probeDetail"
+    }
+    Remove-Item -Force $probeScript, $probeOut, $probeErr -ErrorAction SilentlyContinue
+}
+
+if ($windowAvailable) {
+    Write-Host "Window available: running tests/windowed."
+}
+else {
+    Write-Host "SKIP tests/windowed: no display is available (use xvfb-run on headless Linux)."
 }
 
 $failed = 0
@@ -168,6 +236,9 @@ $testDirs = @(
     (Join-Path $PSScriptRoot "e2e"),
     (Join-Path $PSScriptRoot "fuzz")
 )
+if ($windowAvailable) {
+    $testDirs += $windowedDir
+}
 $tests = foreach ($testDir in $testDirs) {
     if (Test-Path $testDir) {
         Get-ChildItem -Path $testDir -Filter "*.little"
