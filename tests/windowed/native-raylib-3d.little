@@ -90,6 +90,9 @@ io.print(string.contains(zeroSegments.error, "between 1 and 1024"))
 var hugeSegments = pcall(fn() { return ray.genMeshSphere(1, 1000000000, 8) })
 io.print(hugeSegments.ok)
 io.print(string.contains(hugeSegments.error, "between 1 and 1024"))
+var fractionalSegments = pcall(fn() { return ray.genMeshSphere(1, 8.5, 8) })
+io.print(fractionalSegments.ok)
+io.print(string.contains(fractionalSegments.error, "whole number"))
 
 ; Registered before the first update, which the retention check below performs;
 ; a later registration would never fire because the start latch is one-shot.

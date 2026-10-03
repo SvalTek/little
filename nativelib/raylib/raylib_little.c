@@ -1566,18 +1566,25 @@ static void attach_render_texture(lt_VM* vm, RenderTexture source)
 
 /* The range check has to happen before the cast: converting a NaN or an
    out-of-range double to int is undefined, and the count decides how much
-   raylib allocates. */
+   raylib allocates. Fractional counts are rejected rather than truncated, so a
+   computed value has to be whole to be accepted. */
 static int expect_segment_count(lt_VM* vm, lt_Value value, const char* what)
 {
     expect_number(vm, value, "Expected a mesh segment count number!");
     double count = lt->get_number(value);
+    char message[96];
     if (!(count >= 1.0 && count <= (double)RAY_MAX_MESH_SEGMENTS))
     {
-        char message[96];
         snprintf(message, sizeof(message), "Expected %s between 1 and %d!", what, RAY_MAX_MESH_SEGMENTS);
         lt->runtime_error(vm, message);
     }
-    return (int)count;
+    int segments = (int)count;
+    if ((double)segments != count)
+    {
+        snprintf(message, sizeof(message), "Expected %s to be a whole number!", what);
+        lt->runtime_error(vm, message);
+    }
+    return segments;
 }
 
 static uint8_t native_gen_mesh_cube(lt_VM* vm, uint8_t argc)
