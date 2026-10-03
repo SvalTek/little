@@ -187,6 +187,12 @@ A queued draw keeps its resource alive until the frame is replayed, and
 replay, so `font:draw(...)` followed by `font:unload()` is safe. Dropping the
 last script reference to a resource mid-frame is safe for the same reason.
 
+That is implemented with the module's internal `__queued` array (the same
+mechanism as `__callbacks`): a command adds its texture or font when it is
+queued, and the array is replaced once the frame is cleared. `tests/windowed/`
+asserts on that array, because a resource freed mid-frame fails silently rather
+than raising, so keep the name if the internals are ever reshuffled.
+
 | Type | Fields | Methods |
 | --- | --- | --- |
 | `Image` | `width`, `height` | `unload`, `export`, `toString` |
