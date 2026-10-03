@@ -114,6 +114,11 @@ typedef struct {
 static RayDeferredUnload deferred_unloads[RAY_MAX_COMMANDS];
 static uint32_t deferred_unload_count = 0;
 
+/* Resources referenced by queued draw commands are held in an array reachable
+   from the module table, because a command's own reference lives in C memory
+   the collector does not scan. */
+static lt_Value queued_resources = LT_VALUE_NULL;
+
 /* raylib's value structs are exposed as native-backed Little classes. Little
    has a fixed type set, so each instance carries the struct as its native
    payload: `typeof v` is the class, fields dispatch through getters/setters,
@@ -823,7 +828,7 @@ static Color expect_color(lt_VM* vm, lt_Value value, const char* message)
     return color;
 }
 
-static void clear_commands(void)
+static void clear_commands(lt_VM* vm)
 {
     for (uint32_t i = 0; i < command_count; ++i)
     {
@@ -835,6 +840,13 @@ static void clear_commands(void)
     command_count = 0;
     mode2d_depth = 0;
     deferred_unload_count = 0;
+    /* Release this frame's references to queued resources by swapping in a
+       fresh array; the old one becomes collectable. */
+    if (!LT_IS_NULL(queued_resources))
+    {
+        queued_resources = lt->make_array(vm);
+        lt->table_set(vm, module_value, lt->make_string(vm, "__queued"), queued_resources);
+    }
 }
 
 static void require_draw_target(lt_VM* vm)
@@ -931,6 +943,14 @@ static uint8_t resource_is_queued(lt_VM* vm, lt_Value instance)
         if (lt->equals(commands[i].resource, instance)) return 1;
     }
     return 0;
+}
+
+static void queue_resource(lt_VM* vm, lt_Value instance)
+{
+    /* The collector cannot see a command's C-side reference, so hold the
+       instance where it can: rooted for this call, then in the module array. */
+    lt->root(vm, instance);
+    lt->array_push(vm, queued_resources, instance);
 }
 
 static void defer_unload(lt_VM* vm, void* payload, uint8_t kind)
@@ -1147,6 +1167,7 @@ static uint8_t texture_draw(lt_VM* vm, uint8_t argc)
     command.color = color;
     command.payload = payload;
     push_command(command);
+    queue_resource(vm, instance);
     return 0;
 }
 
@@ -1168,6 +1189,7 @@ static uint8_t texture_draw_rec(lt_VM* vm, uint8_t argc)
     command.color = color;
     command.payload = payload;
     push_command(command);
+    queue_resource(vm, instance);
     return 0;
 }
 
@@ -1194,6 +1216,7 @@ static uint8_t texture_draw_pro(lt_VM* vm, uint8_t argc)
     command.color = color;
     command.payload = payload;
     push_command(command);
+    queue_resource(vm, instance);
     return 0;
 }
 
@@ -1267,6 +1290,7 @@ static uint8_t font_draw(lt_VM* vm, uint8_t argc)
     command.text = copy;
     command.payload = payload;
     push_command(command);
+    queue_resource(vm, instance);
     return 0;
 }
 
@@ -1840,7 +1864,7 @@ static uint8_t native_open(lt_VM* vm, uint8_t argc)
     if (!IsWindowReady()) lt->runtime_error(vm, "Failed to initialize the ray window!");
     window_open = 1;
     started = 0;
-    clear_commands();
+    clear_commands(vm);
     has_clear = 0;
     return 0;
 }
@@ -1861,7 +1885,7 @@ static uint8_t native_close(lt_VM* vm, uint8_t argc)
     {
         CloseWindow();
         window_open = 0;
-        clear_commands();
+        clear_commands(vm);
         has_clear = 0;
     }
     return 0;
@@ -1894,7 +1918,7 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
     if (!window_open) lt->runtime_error(vm, "Expected ray.open before ray.update!");
     if (WindowShouldClose())
     {
-        clear_commands();
+        clear_commands(vm);
         has_clear = 0;
         lt->push(vm, LT_VALUE_FALSE);
         return 1;
@@ -1916,21 +1940,15 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
     }
     if (!window_open)
     {
-        clear_commands();
+        clear_commands(vm);
         has_clear = 0;
         lt->push(vm, LT_VALUE_FALSE);
         return 1;
     }
     if (mode2d_depth != 0)
     {
-        clear_commands();
+        clear_commands(vm);
         lt->runtime_error(vm, "Expected ray.endMode2D before the frame ends!");
-    }
-    /* Commands replay after the callback returns, so keep their resources alive
-       until then. */
-    for (uint32_t i = 0; i < command_count; ++i)
-    {
-        if (!LT_IS_NULL(commands[i].resource)) lt->root(vm, commands[i].resource);
     }
     BeginDrawing();
     if (has_clear) ClearBackground(clear_color);
@@ -2016,7 +2034,7 @@ static uint8_t native_update(lt_VM* vm, uint8_t argc)
     }
     EndDrawing();
     flush_deferred_unloads();
-    clear_commands();
+    clear_commands(vm);
     /* poll_now processes ready async work without sleeping until a pending
        timer is due, which would otherwise stall the frame. A poll hook may
        close the window, so report the window state rather than always true. */
@@ -2217,6 +2235,8 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     module_value = lt->make_table(vm);
     callback_registry = lt->make_table(vm);
     lt->table_set(vm, module_value, lt->make_string(vm, "__callbacks"), callback_registry);
+    queued_resources = lt->make_array(vm);
+    lt->table_set(vm, module_value, lt->make_string(vm, "__queued"), queued_resources);
 
     vector2_class = lt->class_create(vm, "Vector2");
     lt->class_set_native_data_destroy(vm, vector2_class, destroy_native_data);

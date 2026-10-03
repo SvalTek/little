@@ -184,6 +184,11 @@ $displayExpected = $true
 if ($env:OS -ne "Windows_NT" -and -not $IsMacOS) {
     $displayExpected = [bool]($env:DISPLAY -or $env:WAYLAND_DISPLAY)
 }
+elseif ($env:CI) {
+    # CI runners have no interactive desktop session, so a window may not be
+    # creatable even on a platform that normally has a display.
+    $displayExpected = $false
+}
 if ((Test-Path $windowedDir) -and (Test-Path $exe)) {
     New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
     $probeScript = Join-Path $buildDir "raylib-window-probe.little"
@@ -211,8 +216,8 @@ ray.close()
         $windowAvailable = $false
     }
     if (!$windowAvailable -and $displayExpected) {
-        $probeDetail = ""
-        if (Test-Path $probeErr) { $probeDetail = (Get-Content -Raw $probeErr).Trim() }
+        $probeDetail = [string](Get-Content -Raw $probeErr -ErrorAction SilentlyContinue)
+        $probeDetail = $probeDetail.Trim()
         Remove-Item -Force $probeScript, $probeOut, $probeErr -ErrorAction SilentlyContinue
         throw "A display is available but the raylib window probe failed, so tests/windowed cannot run: $probeDetail"
     }

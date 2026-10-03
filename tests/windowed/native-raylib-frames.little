@@ -19,16 +19,31 @@ ray.on("update", fn(dt) { })
 io.print(ray.update())
 io.print(ray.time() - before < 1.0)
 
-; The same deferral applies to fonts.
-var font = ray.defaultFont()
+; An owned font is the case that matters: raylib frees its glyph arrays, which a
+; queued command would otherwise still point at.
+var fontPath = "vendor/raylib/examples/text/resources/pixantiqua.ttf"
+var font = ray.loadFont(fontPath, 24)
 var fontDeferred = pcall(fn() {
     ray.on("update", fn(dt) {
-        font:draw("hi", ray.Vector2(0, 0), 12, 1, ray.colors.white)
+        font:draw("hi", ray.Vector2(0, 0), 16, 1, ray.colors.white)
         font:unload()
     })
     return ray.update()
 })
 io.print(fontDeferred.ok)
+io.print(font:toString())
+
+; Dropping the last reference to a queued owned font must not free it mid-frame.
+var fontDropped = pcall(fn() {
+    var temp = ray.loadFont(fontPath, 24)
+    ray.on("update", fn(dt) {
+        temp:draw("hi", ray.Vector2(0, 0), 16, 1, ray.colors.white)
+        temp = null
+        gc.collect()
+    })
+    return ray.update()
+})
+io.print(fontDropped.ok)
 
 ; A queued draw keeps its resource alive, and unloading mid-frame is deferred
 ; until the command has been replayed.
