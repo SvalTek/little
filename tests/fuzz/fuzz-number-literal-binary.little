@@ -1,0 +1,2 @@
+; A binary literal with a non-binary digit is rejected.
+io.print(0b102)

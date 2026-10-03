@@ -1,0 +1,2 @@
+; A binary prefix with no binary digits is rejected.
+io.print(0b)

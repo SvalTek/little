@@ -1,0 +1,3 @@
+; An exponent with no digits is not a number, and must not silently parse as a
+; shorter literal.
+io.print(1e)
