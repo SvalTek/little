@@ -455,6 +455,11 @@ typedef lt_PollResult(*lt_PollHook)(lt_VM* vm, void* context);
 typedef struct lt_Object {
 	lt_ObjectType type;
 
+	/* Debug label for native functions and tables: the first string key the
+	   value is stored under, used in tracebacks. LT_VALUE_NULL for other
+	   object types. */
+	lt_Value debug_name;
+
 	union
 	{
 		struct

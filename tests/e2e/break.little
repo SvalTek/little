@@ -5,3 +5,30 @@ while true {
     i = 100
 }
 io.print(i)
+
+; A break in an inner loop must not leave the outer loop as well.
+var hits = 0
+var outer = 0
+while outer < 3 {
+    outer = outer + 1
+    var inner = 0
+    while inner < 3 {
+        inner = inner + 1
+        if inner is 2 {
+            break
+        }
+        hits = hits + 1
+    }
+    hits = hits + 10
+}
+io.print(hits)
+
+; The same for a break inside a for-loop body.
+var seen = 0
+for item in array.each([ 1, 2, 3, 4 ]) {
+    if item is 3 {
+        break
+    }
+    seen = seen + item
+}
+io.print(seen)
