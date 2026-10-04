@@ -88,6 +88,19 @@ ray.on("update", fn(dt) {
     ray.beginMode2D(camera)
     ray.rect(ray.Rectangle(4, 4, 8, 8), ray.colors.magenta)
     ray.endMode2D()
+    ; The same helpers also take plain numbers, so game code does not build a
+    ; Rectangle or Vector2 per call.
+    ray.rect(1, 1, 10, 6, ray.colors.red)
+    ray.rectLines(1, 10, 20, 8, ray.colors.yellow)
+    ray.circle(30, 12, 6, ray.colors.orange)
+    ray.circleLines(30, 12, 8, ray.colors.skyblue)
+    ray.line(0, 0, 20, 20, ray.colors.white)
+    ray.text("hi", 2, 20, 10, ray.colors.white)
+    ray.textCentered("mid", 40, 10, ray.colors.white)
+    ray.textCentered("mid", 30, 40, 10, ray.colors.white)
+    ray.drawFPS(2, 40)
+    texture:draw(2, 2, ray.colors.white)
+    io.print(type ray.windowFocused() is "boolean")
     ; Close on the second frame: closing inside the first would discard the
     ; queued commands before they are replayed.
     if frames > 1 {

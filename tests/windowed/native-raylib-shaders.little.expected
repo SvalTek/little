@@ -1,0 +1,35 @@
+true
+shader(6)
+false
+true
+false
+true
+true
+false
+true
+false
+true
+true
+material(shader 3)
+material(shader 6)
+material(shader 6)
+false
+true
+1.000000
+model(1 meshes, 1 materials)
+false
+true
+false
+true
+true
+true
+true
+true
+32.000000
+false
+false
+false
+true
+shader(0)
+material(shader 6)
+closed
