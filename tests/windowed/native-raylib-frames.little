@@ -1,0 +1,100 @@
+; Frame-loop semantics: async polling must not stall the frame, a queued draw
+; holds its resource for the whole frame, and an unbalanced 2D mode is rejected.
+; tests/run-e2e.ps1 runs this under tests/windowed/ when a window can be opened.
+
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+ray.traceLog(ray.log.none)
+ray.open(64, 48, "frames", { hidden: true })
+
+var camera = ray.Camera2D {
+    offset: ray.Vector2(32, 24)
+    zoom: 1
+}
+
+; A pending timer must not block the frame: update() polls without sleeping.
+setTimeout(fn() { }, 1500)
+var before = ray.time()
+ray.on("update", fn(dt) { })
+io.print(ray.update())
+io.print(ray.time() - before < 1.0)
+
+; An owned font is the case that matters: raylib frees its glyph arrays, which a
+; queued command would otherwise still point at. The unload is deferred until the
+; command has been replayed.
+var fontPath = "vendor/raylib/examples/text/resources/pixantiqua.ttf"
+var font = ray.loadFont(fontPath, 24)
+var fontDeferred = pcall(fn() {
+    ray.on("update", fn(dt) {
+        font:draw("hi", ray.Vector2(0, 0), 16, 1, ray.colors.white)
+        font:unload()
+    })
+    return ray.update()
+})
+io.print(fontDeferred.ok)
+io.print(font:toString())
+
+; While a frame is being built, the module holds the resources its commands
+; reference, so a mid-frame collection cannot free them before the replay; the
+; frame's references are released once it has been cleared.
+var heldFont = -1
+var fontDropped = pcall(fn() {
+    var temp = ray.loadFont(fontPath, 24)
+    ray.on("update", fn(dt) {
+        temp:draw("hi", ray.Vector2(0, 0), 16, 1, ray.colors.white)
+        heldFont = array.len(ray.__queued)
+        temp = null
+        gc.collect()
+    })
+    return ray.update()
+})
+io.print(fontDropped.ok)
+io.print(heldFont is 1)
+io.print(array.len(ray.__queued) is 0)
+
+; The same holds for textures.
+var heldTexture = -1
+var textureDropped = pcall(fn() {
+    var temp = ray.loadTextureFromImage(ray.genImageColor(4, 4, ray.colors.lime))
+    ray.on("update", fn(dt) {
+        temp:draw(ray.Vector2(0, 0), ray.colors.white)
+        heldTexture = array.len(ray.__queued)
+        temp = null
+        gc.collect()
+    })
+    return ray.update()
+})
+io.print(textureDropped.ok)
+io.print(heldTexture is 1)
+
+; Unloading a texture that a queued command still uses is deferred too.
+var texture = ray.loadTextureFromImage(ray.genImageColor(4, 4, ray.colors.red))
+var deferred = pcall(fn() {
+    ray.on("update", fn(dt) {
+        texture:draw(ray.Vector2(0, 0), ray.colors.white)
+        texture:unload()
+    })
+    return ray.update()
+})
+io.print(deferred.ok)
+io.print(texture:toString())
+
+; An unbalanced beginMode2D is rejected before the frame is drawn.
+var unbalanced = pcall(fn() {
+    ray.on("update", fn(dt) {
+        ray.beginMode2D(camera)
+    })
+    return ray.update()
+})
+io.print(unbalanced.ok)
+io.print(string.contains(unbalanced.error, "endMode2D"))
+
+; The window is still usable after a rejected frame.
+ray.on("update", fn(dt) {
+    ray.clear(ray.colors.black)
+    ray.rect(ray.Rectangle(0, 0, 4, 4), ray.colors.white)
+    ray.close()
+})
+io.print(ray.update())
+ray.close()
+io.print("frames ok")

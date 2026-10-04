@@ -1,0 +1,66 @@
+var ray = loadLibrary("nativelib/raylib/build/raylib")
+
+ray.traceLog(ray.log.none)
+
+; Collision is pure math, so it works without a window.
+io.print(ray.checkCollisionRecs(ray.Rectangle(0, 0, 10, 10), ray.Rectangle(5, 5, 10, 10)))
+io.print(ray.checkCollisionRecs(ray.Rectangle(0, 0, 10, 10), ray.Rectangle(20, 20, 10, 10)))
+io.print(ray.getCollisionRec(ray.Rectangle(0, 0, 10, 10), ray.Rectangle(5, 5, 10, 10)):toString())
+io.print(ray.checkCollisionCircles(ray.Vector2(0, 0), 5, ray.Vector2(6, 0), 2))
+io.print(ray.checkCollisionCircles(ray.Vector2(0, 0), 2, ray.Vector2(6, 0), 2))
+io.print(ray.checkCollisionPointRec(ray.Vector2(5, 5), ray.Rectangle(0, 0, 10, 10)))
+io.print(ray.checkCollisionPointRec(ray.Vector2(15, 5), ray.Rectangle(0, 0, 10, 10)))
+io.print(ray.checkCollisionPointCircle(ray.Vector2(1, 1), ray.Vector2(0, 0), 2))
+io.print(ray.checkCollisionPointCircle(ray.Vector2(3, 3), ray.Vector2(0, 0), 2))
+
+; Colour helpers.
+io.print(ray.fade(ray.Color(10, 20, 30, 255), 0.5):toString())
+io.print(ray.colorLerp(ray.Color(0, 0, 0), ray.Color(255, 255, 255), 0.5):toString())
+io.print(ray.colorTint(ray.Color(255, 255, 255), ray.Color(255, 0, 0)):toString())
+io.print(ray.colorFromHSV(0, 1, 1):toString())
+io.print(ray.colorToInt(ray.Color(255, 0, 0, 255)))
+io.print(ray.colorToInt(ray.Color(0, 0, 0, 0)))
+
+; Vector math.
+var spin = ray.Vector2(1, 0)
+io.print(spin:rotate(0):toString())
+io.print(spin:rotate(1):length())
+io.print(ray.Vector2(0, 0):lerp(ray.Vector2(10, 20), 0.5):toString())
+io.print(ray.Vector2(1, -1):reflect(ray.Vector2(0, 1)):toString())
+io.print(ray.Vector3(0, 0, 0):lerp(ray.Vector3(10, 20, 30), 0.5):toString())
+
+; Camera transforms are pure math as well.
+var camera = ray.Camera2D {
+    offset: ray.Vector2(100, 50)
+    target: ray.Vector2(0, 0)
+    zoom: 2
+}
+io.print(ray.worldToScreen(ray.Vector2(0, 0), camera):toString())
+io.print(ray.worldToScreen(ray.Vector2(10, 10), camera):toString())
+io.print(ray.screenToWorld(ray.Vector2(100, 50), camera):toString())
+io.print(ray.screenToWorld(ray.Vector2(120, 70), camera):toString())
+
+; Window mutation needs a window.
+var noSize = pcall(fn() { return ray.setWindowSize(10, 10) })
+io.print(noSize.ok)
+io.print(string.contains(noSize.error, "ray.open"))
+var noFullscreen = pcall(fn() { return ray.toggleFullscreen() })
+io.print(noFullscreen.ok)
+var noShot = pcall(fn() { return ray.screenshot("build/nope.png") })
+io.print(noShot.ok)
+var noTitle = pcall(fn() { return ray.setWindowTitle("nope") })
+io.print(noTitle.ok)
+
+; Argument validation.
+var badRecs = pcall(fn() { return ray.checkCollisionRecs(1, 2) })
+io.print(badRecs.ok)
+var badCircles = pcall(fn() { return ray.checkCollisionCircles(ray.Vector2(0, 0), 1) })
+io.print(badCircles.ok)
+var badColor = pcall(fn() { return ray.colorToInt("red") })
+io.print(badColor.ok)
+var badCamera = pcall(fn() { return ray.worldToScreen(ray.Vector2(0, 0), 5) })
+io.print(badCamera.ok)
+var badRotate = pcall(fn() { return ray.Vector2(1, 0):rotate() })
+io.print(badRotate.ok)
+var badLerp = pcall(fn() { return ray.Vector2(0, 0):lerp(ray.Vector2(1, 1), "half") })
+io.print(badLerp.ok)

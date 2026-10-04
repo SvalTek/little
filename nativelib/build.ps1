@@ -36,6 +36,14 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Built $jsonOut"
 
+$raylibVendor = Join-Path $repo "vendor/raylib/src"
+if (Test-Path $raylibVendor) {
+    & (Join-Path $PSScriptRoot "raylib/build.ps1") -Compiler $Compiler -IncludeFlags $includeFlags
+}
+else {
+    Write-Host "Skipping raylib native library; vendor/raylib was not found."
+}
+
 if (Test-Path $webuiVendor) {
     $webuiOutDir = Join-Path $PSScriptRoot "webui/build"
     $webuiOut = Join-Path $webuiOutDir "webui$nativeExt"
