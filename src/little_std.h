@@ -17,6 +17,8 @@ void ltstd_term_begin_composer(void);
 void ltstd_term_update_composer(const char* text);
 void ltstd_term_commit_composer(void);
 void ltstd_open_math(lt_VM* vm);
+void ltstd_open_number(lt_VM* vm);
+void ltstd_open_bit(lt_VM* vm);
 void ltstd_open_array(lt_VM* vm);
 void ltstd_open_table(lt_VM* vm);
 void ltstd_open_string(lt_VM* vm);

@@ -648,15 +648,39 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						if (has_digits && end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse hex number!");
 						number = has_digits ? (double)parsed : 0;
 					}
+					else if (*current == '0' && (*(current + 1) == 'b' || *(current + 1) == 'B'))
+					{
+						current += 2;
+						uint8_t has_digits = (*current == '0' || *current == '1');
+						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, "Expected binary digits after 0b!");
+						while (*current == '0' || *current == '1') current++;
+						if (*current == '.' || isalnum(*current) || *current == '_')
+						{
+							_lt_tokenize_error(vm, t.module, line, col, "Invalid character in binary number literal!");
+							while (*current == '.' || isalnum(*current) || *current == '_') current++;
+						}
+
+						length = (uint32_t)(current - start);
+						double parsed = 0;
+						for (const char* digit = start + 2; digit < current; ++digit) parsed = parsed * 2 + (*digit - '0');
+						number = has_digits ? parsed : 0;
+					}
 					else
 					{
-						while ((isalnum(*current) && !isalpha(*current)) || *current == '.')
+						/* An exponent is only valid after digits, and only once,
+						   so `1e` and `1e2e3` stay errors instead of silently
+						   parsing as a shorter number. */
+						uint8_t has_exponent = 0;
+						while ((isalnum(*current) && !isalpha(*current)) || *current == '.' ||
+							((*current == 'e' || *current == 'E') && !has_exponent) ||
+							((*current == '+' || *current == '-') && has_exponent && (*(current - 1) == 'e' || *(current - 1) == 'E')))
 						{
 							if (*current == '.')
 							{
 								if (has_decimal) _lt_tokenize_error(vm, t.module, line, col, "Can't have multiple decimals in number literal!");
 								has_decimal = 1;
 							}
+							if (*current == 'e' || *current == 'E') has_exponent = 1;
 
 							current++;
 						}
@@ -666,6 +690,12 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						number = strtod(start, &end);
 
 						if (end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse number!");
+						/* A second exponent stops the scan without leaving the
+						   token short, so it has to be rejected here or the
+						   literal silently splits into a number and an
+						   identifier. */
+						if ((*current == 'e' || *current == 'E') && has_exponent)
+							_lt_tokenize_error(vm, t.module, line, col, "Can't have multiple exponents in number literal!");
 					}
 
 					lt_Literal newlit;

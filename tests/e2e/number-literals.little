@@ -1,0 +1,20 @@
+; Number literal forms: decimals, exponents, hex, and binary. number.from
+; accepts exactly these, so a literal and its string round-trip.
+
+io.print(42)
+io.print(3.5)
+io.print(1e3)
+io.print(1.5e2)
+io.print(1e-3)
+io.print(2.5E2)
+io.print(1e+2)
+io.print(0xFF)
+io.print(0xff)
+io.print(0b1010)
+io.print(0b0)
+io.print(1000)
+
+; Each literal form round-trips through its string.
+io.print(number.from(string.from(1e3)))
+io.print(number.from(string.from(0xFF)))
+io.print(number.from(string.from(0b1010)))
