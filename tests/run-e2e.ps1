@@ -64,6 +64,8 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_loadlib.c") `
         (Join-Path $repo "src/little_std_io.c") `
         (Join-Path $repo "src/little_std_math.c") `
+        (Join-Path $repo "src/little_std_number.c") `
+        (Join-Path $repo "src/little_std_bit.c") `
         (Join-Path $repo "src/little_std_array.c") `
         (Join-Path $repo "src/little_std_table.c") `
         (Join-Path $repo "src/little_std_string.c") `
@@ -93,6 +95,8 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_loadlib.c") `
         (Join-Path $repo "src/little_std_io.c") `
         (Join-Path $repo "src/little_std_math.c") `
+        (Join-Path $repo "src/little_std_number.c") `
+        (Join-Path $repo "src/little_std_bit.c") `
         (Join-Path $repo "src/little_std_array.c") `
         (Join-Path $repo "src/little_std_table.c") `
         (Join-Path $repo "src/little_std_string.c") `
@@ -109,6 +113,41 @@ if (!$SkipBuild) {
     & $moduleLoaderHarness
     if ($LASTEXITCODE -ne 0) {
         throw "module loader harness failed with exit code $LASTEXITCODE"
+    }
+
+    $terminalVendor = Join-Path $repo "vendor/pdcursesmod"
+    $terminalPort = if ($env:OS -eq "Windows_NT") { "wincon" } else { "vt" }
+    $terminalLibName = if ($env:OS -eq "Windows_NT") { "pdcurses.a" } else { "libpdcurses.a" }
+    $terminalLib = Join-Path (Join-Path $terminalVendor $terminalPort) $terminalLibName
+    $terminalFlags = @()
+    if ($env:OS -eq "Windows_NT") {
+        $terminalFlags += "-lwinmm"
+    }
+    else {
+        $terminalFlags += "-pthread"
+        if (-not $IsMacOS) {
+            $terminalFlags += "-rdynamic"
+            $terminalFlags += "-ldl"
+        }
+    }
+    $termLifecycleHarness = Join-Path $buildDir "term-lifecycle.exe"
+    & $Compiler -std=c11 `
+        -DLT_TERM_TESTING `
+        @("-I", $terminalVendor) `
+        (Join-Path $repo "tests/native/term-lifecycle.c") `
+        (Join-Path $repo "nativelib/term/term.c") `
+        $terminalLib `
+        $terminalFlags `
+        -lm `
+        -o $termLifecycleHarness
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "terminal lifecycle harness build failed with exit code $LASTEXITCODE"
+    }
+
+    & $termLifecycleHarness
+    if ($LASTEXITCODE -ne 0) {
+        throw "terminal lifecycle harness failed with exit code $LASTEXITCODE"
     }
 
     $nativeExt = if ($env:OS -eq "Windows_NT") { ".dll" } elseif ($IsMacOS) { ".dylib" } else { ".so" }

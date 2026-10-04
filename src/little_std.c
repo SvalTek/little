@@ -404,6 +404,8 @@ void ltstd_open_all(lt_VM* vm)
     lt_add_module_loader(vm, _ltstd_file_module_loader, 0);
     ltstd_open_io(vm);
     ltstd_open_math(vm);
+    ltstd_open_number(vm);
+    ltstd_open_bit(vm);
     ltstd_open_array(vm);
     ltstd_open_table(vm);
     ltstd_open_string(vm);

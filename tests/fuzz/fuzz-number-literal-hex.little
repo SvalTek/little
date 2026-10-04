@@ -1,0 +1,2 @@
+; A hex literal with a trailing digit group is rejected.
+io.print(0xFG)

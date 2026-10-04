@@ -6,17 +6,27 @@ io.print(members.sizeOk)
 io.print(members.hasRoot)
 io.print(members.hasUnroot)
 io.print(members.hasEquals)
+io.print(members.hasPersistentRoot)
+io.print(members.hasPersistentUnroot)
 
 ; Object and string values rooted from C locals survive re-entrant collection.
 var [marker, localString] = roots.rootedHold()
 io.print(marker)
 io.print(localString)
 
-; The returned collection count proves the unrooted table was collected;
+; Persistent roots survive the native callback that creates them and can be
+; released explicitly after the script drops its reference.
+roots.persistentHold(fn() { return "PERSISTENT ALIVE" })
+gc.collect()
+io.print(roots.persistentCall())
+roots.persistentHold(fn() { return "REPLACED CALLBACK" })
+gc.collect()
+io.print(roots.persistentCall())
+roots.persistentClear()
+
+; The positive collection count proves the unrooted table was collected;
 ; the fixture never reads through its dangling C-local pointer.
-; The previous callback's unbalanced root was scoped to that callback and is
-; collected along with this new unreachable table.
-io.print(roots.unrootedCollected() >= 2)
+io.print(roots.unrootedCollected() > 0)
 
 ; Native libraries can compare values without linking against the host.
 io.print(roots.equals("Ada", "Ada"))

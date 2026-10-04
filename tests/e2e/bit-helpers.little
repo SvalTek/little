@@ -1,0 +1,47 @@
+; bit covers 32-bit operations and the flag helpers that go with them. The
+; language has no bitwise operators, so this module is the only way to reach
+; them, and every result is an exact integer.
+
+io.print(bit.band(12, 10))
+io.print(bit.bor(12, 10))
+io.print(bit.bxor(12, 10))
+io.print(bit.bnot(0))
+io.print(bit.bnot(-1))
+io.print(bit.shl(1, 4))
+io.print(bit.shl(1, 31))
+io.print(bit.shr(256, 4))
+io.print(bit.shr(-1, 31))
+
+; Every helper returns a value in the same signed 32-bit domain, so a result
+; can feed the next call: shr(-1, 0) stays -1 rather than becoming 4294967295.
+io.print(bit.shr(0 - 1, 0))
+io.print(bit.count(bit.shr(0 - 1, 0)))
+
+io.print(bit.test(4, 2))
+io.print(bit.test(4, 1))
+io.print(bit.set(0, 3))
+io.print(bit.clear(15, 0))
+io.print(bit.toggle(0, 1))
+io.print(bit.toggle(2, 1))
+io.print(bit.count(255))
+io.print(bit.count(0))
+io.print(bit.count(7))
+
+; The 32-bit bound is asymmetric: -2147483648 is representable and is what
+; shl(1, 31) returns, while +2147483648 is not and must be rejected rather than
+; converted.
+io.print(bit.band(-2147483648, 0))
+var overBound = pcall(fn() { return bit.band(2147483648, 0) })
+io.print(overBound.ok)
+io.print(bit.shl(1, 31))
+
+; A flag register is the common shape: set a couple, test one, count them.
+var flags = 0
+flags = bit.set(flags, 0)
+flags = bit.set(flags, 2)
+io.print(flags)
+io.print(bit.test(flags, 2))
+io.print(bit.test(flags, 1))
+io.print(bit.count(flags))
+flags = bit.clear(flags, 0)
+io.print(flags)

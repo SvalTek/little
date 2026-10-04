@@ -737,11 +737,10 @@ struct lt_Api {
 	lt_Value (*promise_result)(lt_Value value);
 	uint8_t (*poll_now)(lt_VM* vm);
 
-	/* API v3 addendum: value roots scoped to the active native C callback. */
+	/* API v3 addendum: callback-scoped and persistent value roots. */
 	void (*root)(lt_VM* vm, lt_Value value);
 	void (*unroot)(lt_VM* vm, lt_Value value);
 	uint8_t (*equals)(lt_Value a, lt_Value b);
-
 	/* API v3 addendum: native-backed classes and instance payloads. */
 	lt_Value (*class_create)(lt_VM* vm, const char* name);
 	void (*class_set_constructor)(lt_VM* vm, lt_Value klass, lt_NativeFn fn);
@@ -753,4 +752,8 @@ struct lt_Api {
 	void* (*instance_get_native_data)(lt_VM* vm, lt_Value instance, lt_Value native_class);
 	void (*instance_dispose_native_data)(lt_VM* vm, lt_Value instance);
 	void (*instance_clear_native_data)(lt_VM* vm, lt_Value instance);
+
+	/* Roots retained beyond the current native callback, until explicitly removed. */
+	void (*root_persistent)(lt_VM* vm, lt_Value value);
+	void (*unroot_persistent)(lt_VM* vm, lt_Value value);
 };
