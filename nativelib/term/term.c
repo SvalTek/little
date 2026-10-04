@@ -16,7 +16,6 @@
 
 #define TERM_MAX_LINE 4096
 #define TERM_HISTORY_CAPACITY 64
-#define TERM_MAX_MODULES 8
 
 typedef struct
 {
@@ -37,19 +36,30 @@ typedef struct
 
 static const lt_Api* lt = 0;
 static TermState state;
+#ifdef LT_TERM_TESTING
+static uint32_t lt_term_test_key_read_count;
+#endif
 
 /* Per-VM module association.  Each VM that loads the module gets its own
    table; the table is recorded here and bound into `state.module` only when
-   that VM acquires the terminal, so callbacks are rooted in the owning VM's
-   table even when several VMs load the module. */
+   that VM acquires the terminal. */
 typedef struct
 {
     lt_VM* vm;
     lt_Value module;
 } TermModule;
 
-static TermModule term_modules[TERM_MAX_MODULES];
-static uint8_t term_module_count;
+static TermModule* term_modules;
+static size_t term_module_count;
+static size_t term_module_capacity;
+
+static void term_clear_callback(TermState* terminal)
+{
+    if (terminal->callback_set && terminal->vm)
+        lt->unroot_persistent(terminal->vm, terminal->callback);
+    terminal->callback = LT_VALUE_NULL;
+    terminal->callback_set = 0;
+}
 
 /**
  * Requires an exact number of arguments for the current call.
@@ -106,11 +116,29 @@ static char* term_strdup(const char* text)
  */
 static lt_Value term_module_for(lt_VM* vm)
 {
-    for (uint8_t i = 0; i < term_module_count; ++i)
+    for (size_t i = 0; i < term_module_count; ++i)
     {
         if (term_modules[i].vm == vm) return term_modules[i].module;
     }
     return LT_VALUE_NULL;
+}
+
+/**
+ * Reserves storage for one more per-VM module association.
+ * @return `1` when storage is available, or `0` on allocation failure.
+ */
+static uint8_t reserve_term_module(void)
+{
+    size_t new_capacity;
+    TermModule* resized;
+    if (term_module_count < term_module_capacity) return 1;
+    new_capacity = term_module_capacity ? term_module_capacity * 2 : 8;
+    if (new_capacity < term_module_capacity || new_capacity > SIZE_MAX / sizeof(TermModule)) return 0;
+    resized = realloc(term_modules, new_capacity * sizeof(TermModule));
+    if (!resized) return 0;
+    term_modules = resized;
+    term_module_capacity = new_capacity;
+    return 1;
 }
 
 /**
@@ -177,8 +205,13 @@ static lt_Value make_event(lt_VM* vm, int key)
  */
 static int next_key(void)
 {
+#ifdef LT_TERM_TESTING
+    ++lt_term_test_key_read_count;
+    return ERR;
+#else
     timeout(0);
     return getch();
+#endif
 }
 
 /**
@@ -312,9 +345,9 @@ static lt_PollResult term_poll_hook(lt_VM* vm, void* context)
 {
     TermState* terminal = context;
     int key;
-    if (!terminal->active || terminal->vm != vm) return LT_POLL_IDLE;
+    if (!terminal->active || terminal->vm != vm || !terminal->callback_set) return LT_POLL_IDLE;
     key = next_key();
-    if (key == ERR) return terminal->callback_set ? LT_POLL_PENDING : LT_POLL_IDLE;
+    if (key == ERR) return LT_POLL_PENDING;
     if (terminal->callback_set)
     {
         uint8_t saved_trap = vm->trap_errors;
@@ -329,10 +362,7 @@ static lt_PollResult term_poll_hook(lt_VM* vm, void* context)
         vm->error_trap = saved_trap_msg;
         if (error)
         {
-            terminal->callback = LT_VALUE_NULL;
-            terminal->callback_set = 0;
-            if (state.module != LT_VALUE_NULL)
-                lt->table_set(vm, state.module, lt->make_string(vm, "_callback"), LT_VALUE_NULL);
+            term_clear_callback(terminal);
             if (saved_trap)
             {
                 if (vm->error_trap) lt->free(vm, vm->error_trap);
@@ -412,8 +442,7 @@ static uint8_t term_close(lt_VM* vm, uint8_t argc)
         scrollok(stdscr, FALSE);
         endwin();
     }
-    if (state.module != LT_VALUE_NULL && state.vm == vm)
-        lt->table_set(vm, state.module, lt->make_string(vm, "_callback"), LT_VALUE_NULL);
+    if (state.vm == vm) term_clear_callback(&state);
     if (state.composer) free((void*)state.composer);
     state.composer = 0;
     state.module = LT_VALUE_NULL;
@@ -599,11 +628,11 @@ static uint8_t term_on_event(lt_VM* vm, uint8_t argc)
     callback = lt->pop(vm);
     require_active(vm);
     if (!is_callable(callback)) lt->runtime_error(vm, "Expected callable argument to term.onEvent!");
+    lt->root_persistent(vm, callback);
+    if (state.callback_set)
+        lt->unroot_persistent(vm, state.callback);
     state.callback = callback;
     state.callback_set = 1;
-    /* Root the callback through the public module table.  The generic poller
-       intentionally stores C-only data and does not participate in GC. */
-    lt->table_set(vm, state.module, lt->make_string(vm, "_callback"), callback);
     lt->push(vm, callback);
     return 1;
 }
@@ -776,11 +805,45 @@ static uint8_t term_read_line(lt_VM* vm, uint8_t argc)
  */
 void lt_term_shutdown(void)
 {
+    if (state.vm && state.poll_hook && lt && lt->remove_poll_hook)
+        lt->remove_poll_hook(state.vm, state.poll_hook);
     if (state.active) endwin();
+    if (state.vm) term_clear_callback(&state);
     if (state.composer) free((void*)state.composer);
     state.composer = 0;
     memset(&state, 0, sizeof(state));
+    free(term_modules);
+    term_modules = 0;
+    term_module_count = 0;
+    term_module_capacity = 0;
 }
+
+#ifdef LT_TERM_TESTING
+void lt_term_test_set_active_poll_hook(lt_VM* vm, uint32_t poll_hook)
+{
+    state.vm = vm;
+    state.module = LT_VALUE_NULL;
+    state.active = 1;
+    state.poll_hook = poll_hook;
+}
+
+lt_PollResult lt_term_test_poll(lt_VM* vm)
+{
+    return term_poll_hook(vm, &state);
+}
+
+uint32_t lt_term_test_key_reads(void)
+{
+    return lt_term_test_key_read_count;
+}
+
+void lt_term_test_set_callback(lt_VM* vm, lt_Value callback)
+{
+    state.callback = callback;
+    state.callback_set = 1;
+    lt->root_persistent(vm, callback);
+}
+#endif
 
 /**
  * Initializes and returns the terminal module.
@@ -792,36 +855,26 @@ void lt_term_shutdown(void)
 LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
 {
     lt_Value term;
-    uint8_t found = 0;
-    if (!api || api->version != LT_API_VERSION || api->size < sizeof(lt_Api)) return LT_VALUE_NULL;
-    for (uint8_t i = 0; i < term_module_count; ++i)
+    size_t module_index = SIZE_MAX;
+    if (!api || api->version != LT_API_VERSION || api->size < sizeof(lt_Api) ||
+        !api->root_persistent || !api->unroot_persistent) return LT_VALUE_NULL;
+    for (size_t i = 0; i < term_module_count; ++i)
     {
         if (term_modules[i].vm == vm)
         {
-            found = 1;
+            module_index = i;
             break;
         }
     }
-    if (!found && term_module_count >= TERM_MAX_MODULES) return LT_VALUE_NULL;
+    if (module_index == SIZE_MAX && !reserve_term_module()) return LT_VALUE_NULL;
     lt = api;
     term = lt->make_table(vm);
-    if (!found)
+    if (module_index == SIZE_MAX)
     {
-        term_modules[term_module_count].vm = vm;
-        term_modules[term_module_count].module = term;
-        term_module_count++;
+        module_index = term_module_count++;
+        term_modules[module_index].vm = vm;
     }
-    else
-    {
-        for (uint8_t i = 0; i < term_module_count; ++i)
-        {
-            if (term_modules[i].vm == vm)
-            {
-                term_modules[i].module = term;
-                break;
-            }
-        }
-    }
+    term_modules[module_index].module = term;
 #define TERM_FN(name, function) lt->table_set(vm, term, lt->make_string(vm, name), lt->make_native(vm, function))
     TERM_FN("open", term_open); TERM_FN("close", term_close); TERM_FN("isOpen", term_is_open);
     TERM_FN("size", term_size); TERM_FN("clear", term_clear); TERM_FN("clearLine", term_clear_line);
