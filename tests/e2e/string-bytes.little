@@ -1,0 +1,37 @@
+; Byte access: indexes are 0-based like string.sub, and an index outside the
+; string is a miss rather than an error, so a caller can scan without knowing
+; the length.
+
+io.print(string.byte("abc", 0))
+io.print(string.byte("abc", 2))
+io.print(string.byte("abc", 3) is null)
+io.print(string.byte("abc", 0 - 1) is null)
+io.print(string.byte("", 0) is null)
+
+; string.char builds a one-byte string, and the pair round-trips.
+io.print(string.char(97))
+io.print(string.byte(string.char(200), 0))
+io.print(string.len(string.char(255)))
+
+; Lengths and indexes count bytes, not characters. Little has no \x escape, so
+; a multi-byte character is assembled from its bytes with string.char.
+var accented = string.concat("h", string.char(195), string.char(169), "llo")
+io.print(string.len(accented))
+io.print(string.byte(accented, 0))
+io.print(string.byte(accented, 1))
+io.print(string.byte(accented, 2))
+
+; A byte cannot be 0: Little strings are NUL-terminated, so it would silently
+; truncate the result rather than produce the byte asked for.
+var zero = pcall(fn() { return string.char(0) })
+io.print(zero.ok)
+var tooHigh = pcall(fn() { return string.char(256) })
+io.print(tooHigh.ok)
+var fractionalCode = pcall(fn() { return string.char(65.5) })
+io.print(fractionalCode.ok)
+var fractionalIndex = pcall(fn() { return string.byte("abc", 1.5) })
+io.print(fractionalIndex.ok)
+var nonString = pcall(fn() { return string.byte(1, 0) })
+io.print(nonString.ok)
+var nonNumber = pcall(fn() { return string.char("a") })
+io.print(nonNumber.ok)

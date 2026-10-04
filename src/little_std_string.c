@@ -125,6 +125,53 @@ static uint8_t _lt_string_sub(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+/* Byte access is index-based like string.sub, and an index outside the string
+   is a miss rather than an error, so a caller can scan without knowing the
+   length. */
+static uint8_t _lt_string_byte(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 2) lt_runtime_error(vm, "Expected two arguments to string.byte!");
+
+    lt_Value indexval = lt_pop(vm);
+    const char* cstr = 0;
+    _lt_expect_string(vm, lt_pop(vm), "Non-string argument to string.byte!", &cstr);
+
+    if (!LT_IS_NUMBER(indexval)) lt_runtime_error(vm, "Non-number index to string.byte!");
+    double raw = LT_GET_NUMBER(indexval);
+    uint32_t str_len = (uint32_t)strlen(cstr);
+    if (raw < 0 || raw >= (double)str_len)
+    {
+        lt_push(vm, LT_VALUE_NULL);
+        return 1;
+    }
+
+    uint32_t index = (uint32_t)raw;
+    if ((double)index != raw) lt_runtime_error(vm, "Expected a whole index to string.byte!");
+    lt_push(vm, LT_VALUE_NUMBER((double)(unsigned char)cstr[index]));
+    return 1;
+}
+
+/* Byte 0 is rejected: Little strings are NUL-terminated, so storing one would
+   silently truncate the result instead of producing the byte asked for. */
+static uint8_t _lt_string_char(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt_runtime_error(vm, "Expected one argument to string.char!");
+
+    lt_Value codeval = lt_pop(vm);
+    if (!LT_IS_NUMBER(codeval)) lt_runtime_error(vm, "Non-number code to string.char!");
+    double code = LT_GET_NUMBER(codeval);
+    if (!(code >= 1 && code <= 255)) lt_runtime_error(vm, "Expected a code between 1 and 255 for string.char!");
+
+    int value = (int)code;
+    if ((double)value != code) lt_runtime_error(vm, "Expected a whole code for string.char!");
+
+    char text[2];
+    text[0] = (char)(unsigned char)value;
+    text[1] = 0;
+    lt_push(vm, lt_make_string(vm, text));
+    return 1;
+}
+
 static uint8_t _lt_string_contains(lt_VM* vm, uint8_t argc)
 {
     if (argc != 2) lt_runtime_error(vm, "Expected two arguments to string.contains!");
@@ -502,6 +549,8 @@ void ltstd_open_string(lt_VM* vm)
     lt_table_set(vm, t, lt_make_string(vm, "concat"), lt_make_native(vm, _lt_string_concat));
     lt_table_set(vm, t, lt_make_string(vm, "len"), lt_make_native(vm, _lt_string_len));
     lt_table_set(vm, t, lt_make_string(vm, "sub"), lt_make_native(vm, _lt_string_sub));
+    lt_table_set(vm, t, lt_make_string(vm, "byte"), lt_make_native(vm, _lt_string_byte));
+    lt_table_set(vm, t, lt_make_string(vm, "char"), lt_make_native(vm, _lt_string_char));
     lt_table_set(vm, t, lt_make_string(vm, "format"), lt_make_native(vm, _lt_string_format));
     lt_table_set(vm, t, lt_make_string(vm, "contains"), lt_make_native(vm, _lt_string_contains));
     lt_table_set(vm, t, lt_make_string(vm, "startsWith"), lt_make_native(vm, _lt_string_startswith));
