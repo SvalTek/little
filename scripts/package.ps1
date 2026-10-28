@@ -25,11 +25,28 @@ foreach ($library in @("json", "webui")) {
     }
 }
 
+$runtimeDlls = @()
+if ($env:OS -eq "Windows_NT") {
+    foreach ($name in @("libssl-3-x64.dll", "libcrypto-3-x64.dll")) {
+        $source = Join-Path $repo "build/$name"
+        if (!(Test-Path $source) -and $env:GCC_PATH) {
+            $source = Join-Path $env:GCC_PATH "bin/$name"
+        }
+        if (!(Test-Path $source)) {
+            throw "Expected OpenSSL runtime DLL $name in build/ or GCC_PATH/bin"
+        }
+        $runtimeDlls += $source
+    }
+}
+
 if (Test-Path $packageStage) {
     Remove-Item -Recurse -Force -LiteralPath $packageStage
 }
 New-Item -ItemType Directory -Force -Path $packageStage, $dist | Out-Null
 Copy-Item -LiteralPath $binarySource -Destination (Join-Path $packageStage "little$binaryExt")
+foreach ($dll in $runtimeDlls) {
+    Copy-Item -LiteralPath $dll -Destination $packageStage
+}
 
 foreach ($library in @("json", "webui")) {
     $libraryStage = Join-Path $packageStage "libs/$library"
