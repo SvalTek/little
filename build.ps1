@@ -73,6 +73,7 @@ if ($LASTEXITCODE -ne 0) { throw "Terminal backend build failed with exit code $
 $terminalLibName = if ($env:OS -eq "Windows_NT") { "pdcurses.a" } else { "libpdcurses.a" }
 $terminalLib = Join-Path $terminalDir $terminalLibName
 $terminalFlags = if ($env:OS -eq "Windows_NT") { @("-lwinmm") } else { @() }
+$socketFlags = if ($env:OS -eq "Windows_NT") { @("-lws2_32", "-lcrypt32") } else { @() }
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
@@ -89,6 +90,7 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     (Join-Path $repo "src/little_std.c") `
     (Join-Path $repo "src/little_loadlib.c") `
     (Join-Path $repo "src/little_std_io.c") `
+    (Join-Path $repo "src/little_std_web.c") `
     (Join-Path $repo "src/little_std_term.c") `
     (Join-Path $repo "src/little_std_math.c") `
     (Join-Path $repo "src/little_std_number.c") `
@@ -106,6 +108,8 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     $dynamicFlags `
     $terminalLib `
     $terminalFlags `
+    -lssl -lcrypto `
+    $socketFlags `
     -lm `
     $extraLdFlags `
     -o $outPath

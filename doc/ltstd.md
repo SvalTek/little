@@ -14,3 +14,4 @@ The Little standard library is divided into modules. Embedders can load the norm
 - [term](std/term.md) - terminal input, drawing, and events
 - [async](std/async.md)
 - [task](std/task.md)
+- [web](std/web.md)

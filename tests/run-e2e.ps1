@@ -19,6 +19,7 @@ if ($toolchainBin -and (Test-Path $toolchainBin)) {
 $Compiler = if ($Compiler) { $Compiler } elseif ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin/gcc.exe" } else { "gcc" }
 $includeFlags = if ($env:INCLUDES_PATH) { @("-I", $env:INCLUDES_PATH) } else { @() }
 $platformCFlags = if ($env:OS -eq "Windows_NT") { @() } else { @("-D_XOPEN_SOURCE=700") }
+$socketFlags = if ($env:OS -eq "Windows_NT") { @("-lws2_32", "-lcrypt32") } else { @() }
 $buildDir = Join-Path $repo "build"
 $exe = if ($Exe) { $Exe } else { Join-Path $buildDir "little-e2e.exe" }
 
@@ -61,6 +62,7 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little.c") `
         (Join-Path $repo "src/little_common.c") `
         (Join-Path $repo "src/little_std.c") `
+        (Join-Path $repo "src/little_std_web.c") `
         (Join-Path $repo "src/little_loadlib.c") `
         (Join-Path $repo "src/little_std_io.c") `
         (Join-Path $repo "src/little_std_math.c") `
@@ -73,7 +75,7 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_async.c") `
         $threadFlags `
         $dynamicFlags `
-        -lm -o $optInHarness
+        -lssl -lcrypto $socketFlags -lm -o $optInHarness
 
     if ($LASTEXITCODE -ne 0) {
         throw "loadLibrary opt-in harness build failed with exit code $LASTEXITCODE"
@@ -92,6 +94,7 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little.c") `
         (Join-Path $repo "src/little_common.c") `
         (Join-Path $repo "src/little_std.c") `
+        (Join-Path $repo "src/little_std_web.c") `
         (Join-Path $repo "src/little_loadlib.c") `
         (Join-Path $repo "src/little_std_io.c") `
         (Join-Path $repo "src/little_std_math.c") `
@@ -104,7 +107,7 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_async.c") `
         $threadFlags `
         $dynamicFlags `
-        -lm -o $moduleLoaderHarness
+        -lssl -lcrypto $socketFlags -lm -o $moduleLoaderHarness
 
     if ($LASTEXITCODE -ne 0) {
         throw "module loader harness build failed with exit code $LASTEXITCODE"
@@ -268,5 +271,9 @@ foreach ($test in $tests) {
 if ($failed -gt 0) {
     throw "$failed e2e test(s) failed"
 }
+
+& (Join-Path $PSScriptRoot "web-loopback.ps1") -Exe $exe
+& (Join-Path $PSScriptRoot "web-fetch-fixture.ps1") -Exe $exe
+& (Join-Path $PSScriptRoot "web-https-fixture.ps1") -Exe $exe
 
 Write-Host "All e2e tests passed."
