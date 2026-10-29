@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $executable = (Resolve-Path $Exe).Path
 
-function Test-FetchFixture([string]$Name, [string]$Script, [string]$Expected, [string]$Response) {
+function Test-FetchFixture([string]$Name, [string]$Script, [string]$Expected, [string]$Response, [string]$Method = 'GET') {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $process = $null
     $client = $null
@@ -39,7 +39,7 @@ function Test-FetchFixture([string]$Name, [string]$Script, [string]$Expected, [s
             [void]$request.Append([Text.Encoding]::ASCII.GetString($buffer, 0, $count))
             if ($request.Length -gt 65536) { throw 'Request headers exceed fixture limit' }
         }
-        if (-not $request.ToString().StartsWith("GET /$Name HTTP/1.")) {
+        if (-not $request.ToString().StartsWith("$Method /$Name HTTP/1.")) {
             throw "Unexpected request: $request"
         }
         if ($Response) {
@@ -84,10 +84,21 @@ web.fetch("http://127.0.0.1:PORT/empty").next(fn(response) {
     io.print("empty response rejected")
 })
 '@
+$headScript = @'
+web.fetch("http://127.0.0.1:PORT/head", { method: "HEAD" }).next(fn(response) {
+    io.print(response.status is 200)
+    io.print(response.body is "")
+}).catch(fn(reason) {
+    io.print("head response rejected")
+})
+'@
 $response = "HTTP/1.1 200 OK`r`nTransfer-Encoding: chunked`r`nConnection: close`r`n`r`n4`r`nWiki`r`n5`r`npedia`r`n0`r`n`r`n"
+$headResponse = "HTTP/1.1 200 OK`r`nTransfer-Encoding: chunked`r`nConnection: close`r`n`r`n"
 $failures = @()
 try { Test-FetchFixture 'chunked' $chunkedScript (@('true', 'true', 'true') -join "`n") $response }
 catch { $failures += "chunked: $_" }
 try { Test-FetchFixture 'empty' $emptyScript 'empty response rejected' '' }
 catch { $failures += "empty: $_" }
+try { Test-FetchFixture 'head' $headScript (@('true', 'true') -join "`n") $headResponse 'HEAD' }
+catch { $failures += "head: $_" }
 if ($failures.Count) { throw ($failures -join "`n") }

@@ -23,4 +23,5 @@ void ltstd_open_array(lt_VM* vm);
 void ltstd_open_table(lt_VM* vm);
 void ltstd_open_string(lt_VM* vm);
 void ltstd_open_gc(lt_VM* vm);
+void ltstd_open_json(lt_VM* vm);
 void ltstd_open_web(lt_VM* vm);

@@ -20,7 +20,8 @@ string. Network failures reject the promise.
 
 Responses expose `status`, `statusText`, `ok`, `url`, `headers`, and `body`.
 `ok` is true for status codes from 200 through 299. `response:text()` returns a
-promise for the body string.
+promise for the body string, and `response:json()` returns a promise for the
+body parsed as JSON. Invalid JSON rejects the `json` promise.
 
 `web.Response([body [, options]])` constructs a response. The body is a string
 and defaults to empty. The options table accepts `status` (an integer from 100
@@ -40,9 +41,10 @@ var response = web.Response("created", {
 `web.serve(handler [, options])` starts a server and returns a `Server`.
 The handler receives a `Request` with `url`, `method`, `headers`, and `body`
 properties. The options table can specify `hostname` and `port`; the defaults
-are `0.0.0.0` and `8000`. A handler can return a string as its response body,
-a `web.Response`, or a promise that resolves to either. A rejected handler
-promise produces a 500 response.
+are `0.0.0.0` and `8000`. Pass `0` for `port` to bind an OS-assigned port; the
+bound value is available from `server.port`. A handler can return a string as
+its response body, a `web.Response`, or a promise that resolves to either. A
+rejected handler promise produces a 500 response.
 `server:close()` stops the server and its active connections.
 
 Each server handles up to 8 clients at once. Additional connections can wait in

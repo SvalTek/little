@@ -292,6 +292,23 @@ static uint8_t response_text(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
+static uint8_t response_json(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) web_api->runtime_error(vm, "Response.json expects no arguments!");
+    lt_Value instance = web_api->pop(vm);
+    WebResponseData* rd = web_api->instance_get_native_data(vm, instance, web_instance_class(vm, instance, web_destroy_response));
+    lt_json_init(ltstd_native_api());
+    lt_Value value = LT_VALUE_NULL;
+    uint8_t ok = lt_json_parse(vm, rd && rd->body ? rd->body : "", &value);
+    if (ok) web_api->root(vm, value);
+    lt_Value promise = ltasync_make_promise(vm);
+    web_api->root(vm, promise);
+    if (ok) ltasync_settle_promise(vm, promise, LT_PROMISE_FULFILLED, value);
+    else ltasync_settle_promise(vm, promise, LT_PROMISE_REJECTED, web_api->make_string(vm, "Invalid JSON response body!"));
+    web_api->push(vm, promise);
+    return 1;
+}
+
 static uint8_t request_url(lt_VM* vm, uint8_t argc)
 {
     (void)argc;
@@ -713,7 +730,12 @@ static int web_response_framing(char* buf, size_t len, int head, size_t* header_
     }
     if (*chunked && has_length) return -1;
     *header_len = (size_t)(end + 4 - buf);
-    if (head || (status >= 100 && status < 200) || status == 204 || status == 304) { *body_len = 0; return 1; }
+    if (head || (status >= 100 && status < 200) || status == 204 || status == 304) {
+        /* These responses may carry Transfer-Encoding but no chunk stream. */
+        *chunked = 0;
+        *body_len = 0;
+        return 1;
+    }
     size_t available = len - *header_len;
     if (*chunked) return web_chunks(buf + *header_len, available, body_len, 0);
     if (has_length) { *body_len = content; return available >= content ? 1 : 0; }
@@ -1358,6 +1380,7 @@ void ltstd_open_web(lt_VM* vm)
     web_api->class_add_getter(vm, response_class, "headers", response_headers, LT_VIS_PUBLIC, 0);
     web_api->class_add_getter(vm, response_class, "body", response_body, LT_VIS_PUBLIC, 0);
     web_api->class_add_method(vm, response_class, "text", response_text, LT_VIS_PUBLIC, 0);
+    web_api->class_add_method(vm, response_class, "json", response_json, LT_VIS_PUBLIC, 0);
 
     request_class = web_api->class_create(vm, "Request");
     web_api->class_set_native_data_destroy(vm, request_class, web_destroy_request);

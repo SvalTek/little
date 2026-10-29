@@ -123,7 +123,8 @@ lt->unroot(vm, kept); /* optional; callback return releases it */
 ```
 
 The repository's `nativelib/json` directory is an example of a native library
-that returns a module table:
+that returns a module table. The CLI also includes the same functionality as the
+built-in [json](json.md) module:
 
 ```js
 var json = loadLibrary("nativelib/json/build/json")

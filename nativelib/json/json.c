@@ -11,6 +11,14 @@
 #define LT_NATIVE_EXPORT __attribute__((visibility("default")))
 #endif
 
+#ifdef LT_JSON_NATIVE_LIBRARY
+/* Keep the loadable library's internal symbols distinct from the core copy. */
+#define lt_json_init json_native_init
+#define lt_json_open json_native_open
+#define lt_json_parse json_native_parse
+#define lt_json_stringify json_native_stringify
+#endif
+
 typedef struct {
     const char* text;
     uint32_t pos;
@@ -464,6 +472,46 @@ static uint8_t stringify_value(lt_VM* vm, JsonWriter* writer, lt_Value value, ui
     return !writer->failed;
 }
 
+void lt_json_init(const lt_Api* api)
+{
+    if (api && api->version == LT_API_VERSION && api->size >= sizeof(lt_Api)) lt = api;
+}
+
+uint8_t lt_json_parse(lt_VM* vm, const char* text, lt_Value* out)
+{
+    if (!lt || !text || !out) return 0;
+
+    JsonParser parser = { text, 0, 0 };
+    lt_Value value = parse_value(vm, &parser, 0);
+    skip_ws(&parser);
+    if (parser.failed || parser.text[parser.pos] != 0) return 0;
+
+    *out = value;
+    return 1;
+}
+
+lt_Value lt_json_stringify(lt_VM* vm, lt_Value value)
+{
+    if (!lt) return LT_VALUE_NULL;
+
+    JsonWriter writer = { 0 };
+    if (!stringify_value(vm, &writer, value, 0))
+    {
+        if (writer.data) lt->free(vm, writer.data);
+        return LT_VALUE_NULL;
+    }
+    writer_push(vm, &writer, 0);
+    if (writer.failed)
+    {
+        if (writer.data) lt->free(vm, writer.data);
+        return LT_VALUE_NULL;
+    }
+
+    lt_Value result = lt->make_string(vm, writer.data);
+    lt->free(vm, writer.data);
+    return result;
+}
+
 static uint8_t json_parse_native(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1)
@@ -480,10 +528,10 @@ static uint8_t json_parse_native(lt_VM* vm, uint8_t argc)
         return 1;
     }
 
-    JsonParser parser = { lt->get_string(vm, input), 0, 0 };
-    lt_Value value = parse_value(vm, &parser, 0);
-    skip_ws(&parser);
-    if (parser.failed || parser.text[parser.pos] != 0) value = LT_VALUE_NULL;
+    lt->root(vm, input);
+    lt_Value value = LT_VALUE_NULL;
+    if (!lt_json_parse(vm, lt->get_string(vm, input), &value)) value = LT_VALUE_NULL;
+    lt->unroot(vm, input);
     lt->push(vm, value);
     return 1;
 }
@@ -498,34 +546,27 @@ static uint8_t json_stringify_native(lt_VM* vm, uint8_t argc)
     }
 
     lt_Value value = lt->pop(vm);
-    JsonWriter writer = { 0 };
-    if (!stringify_value(vm, &writer, value, 0))
-    {
-        if (writer.data) lt->free(vm, writer.data);
-        lt->push(vm, LT_VALUE_NULL);
-        return 1;
-    }
-    writer_push(vm, &writer, 0);
-    if (writer.failed)
-    {
-        if (writer.data) lt->free(vm, writer.data);
-        lt->push(vm, LT_VALUE_NULL);
-        return 1;
-    }
-    lt_Value result = lt->make_string(vm, writer.data);
-    lt->free(vm, writer.data);
-    lt->push(vm, result);
+    lt->root(vm, value);
+    lt->push(vm, lt_json_stringify(vm, value));
+    lt->unroot(vm, value);
     return 1;
 }
 
-LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
+lt_Value lt_json_open(lt_VM* vm, const lt_Api* api)
 {
     if (!api || api->version != LT_API_VERSION || api->size < sizeof(lt_Api))
         return LT_VALUE_NULL;
 
-    lt = api;
+    lt_json_init(api);
     lt_Value module = lt->make_table(vm);
     lt->table_set(vm, module, lt->make_string(vm, "parse"), lt->make_native(vm, json_parse_native));
     lt->table_set(vm, module, lt->make_string(vm, "stringify"), lt->make_native(vm, json_stringify_native));
     return module;
 }
+
+#ifdef LT_JSON_NATIVE_LIBRARY
+LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
+{
+    return lt_json_open(vm, api);
+}
+#endif

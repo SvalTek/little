@@ -1,0 +1,21 @@
+var delay = fn(value) {
+    return Promise(fn(resolve, reject) {
+        resolve(value)
+    })
+}
+
+var calls = []
+var state = { value: 0 }
+
+var work = async fn() {
+    var value = await delay(7)
+    array.push(calls, "after-await")
+    state.value = value + 1
+    return state.value
+}
+
+work().next(fn(value) {
+    io.print(value)
+    io.print(calls[0])
+    io.print(state.value)
+})

@@ -1,0 +1,90 @@
+io.print("web http")
+
+; web.serve starts a plain HTTP/1.1 server. Port 0 asks the OS for a free
+; port; the bound port is available from server.port after the call returns.
+var server = web.serve(fn(request) {
+    if request.url is "/hello" {
+        return web.Response("hello from little", {
+            headers: { "Content-Type": "text/plain" "X-Demo": "web" }
+        })
+    }
+    if request.url is "/json" {
+        return web.Response("{\"name\":\"Ada\",\"items\":[1,2,3]}", {
+            headers: { "Content-Type": "application/json" }
+        })
+    }
+    if request.url is "/echo" {
+        ; Requests expose their method, headers, and body.
+        return web.Response(string.expand("{{method}} {{body}}", {
+            method: request.method
+            body: request.body
+        }), {
+            status: 201
+            statusText: "Echoed"
+            headers: {
+                "Content-Type": "text/plain"
+                "X-Request-Demo": request.headers["X-Demo"]
+            }
+        })
+    }
+    if request.url is "/later" {
+        ; A handler can return a promise. The server replies when it settles.
+        return Promise(fn(resolve, reject) {
+            setTimeout(fn() {
+                resolve("finished later")
+            }, 1)
+        })
+    }
+    return web.Response("missing", { status: 404 })
+}, { hostname: "127.0.0.1" port: 0 })
+
+var port = string.format("%d", server.port)
+var urlFor = fn(path) {
+    return string.expand("http://127.0.0.1:{{port}}{{path}}", {
+        port
+        path
+    })
+}
+
+; web.fetch returns a promise for a Response. Await it inside an async
+; function, then let mainloop.run drive the fetches and handler promises.
+var demo = async fn() {
+    var helloUrl = urlFor("/hello")
+    var hello = await web.fetch(helloUrl)
+    io.print("hello", hello.status is 200, hello.ok)
+    io.print("hello url", hello.url is helloUrl)
+    io.print("hello header", hello.headers["X-Demo"] is "web")
+    io.print("hello body", hello.body is "hello from little")
+    var text = await hello:text()
+    io.print("hello text", text is "hello from little")
+
+    var jsonResponse = await web.fetch(urlFor("/json"))
+    var data = await jsonResponse:json()
+    io.print("json name", data.name is "Ada")
+    io.print("json items", array.len(data.items) is 3)
+
+    var echo = await web.fetch(urlFor("/echo"), {
+        method: "POST"
+        headers: { "X-Demo": "request" }
+        body: "payload"
+    })
+    io.print("echo", echo.status is 201, echo.statusText is "Echoed")
+    io.print("echo body", echo.body is "POST payload")
+    io.print("echo header", echo.headers["X-Request-Demo"] is "request")
+
+    var later = await web.fetch(urlFor("/later"))
+    io.print("later", later.body is "finished later")
+
+    var missing = await web.fetch(urlFor("/missing"))
+    io.print("missing", missing.status is 404, not missing.ok)
+}
+
+demo().next(fn() {
+    server:close()
+}).catch(fn(reason) {
+    io.print("error", reason)
+    server:close()
+})
+
+var steps = mainloop.run()
+io.print("steps", steps > 0)

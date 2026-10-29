@@ -27,6 +27,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $jsonOut) | Out-Nu
 
 & $Compiler `
     $nativeFlags `
+    -DLT_JSON_NATIVE_LIBRARY `
     (Join-Path $PSScriptRoot "json/json.c") `
     -o $jsonOut
 

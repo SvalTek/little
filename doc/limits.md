@@ -32,6 +32,11 @@ input buffer holds at most 65,535 request bytes, including the request line,
 headers, the terminating blank line, and the body. Oversized requests cause the
 server to close the connection. See [web](std/web.md).
 
+## JSON limits
+
+`json.parse` and `json.stringify` limit arrays and tables to 64 levels of
+nesting. Deeper documents fail to parse, and deeper values fail to serialize.
+
 ## Multi-return limits
 Multi-return counts are stored in `uint8_t`, so one call can produce at most `LT_MAX_RETURNS` returned values. `unpack` stops at that limit. Scalar contexts collapse multi-return values to the first value, or `null` if no values were returned.
 

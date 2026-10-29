@@ -1,0 +1,16 @@
+var response = web.Response("{\"name\":\"Ada\",\"items\":[1,2,3]}")
+
+response:json().next(fn(data) {
+    io.print(data.name)
+    io.print(array.len(data.items))
+    io.print(json.stringify(data.items) is "[1,2,3]")
+
+    var invalid = web.Response("{ nope")
+    invalid:json().next(fn(value) {
+        io.print("invalid fulfilled")
+    }).catch(fn(reason) {
+        io.print(string.contains(reason, "Invalid JSON"))
+    })
+}).catch(fn(reason) {
+    io.print("valid rejected", reason)
+})

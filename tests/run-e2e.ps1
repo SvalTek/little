@@ -57,6 +57,7 @@ if (!$SkipBuild) {
     $optInHarness = Join-Path $buildDir "loadlib-opt-in.exe"
     & $Compiler -std=c11 `
         $includeFlags `
+        @("-I", (Join-Path $repo "src")) `
         (Join-Path $repo "tests/native/loadlib-opt-in.c") `
         (Join-Path $repo "src/little_buffer.c") `
         (Join-Path $repo "src/little.c") `
@@ -72,7 +73,9 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_std_table.c") `
         (Join-Path $repo "src/little_std_string.c") `
         (Join-Path $repo "src/little_std_gc.c") `
+        (Join-Path $repo "src/little_std_json.c") `
         (Join-Path $repo "src/little_async.c") `
+        (Join-Path $repo "nativelib/json/json.c") `
         $threadFlags `
         $dynamicFlags `
         -lssl -lcrypto $socketFlags -lm -o $optInHarness
@@ -89,6 +92,7 @@ if (!$SkipBuild) {
     $moduleLoaderHarness = Join-Path $buildDir "module-loader.exe"
     & $Compiler -std=c11 `
         $includeFlags `
+        @("-I", (Join-Path $repo "src")) `
         (Join-Path $repo "tests/native/module-loader.c") `
         (Join-Path $repo "src/little_buffer.c") `
         (Join-Path $repo "src/little.c") `
@@ -104,7 +108,9 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_std_table.c") `
         (Join-Path $repo "src/little_std_string.c") `
         (Join-Path $repo "src/little_std_gc.c") `
+        (Join-Path $repo "src/little_std_json.c") `
         (Join-Path $repo "src/little_async.c") `
+        (Join-Path $repo "nativelib/json/json.c") `
         $threadFlags `
         $dynamicFlags `
         -lssl -lcrypto $socketFlags -lm -o $moduleLoaderHarness
@@ -166,6 +172,7 @@ if (!$SkipBuild) {
         @{
             Source = Join-Path $repo "nativelib/json/json.c"
             Output = Join-Path $repo "nativelib/json/build/json$nativeExt"
+            Defines = @("-DLT_JSON_NATIVE_LIBRARY")
         },
         @{
             Source = Join-Path $repo "tests/native/reenter.c"
@@ -189,9 +196,11 @@ if (!$SkipBuild) {
 
     foreach ($nativeLib in $nativeLibs) {
         $nativeOut = $nativeLib.Output
+        $defines = if ($nativeLib.ContainsKey('Defines')) { $nativeLib.Defines } else { @() }
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $nativeOut) | Out-Null
         & $Compiler `
             $nativeFlags `
+            $defines `
             $nativeLib.Source `
             -o $nativeOut
 

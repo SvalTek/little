@@ -78,7 +78,8 @@ This keeps libraries portable on Windows and Unix-like platforms without linking
 the library against `little.exe`. The `lt_Api` table is the ABI boundary:
 libraries should validate the pointer, version, and size before using it.
 
-The project includes an optional JSON native library as a larger example:
+The project includes an optional JSON native library as a larger example. The
+CLI also includes the same functionality as the built-in `json` module:
 
 ```js
     var json = loadLibrary("nativelib/json/build/json")
@@ -99,7 +100,7 @@ platform before loading it. The included JSON library can be built with:
 ## Optional library loading
 
 ```c
-    ltstd_open_all(vm);    // pcall, io, math, array, table, string, gc
+    ltstd_open_all(vm);    // pcall, io, math, array, table, string, gc, json, web
     ltstd_open_loadlib(vm); // optional loadLibrary for native code
     ltasync_open_all(vm);  // Promise, timers, task.run
 ```

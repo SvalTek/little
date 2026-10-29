@@ -1,0 +1,13 @@
+var data = json.parse("{\"name\":\"Ada\",\"count\":2,\"ok\":true,\"items\":[1,\"two\",null]}")
+
+io.print(data.name)
+io.print(data.count)
+io.print(data.ok)
+io.print(array.len(data.items))
+io.print(data.items[1])
+io.print(data.items[2] is null)
+io.print(json.stringify([ "Ada", 2, true, null ]))
+io.print(json.parse("{ nope") is null)
+io.print(json.parse("\"\\u0041\""))
+io.print(json.parse("\"\\uD83D\\uDE00\""))
+io.print(json.stringify(1 / 0))

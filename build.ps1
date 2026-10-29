@@ -81,6 +81,7 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     $extraCFlags `
     $platformCFlags `
     $includeFlags `
+    -I (Join-Path $repo "src") `
     $minizFlags `
     (Join-Path $repo "main.c") `
     (Join-Path $repo "src/little_bundle.c") `
@@ -99,7 +100,9 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     (Join-Path $repo "src/little_std_table.c") `
     (Join-Path $repo "src/little_std_string.c") `
     (Join-Path $repo "src/little_std_gc.c") `
+    (Join-Path $repo "src/little_std_json.c") `
     (Join-Path $repo "src/little_async.c") `
+    (Join-Path $repo "nativelib/json/json.c") `
     (Join-Path $repo "nativelib/term/term.c") `
     $minizSources `
     -I $terminalVendor `
