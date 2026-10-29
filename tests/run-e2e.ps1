@@ -311,5 +311,7 @@ if ($failed -gt 0) {
 & (Join-Path $PSScriptRoot "web-decompress-fixture.ps1") -Exe $exe
 & (Join-Path $PSScriptRoot "web-https-fixture.ps1") -Exe $exe
 & (Join-Path $PSScriptRoot "ws-https-fixture.ps1") -Exe $exe
+& (Join-Path $PSScriptRoot "ws-upgrade-frame-fixture.ps1") -Exe $exe
+& (Join-Path $PSScriptRoot "ws-eof-fixture.ps1") -Exe $exe
 
 Write-Host "All e2e tests passed."

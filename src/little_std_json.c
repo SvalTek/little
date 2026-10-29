@@ -146,9 +146,9 @@ static yyjson_mut_val* little_to_json(lt_VM* vm, yyjson_mut_doc* doc, lt_Value v
     {
         double number = lt_get_number(value);
         if (!isfinite(number)) return yyjson_mut_null(doc);
-        if (number >= (double)INT64_MIN && number <= (double)INT64_MAX && number == floor(number))
+        if (number >= (double)INT64_MIN && number < 9223372036854775808.0 && number == floor(number))
             return yyjson_mut_sint(doc, (int64_t)number);
-        if (number >= 0 && number <= (double)UINT64_MAX && number == floor(number))
+        if (number >= 0 && number < 18446744073709551616.0 && number == floor(number))
             return yyjson_mut_uint(doc, (uint64_t)number);
         return yyjson_mut_real(doc, number);
     }

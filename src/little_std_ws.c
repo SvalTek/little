@@ -86,6 +86,9 @@ typedef struct WsConn {
     int close_code;
     char* close_reason;
     char* error;
+    unsigned char* prebuffer;
+    size_t prebuffer_len;
+    size_t prebuffer_pos;
     char* host;
     int port;
     char* path;
@@ -675,6 +678,15 @@ static void ws_client_worker(WsConn* conn)
         error = "WebSocket accept validation failed";
         goto fail;
     }
+    size_t header_total = (size_t)(end + 4 - response);
+    size_t leftover = length - header_total;
+    if (leftover)
+    {
+        conn->prebuffer = malloc(leftover);
+        if (!conn->prebuffer) { error = "Out of memory"; goto fail; }
+        memcpy(conn->prebuffer, response + header_total, leftover);
+        conn->prebuffer_len = leftover;
+    }
     if (!ws_nonblocking(socket_fd)) { error = "Socket initialization failed"; goto fail; }
     atomic_store_explicit(&conn->handshake_ok, 1, memory_order_release);
     atomic_store_explicit(&conn->handshake_ready, 1, memory_order_release);
@@ -788,6 +800,7 @@ static void ws_conn_free(WsConn* conn)
     ws_msg_clear(conn->msg_head);
     free(conn->close_reason);
     free(conn->error);
+    free(conn->prebuffer);
     free(conn->host);
     free(conn->path);
     free(conn->url);
@@ -914,23 +927,37 @@ static void ws_conn_deliver_next(lt_VM* vm, WsConn* conn)
 
 static ssize_t ws_wslay_recv(wslay_event_context_ptr ctx, uint8_t* buffer, size_t length, int flags, void* userdata)
 {
-    (void)ctx;
     (void)flags;
     WsConn* conn = userdata;
+    if (conn->prebuffer_pos < conn->prebuffer_len)
+    {
+        size_t available = conn->prebuffer_len - conn->prebuffer_pos;
+        size_t count = available < length ? available : length;
+        memcpy(buffer, conn->prebuffer + conn->prebuffer_pos, count);
+        conn->prebuffer_pos += count;
+        return (ssize_t)count;
+    }
     int count = ws_io_read(conn, buffer, length);
     if (count == -2) return WSLAY_ERR_WOULDBLOCK;
-    if (count < 0) return WSLAY_ERR_CALLBACK_FAILURE;
+    if (count <= 0)
+    {
+        wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+        return -1;
+    }
     return (ssize_t)count;
 }
 
 static ssize_t ws_wslay_send(wslay_event_context_ptr ctx, const uint8_t* data, size_t length, int flags, void* userdata)
 {
-    (void)ctx;
     (void)flags;
     WsConn* conn = userdata;
     int count = ws_io_write(conn, data, length);
     if (count == -2) return WSLAY_ERR_WOULDBLOCK;
-    if (count < 0) return WSLAY_ERR_CALLBACK_FAILURE;
+    if (count <= 0)
+    {
+        wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+        return -1;
+    }
     return (ssize_t)count;
 }
 
