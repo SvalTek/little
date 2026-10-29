@@ -20,8 +20,15 @@ void ltasync_mark_promise(lt_VM* vm, lt_Object* promise);
 void ltasync_free_promise(lt_VM* vm, lt_Object* promise);
 lt_Value ltasync_get_promise_method(lt_VM* vm, lt_Value promise, lt_Value key);
 uint8_t ltasync_is_async_callable(lt_Value callable);
+uint32_t ltasync_add_owned_poll_hook(lt_VM* vm, lt_PollHook hook, void* context, void (*destroy)(lt_VM*, void*));
+uint8_t ltasync_is_callable(lt_Value value);
 lt_Value ltasync_call(lt_VM* vm, lt_Value callee, uint8_t argc);
 lt_Value ltasync_await(lt_VM* vm, lt_Value value);
+lt_Value ltasync_make_promise(lt_VM* vm);
+void ltasync_settle_promise(lt_VM* vm, lt_Value promise, lt_PromiseState state, lt_Value result);
+
+uint8_t lt_json_parse(lt_VM* vm, const char* text, lt_Value* out);
+lt_Value lt_json_stringify(lt_VM* vm, lt_Value value);
 
 void ltshared_retain(lt_SharedObject* shared);
 void ltshared_release(lt_SharedObject* shared);

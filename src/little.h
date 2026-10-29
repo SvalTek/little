@@ -613,6 +613,9 @@ struct lt_VM {
 
 	/* Appended to preserve offsets of fields exposed by earlier headers. */
 	lt_Buffer temporary_roots;
+	uint64_t rng_state;
+	uint64_t rng_inc;
+	uint8_t rng_seeded;
 };
 
 lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error);

@@ -1,0 +1,32 @@
+var server = web.serve(fn(request) {
+    if request.url is "/start" {
+        return web.Response("", {
+            status: 302
+            headers: { Location: "/final" }
+        })
+    }
+    return "final"
+}, { hostname: "127.0.0.1" port: 0 })
+
+var port = string.format("%d", server.port)
+var start = string.expand("http://127.0.0.1:{{port}}/start", { port })
+
+web.fetch(start, { redirects: 0 }).next(fn(response) {
+    io.print("no redirect", response.status is 302, response.body is "")
+    web.fetch(start, { redirects: 1 }).next(fn(followed) {
+        io.print("redirect", followed.status is 200, followed.body is "final")
+        server:close()
+        mainloop.stop()
+    }).catch(fn(reason) {
+        io.print("redirect error", reason)
+        server:close()
+        mainloop.stop()
+    })
+}).catch(fn(reason) {
+    io.print("request error", reason)
+    server:close()
+    mainloop.stop()
+})
+
+mainloop.run()
+io.print("done")

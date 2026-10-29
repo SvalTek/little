@@ -122,11 +122,10 @@ lt->root(vm, kept);
 lt->unroot(vm, kept); /* optional; callback return releases it */
 ```
 
-The repository's `nativelib/json` directory is an example of a native library
-that returns a module table:
+The repository's `nativelib/native_math` directory is an example of a native
+library that returns a function:
 
 ```js
-var json = loadLibrary("nativelib/json/build/json")
-var data = json.parse("{\"name\":\"Ada\"}")
-io.print(json.stringify(data))
+var add = loadLibrary("nativelib/native_math/build/native_math")
+io.print(add(2, 3))
 ```

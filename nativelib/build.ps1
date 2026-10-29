@@ -22,20 +22,6 @@ if ($env:OS -ne "Windows_NT") {
     $nativeFlags += "-fPIC"
 }
 
-$jsonOut = Join-Path $PSScriptRoot "json/build/json$nativeExt"
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $jsonOut) | Out-Null
-
-& $Compiler `
-    $nativeFlags `
-    (Join-Path $PSScriptRoot "json/json.c") `
-    -o $jsonOut
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Native JSON library build failed with exit code $LASTEXITCODE"
-}
-
-Write-Host "Built $jsonOut"
-
 if (Test-Path $webuiVendor) {
     $webuiOutDir = Join-Path $PSScriptRoot "webui/build"
     $webuiOut = Join-Path $webuiOutDir "webui$nativeExt"

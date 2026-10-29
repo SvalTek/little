@@ -410,6 +410,9 @@ void ltstd_open_all(lt_VM* vm)
     ltstd_open_table(vm);
     ltstd_open_string(vm);
     ltstd_open_gc(vm);
+    ltstd_open_json(vm);
+    ltstd_open_web(vm);
+    ltstd_open_ws(vm);
 }
 
 char* ltstd_tostring(lt_VM* vm, lt_Value val)

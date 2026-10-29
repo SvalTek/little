@@ -1,0 +1,9 @@
+server url /chat
+client open
+sent true
+server text hello
+client text hello
+sent binary true
+server binary 3.000000 255.000000
+client binary 3.000000 255.000000
+done

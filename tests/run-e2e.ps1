@@ -19,6 +19,7 @@ if ($toolchainBin -and (Test-Path $toolchainBin)) {
 $Compiler = if ($Compiler) { $Compiler } elseif ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin/gcc.exe" } else { "gcc" }
 $includeFlags = if ($env:INCLUDES_PATH) { @("-I", $env:INCLUDES_PATH) } else { @() }
 $platformCFlags = if ($env:OS -eq "Windows_NT") { @() } else { @("-D_XOPEN_SOURCE=700") }
+$socketFlags = if ($env:OS -eq "Windows_NT") { @("-lws2_32", "-lcrypt32") } else { @() }
 $buildDir = Join-Path $repo "build"
 $exe = if ($Exe) { $Exe } else { Join-Path $buildDir "little-e2e.exe" }
 
@@ -56,11 +57,18 @@ if (!$SkipBuild) {
     $optInHarness = Join-Path $buildDir "loadlib-opt-in.exe"
     & $Compiler -std=c11 `
         $includeFlags `
+        @("-I", (Join-Path $repo "src")) `
+        @("-I", (Join-Path $repo "vendor/llhttp")) `
+        @("-I", (Join-Path $repo "vendor/yyjson")) `
+        @("-I", (Join-Path $repo "vendor/wslay/lib")) `
+        @("-I", (Join-Path $repo "vendor/wslay/lib/includes")) `
+        @("-I", (Join-Path $repo "vendor/pcg")) `
         (Join-Path $repo "tests/native/loadlib-opt-in.c") `
         (Join-Path $repo "src/little_buffer.c") `
         (Join-Path $repo "src/little.c") `
         (Join-Path $repo "src/little_common.c") `
         (Join-Path $repo "src/little_std.c") `
+        (Join-Path $repo "src/little_std_web.c") `
         (Join-Path $repo "src/little_loadlib.c") `
         (Join-Path $repo "src/little_std_io.c") `
         (Join-Path $repo "src/little_std_math.c") `
@@ -70,10 +78,22 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_std_table.c") `
         (Join-Path $repo "src/little_std_string.c") `
         (Join-Path $repo "src/little_std_gc.c") `
+        (Join-Path $repo "src/little_std_json.c") `
         (Join-Path $repo "src/little_async.c") `
+        (Join-Path $repo "src/little_std_ws.c") `
+        (Join-Path $repo "vendor/llhttp/llhttp.c") `
+        (Join-Path $repo "vendor/llhttp/api.c") `
+        (Join-Path $repo "vendor/llhttp/http.c") `
+        (Join-Path $repo "vendor/yyjson/yyjson.c") `
+        (Join-Path $repo "vendor/wslay/lib/wslay_event.c") `
+        (Join-Path $repo "vendor/wslay/lib/wslay_frame.c") `
+        (Join-Path $repo "vendor/wslay/lib/wslay_net.c") `
+        (Join-Path $repo "vendor/wslay/lib/wslay_queue.c") `
+        (Join-Path $repo "vendor/wslay/lib/wslay_stack.c") `
+        (Join-Path $repo "vendor/pcg/pcg_basic.c") `
         $threadFlags `
         $dynamicFlags `
-        -lm -o $optInHarness
+        -lssl -lcrypto -lcurl $socketFlags -lm -o $optInHarness
 
     if ($LASTEXITCODE -ne 0) {
         throw "loadLibrary opt-in harness build failed with exit code $LASTEXITCODE"
@@ -87,11 +107,18 @@ if (!$SkipBuild) {
     $moduleLoaderHarness = Join-Path $buildDir "module-loader.exe"
     & $Compiler -std=c11 `
         $includeFlags `
+        @("-I", (Join-Path $repo "src")) `
+        @("-I", (Join-Path $repo "vendor/llhttp")) `
+        @("-I", (Join-Path $repo "vendor/yyjson")) `
+        @("-I", (Join-Path $repo "vendor/wslay/lib")) `
+        @("-I", (Join-Path $repo "vendor/wslay/lib/includes")) `
+        @("-I", (Join-Path $repo "vendor/pcg")) `
         (Join-Path $repo "tests/native/module-loader.c") `
         (Join-Path $repo "src/little_buffer.c") `
         (Join-Path $repo "src/little.c") `
         (Join-Path $repo "src/little_common.c") `
         (Join-Path $repo "src/little_std.c") `
+        (Join-Path $repo "src/little_std_web.c") `
         (Join-Path $repo "src/little_loadlib.c") `
         (Join-Path $repo "src/little_std_io.c") `
         (Join-Path $repo "src/little_std_math.c") `
@@ -101,10 +128,22 @@ if (!$SkipBuild) {
         (Join-Path $repo "src/little_std_table.c") `
         (Join-Path $repo "src/little_std_string.c") `
         (Join-Path $repo "src/little_std_gc.c") `
+        (Join-Path $repo "src/little_std_json.c") `
         (Join-Path $repo "src/little_async.c") `
+        (Join-Path $repo "src/little_std_ws.c") `
+        (Join-Path $repo "vendor/llhttp/llhttp.c") `
+        (Join-Path $repo "vendor/llhttp/api.c") `
+        (Join-Path $repo "vendor/llhttp/http.c") `
+        (Join-Path $repo "vendor/yyjson/yyjson.c") `
+        (Join-Path $repo "vendor/wslay/lib/wslay_event.c") `
+        (Join-Path $repo "vendor/wslay/lib/wslay_frame.c") `
+        (Join-Path $repo "vendor/wslay/lib/wslay_net.c") `
+        (Join-Path $repo "vendor/wslay/lib/wslay_queue.c") `
+        (Join-Path $repo "vendor/wslay/lib/wslay_stack.c") `
+        (Join-Path $repo "vendor/pcg/pcg_basic.c") `
         $threadFlags `
         $dynamicFlags `
-        -lm -o $moduleLoaderHarness
+        -lssl -lcrypto -lcurl $socketFlags -lm -o $moduleLoaderHarness
 
     if ($LASTEXITCODE -ne 0) {
         throw "module loader harness build failed with exit code $LASTEXITCODE"
@@ -161,10 +200,6 @@ if (!$SkipBuild) {
             Output = Join-Path $repo "nativelib/native_init/build/native_init/init$nativeExt"
         },
         @{
-            Source = Join-Path $repo "nativelib/json/json.c"
-            Output = Join-Path $repo "nativelib/json/build/json$nativeExt"
-        },
-        @{
             Source = Join-Path $repo "tests/native/reenter.c"
             Output = Join-Path $repo "tests/native/reenter$nativeExt"
         },
@@ -186,9 +221,11 @@ if (!$SkipBuild) {
 
     foreach ($nativeLib in $nativeLibs) {
         $nativeOut = $nativeLib.Output
+        $defines = if ($nativeLib.ContainsKey('Defines')) { $nativeLib.Defines } else { @() }
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $nativeOut) | Out-Null
         & $Compiler `
             $nativeFlags `
+            $defines `
             $nativeLib.Source `
             -o $nativeOut
 
@@ -268,5 +305,13 @@ foreach ($test in $tests) {
 if ($failed -gt 0) {
     throw "$failed e2e test(s) failed"
 }
+
+& (Join-Path $PSScriptRoot "web-loopback.ps1") -Exe $exe
+& (Join-Path $PSScriptRoot "web-fetch-fixture.ps1") -Exe $exe
+& (Join-Path $PSScriptRoot "web-decompress-fixture.ps1") -Exe $exe
+& (Join-Path $PSScriptRoot "web-https-fixture.ps1") -Exe $exe
+& (Join-Path $PSScriptRoot "ws-https-fixture.ps1") -Exe $exe
+& (Join-Path $PSScriptRoot "ws-upgrade-frame-fixture.ps1") -Exe $exe
+& (Join-Path $PSScriptRoot "ws-eof-fixture.ps1") -Exe $exe
 
 Write-Host "All e2e tests passed."

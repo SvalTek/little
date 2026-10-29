@@ -1,0 +1,11 @@
+var missingUrl = pcall(fn() { web.fetch() })
+var badUrl = pcall(fn() { web.fetch(123) })
+var missingHandler = pcall(fn() { web.serve() })
+var badHandler = pcall(fn() { web.serve(123) })
+
+io.print(not missingUrl.ok)
+io.print(not badUrl.ok)
+io.print(not missingHandler.ok)
+io.print(not badHandler.ok)
+io.print(type web.fetch is "function")
+io.print(type web.serve is "function")

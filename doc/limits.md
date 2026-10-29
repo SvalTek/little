@@ -23,6 +23,26 @@ Little is intentionally small and uses fixed-size VM stacks for predictable embe
 
 Function and call argument overflow is a parse error. Branch-chain overflow is a compile error. Both are intended to fail cleanly rather than corrupt parser/compiler memory.
 
+## Web server limits
+
+Each `web.serve` server handles at most 8 client connections at once; further
+connections can wait in the listen backlog until a slot is available, subject
+to backlog capacity. The fixed
+input buffer holds at most 65,535 request bytes, including the request line,
+headers, the terminating blank line, and the body. Oversized requests cause the
+server to close the connection. See [web](std/web.md).
+
+## JSON limits
+
+`json.parse` and `json.stringify` limit arrays and tables to 64 levels of
+nesting. Deeper documents fail to parse, and deeper values fail to serialize.
+
+## WebSocket limits
+
+Each `ws.serve` server handles at most 8 connections. A message or queued
+outbound payload is limited to 4 MiB, and only one `socket:next()` promise may
+be pending per connection.
+
 ## Multi-return limits
 Multi-return counts are stored in `uint8_t`, so one call can produce at most `LT_MAX_RETURNS` returned values. `unpack` stops at that limit. Scalar contexts collapse multi-return values to the first value, or `null` if no values were returned.
 

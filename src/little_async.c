@@ -70,6 +70,7 @@ typedef struct {
 	lt_PollHook hook;
 	void* context;
 	uint8_t removed;
+	void (*destroy)(lt_VM*, void*);
 } lt_PollHookEntry;
 
 typedef enum {
@@ -1066,7 +1067,7 @@ static lt_Value _lt_current_receiver(lt_VM* vm)
 	return vm->current->callee->bound_native.receiver;
 }
 
-static uint8_t _lt_is_callable(lt_Value value)
+uint8_t ltasync_is_callable(lt_Value value)
 {
 	return LT_IS_FUNCTION(value) || LT_IS_CLOSURE(value) || LT_IS_NATIVE(value) ||
 		(LT_IS_OBJECT(value) && LT_GET_OBJECT(value)->type == LT_OBJECT_BOUND_NATIVE);
@@ -1170,6 +1171,11 @@ static void _lt_worker_destroy(lt_VM* vm, lt_Worker* worker, uint8_t join)
  */
 void ltasync_destroy_state(lt_VM* vm)
 {
+	for (uint32_t i = 0; i < vm->poll_hooks.length; ++i)
+	{
+		lt_PollHookEntry* entry = lt_buffer_at(&vm->poll_hooks, i);
+		if (entry->destroy) entry->destroy(vm, entry->context);
+	}
 	for (uint32_t i = 0; i < vm->workers.length; ++i)
 	{
 		lt_Worker* worker = *(lt_Worker**)lt_buffer_at(&vm->workers, i);
@@ -1191,10 +1197,15 @@ void ltasync_destroy_state(lt_VM* vm)
  */
 uint32_t lt_add_poll_hook(lt_VM* vm, lt_PollHook hook, void* context)
 {
+	return ltasync_add_owned_poll_hook(vm, hook, context, 0);
+}
+
+uint32_t ltasync_add_owned_poll_hook(lt_VM* vm, lt_PollHook hook, void* context, void (*destroy)(lt_VM*, void*))
+{
 	if (!hook) return 0;
 	uint32_t id = vm->next_poll_hook_id++;
 	if (id == 0) id = vm->next_poll_hook_id++;
-	lt_PollHookEntry entry = { id, hook, context, 0 };
+	lt_PollHookEntry entry = { id, hook, context, 0, destroy };
 	lt_buffer_push(vm, &vm->poll_hooks, &entry);
 	return id;
 }
@@ -1247,7 +1258,11 @@ uint8_t ltasync_poll_hooks(lt_VM* vm, uint8_t* pending)
 	for (uint32_t i = 0; i < vm->poll_hooks.length; ++i)
 	{
 		lt_PollHookEntry* entry = lt_buffer_at(&vm->poll_hooks, i);
-		if (entry->removed) lt_buffer_cycle(&vm->poll_hooks, i--);
+		if (entry->removed)
+		{
+			if (entry->destroy) entry->destroy(vm, entry->context);
+			lt_buffer_cycle(&vm->poll_hooks, i--);
+		}
 	}
 	return did_work;
 }
@@ -1315,9 +1330,11 @@ static uint8_t lt_poll_internal(lt_VM* vm, int allow_sleep)
 {
 	uint8_t did_work = 0;
 	uint8_t has_pending = 0;
+	uint8_t hook_pending = 0;
 	uint8_t has_next_timer = 0;
 	uint64_t next_timer_due = 0;
-	did_work = ltasync_poll_hooks(vm, &has_pending);
+	did_work = ltasync_poll_hooks(vm, &hook_pending);
+	has_pending = hook_pending;
 
 	if (vm->async_calls.length > 0)
 	{
@@ -1488,7 +1505,7 @@ static uint8_t lt_poll_internal(lt_VM* vm, int allow_sleep)
 		if (has_next_timer && next_timer_due > now)
 		{
 			uint64_t until_due = next_timer_due - now;
-			if (vm->workers.length > 0 && until_due > 10) until_due = 10;
+			if ((vm->workers.length > 0 || hook_pending) && until_due > 10) until_due = 10;
 			if (until_due > UINT32_MAX) until_due = UINT32_MAX;
 			sleep_ms = (uint32_t)until_due;
 		}
@@ -1543,7 +1560,7 @@ static uint8_t _lt_add_timer(lt_VM* vm, uint8_t argc, uint8_t repeat)
 	lt_Value delay = lt_pop(vm);
 	lt_Value callback = lt_pop(vm);
 	if (!LT_IS_NUMBER(delay)) lt_runtime_error(vm, "Expected timer delay to be a number!");
-	if (!_lt_is_callable(callback)) lt_runtime_error(vm, "Expected timer callback to be callable!");
+	if (!ltasync_is_callable(callback)) lt_runtime_error(vm, "Expected timer callback to be callable!");
 
 	double delay_number = lt_get_number(delay);
 	if (delay_number < 0) lt_runtime_error(vm, "Expected timer delay to be non-negative!");
@@ -1595,7 +1612,7 @@ uint8_t ltasync_native_promise(lt_VM* vm, uint8_t argc)
 {
 	if (argc != 1) lt_runtime_error(vm, "Expected executor function for Promise!");
 	lt_Value executor = lt_pop(vm);
-	if (!_lt_is_callable(executor)) lt_runtime_error(vm, "Expected Promise executor to be callable!");
+	if (!ltasync_is_callable(executor)) lt_runtime_error(vm, "Expected Promise executor to be callable!");
 
 	lt_Value promise = _lt_make_promise(vm);
 	lt_nocollect(vm, LT_GET_OBJECT(promise));
@@ -1634,7 +1651,7 @@ static uint8_t _lt_add_promise_callback(lt_VM* vm, uint8_t argc, lt_ReactionKind
 {
 	if (argc != 1) lt_runtime_error(vm, "Expected one promise callback!");
 	lt_Value callback = lt_pop(vm);
-	if (!_lt_is_callable(callback)) lt_runtime_error(vm, "Expected promise callback to be callable!");
+	if (!ltasync_is_callable(callback)) lt_runtime_error(vm, "Expected promise callback to be callable!");
 
 	lt_Value promise = _lt_current_receiver(vm);
 	if (!LT_IS_OBJECT(promise) || LT_GET_OBJECT(promise)->type != LT_OBJECT_PROMISE)
@@ -1956,7 +1973,7 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 	if (argc != 2) lt_runtime_error(vm, "Expected callable and state for task.run!");
 	lt_Value state = lt_pop(vm);
 	lt_Value callable = lt_pop(vm);
-	if (!_lt_is_callable(callable) || LT_IS_NATIVE(callable) ||
+	if (!ltasync_is_callable(callable) || LT_IS_NATIVE(callable) ||
 		(LT_IS_OBJECT(callable) && LT_GET_OBJECT(callable)->type == LT_OBJECT_BOUND_NATIVE))
 		lt_runtime_error(vm, "Expected task.run callable to be a Little function!");
 
@@ -2108,4 +2125,14 @@ void ltasync_open_mainloop(lt_VM* vm)
 	lt_table_set(vm, mainloop, lt_make_string(vm, "poll"), lt_make_native(vm, ltasync_native_mainloop_poll));
 	lt_table_set(vm, mainloop, lt_make_string(vm, "stop"), lt_make_native(vm, ltasync_native_mainloop_stop));
 	lt_table_set(vm, vm->global, lt_make_string(vm, "mainloop"), mainloop);
+}
+
+lt_Value ltasync_make_promise(lt_VM* vm)
+{
+    return _lt_make_promise(vm);
+}
+
+void ltasync_settle_promise(lt_VM* vm, lt_Value promise, lt_PromiseState state, lt_Value result)
+{
+    _lt_settle_promise(vm, promise, state, result);
 }

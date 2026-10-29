@@ -2291,6 +2291,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			NEXT();
 			await->await.expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 			current = _lt_parse_expression(vm, p, current, await->await.expr);
+			last = current - 1;
 			lt_buffer_push(vm, &result, &await);
 		} break;
 

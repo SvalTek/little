@@ -67,7 +67,7 @@ build/little.exe -L native scripts/main.little
 
 ### Bundling Scripts
 
-The CLI can create a self-contained executable containing Little source files:
+The CLI can create an executable containing Little source files:
 
 ```text
 little --bundle app/main.little --include app -o app.exe
@@ -79,9 +79,10 @@ embedded source before normal filesystem module lookup, so embedded modules
 are available even when the original source files are not present. Arguments
 after `--` are passed to the bundled script.
 
-Bundling embeds Little source only. Native libraries loaded with
-`loadLibrary(...)` remain external and must be installed for the target
-platform.
+Bundling embeds Little source only. OpenSSL runtime libraries and native
+libraries loaded with `loadLibrary(...)` remain external. On Windows, place
+the matching OpenSSL DLLs next to the bundled executable or make them available
+on PATH. HTTPS uses the target's certificate trust configuration.
 
 The CLI accepts one script path, `-e SOURCE` for a short inline program, or
 `-i` / `--interactive` for an editable terminal prompt. The prompt keeps its
@@ -112,8 +113,14 @@ repl_echo = true
 Repeat `module_path` or `library_path` to register more paths. `repl_echo`
 defaults to `false`.
 
-For a local Windows compiler, copy `.env.example` to `.env` and set `GCC_PATH`
-to the w64devkit root; the Taskfile loads that file without committing it.
+The CLI and standard library require OpenSSL and libcurl headers and libraries to build.
+On Debian or Ubuntu, install `libssl-dev`, `libcurl4-openssl-dev`, `openssl`, and `ca-certificates`.
+On Windows, install MSYS2 UCRT64 packages `mingw-w64-ucrt-x86_64-gcc`,
+`mingw-w64-ucrt-x86_64-make`, `mingw-w64-ucrt-x86_64-openssl`, `mingw-w64-ucrt-x86_64-curl`,
+plus the MSYS2 `openssl` CLI for tests. Copy `.env.example` to `.env` and set
+`GCC_PATH` to the UCRT64 root; the Taskfile loads it without committing it.
+Keep the UCRT64 `bin` directory on PATH when running builds and tests, including
+tests that copy executables or create bundles in other directories.
 
 ### CI and release packages
 
@@ -124,15 +131,18 @@ produce development packages after merges; pushes to `main` produce optimized
 release packages after merges from `develop`. The workflow can also be manually
 run for any ref, defaulting to `develop`, with either package type.
 
-Each run uploads one self-contained package for every target:
+Each run uploads one package for every target:
 
-* `little-windows-x64.zip` contains `little.exe`, `libs/json/json.dll`, and
-  `libs/webui/webui.dll`.
-* `little-linux-x64.zip` contains `little`, `libs/json/json.so`, and
+* `little-windows-x64.zip` contains `little.exe`, libcurl and OpenSSL runtime
+  DLLs (including their non-system dependencies), and `libs/webui/webui.dll`.
+* `little-linux-x64.zip` contains `little` and
   `libs/webui/webui.so`.
 
-The produced packages are portable: the executable is at the archive root and
-native libraries are below `./libs`. The CLI also recognizes an installed
+The executable is at the archive root and native libraries are below `./libs`.
+The Linux package requires compatible system OpenSSL and libcurl shared
+libraries. By default, certificate verification uses the Windows certificate
+trust store on Windows and the configured CA trust paths on Linux. The
+packages do not include a CA trust store. The CLI also recognizes an installed
 `bin` plus `lib/little` layout for manual deployments. Native packages may use
 either `name/name.<platform-extension>` or the flat `name.<platform-extension>`
 layout.
@@ -140,7 +150,7 @@ layout.
 The supported build entry point is `build.ps1` (normally through `task build`).
 It builds the vendored PDCursesMod backend and links it statically into the
 CLI: WinCon on Windows and VT on Linux. This keeps the interactive CLI
-self-contained.
+independent of a separate curses installation.
 ---
 ## Links
 * **[Language overview](doc/lt.md)**

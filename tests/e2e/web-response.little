@@ -1,0 +1,34 @@
+var defaultResponse = web.Response()
+io.print(defaultResponse.status is 200)
+io.print(defaultResponse.statusText is "OK")
+io.print(defaultResponse.ok)
+io.print(defaultResponse.body is "")
+io.print(type defaultResponse.headers is "table")
+
+fn makeResponse() {
+    return web.Response("hello", {
+        status: 418
+        statusText: "Teapot"
+        headers: { "X-Message": "retained" }
+    })
+}
+var response = makeResponse()
+gc.collect()
+io.print(response.status is 418)
+io.print(response.statusText is "Teapot")
+io.print(not response.ok)
+io.print(response.body is "hello")
+io.print(response.headers["X-Message"] is "retained")
+response.headers.owner = response
+gc.collect()
+io.print(response.headers.owner is response)
+io.print(response.headers["X-Message"] is "retained")
+response = null
+gc.collect()
+
+io.print(not pcall(fn() { web.Response(42) }).ok)
+io.print(not pcall(fn() { web.Response("", 42) }).ok)
+io.print(not pcall(fn() { web.Response("", { status: 99 }) }).ok)
+io.print(not pcall(fn() { web.Response("", { status: 200.5 }) }).ok)
+io.print(not pcall(fn() { web.Response("", { statusText: "bad\nline" }) }).ok)
+io.print(not pcall(fn() { web.Response("", { headers: "bad" }) }).ok)

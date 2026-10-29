@@ -1,5 +1,7 @@
 #include "little_std.h"
+#include "pcg_basic.h"
 
+#include <openssl/rand.h>
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
@@ -121,22 +123,37 @@ static uint8_t _lt_rad(lt_VM* vm, uint8_t argc)
     return 1;
 }
 
-static uint8_t _lt_random_seeded = 0;
-
-static void _lt_seed_random_once(void)
+static void _lt_seed_random_once(lt_VM* vm)
 {
-    if (!_lt_random_seeded)
-    {
-        srand((unsigned int)time(0));
-        _lt_random_seeded = 1;
-    }
+    if (vm->rng_seeded) return;
+    uint64_t seed = 0;
+    uint64_t sequence = 0;
+    if (RAND_bytes((unsigned char*)&seed, (int)sizeof(seed)) != 1)
+        seed = (uint64_t)time(0) ^ (uint64_t)(uintptr_t)vm;
+    if (RAND_bytes((unsigned char*)&sequence, (int)sizeof(sequence)) != 1)
+        sequence = 0xda3e39cb94b95bdbULL;
+    pcg32_random_t rng;
+    pcg32_srandom_r(&rng, seed, sequence);
+    vm->rng_state = rng.state;
+    vm->rng_inc = rng.inc;
+    vm->rng_seeded = 1;
+}
+
+static uint32_t _lt_random_next(lt_VM* vm)
+{
+    _lt_seed_random_once(vm);
+    pcg32_random_t rng = { vm->rng_state, vm->rng_inc };
+    uint32_t value = pcg32_random_r(&rng);
+    vm->rng_state = rng.state;
+    vm->rng_inc = rng.inc;
+    return value;
 }
 
 static uint8_t _lt_random(lt_VM* vm, uint8_t argc)
 {
     if (argc != 0) lt_runtime_error(vm, "Expected no arguments to math.random!");
-    _lt_seed_random_once();
-    lt_push(vm, LT_VALUE_NUMBER((double)rand() / ((double)RAND_MAX + 1.0)));
+    uint64_t value = ((uint64_t)_lt_random_next(vm) << 32) | _lt_random_next(vm);
+    lt_push(vm, LT_VALUE_NUMBER((double)(value >> 11) * (1.0 / 9007199254740992.0)));
     return 1;
 }
 
@@ -148,8 +165,17 @@ static uint8_t _lt_randomint(lt_VM* vm, uint8_t argc)
     int32_t min = (int32_t)min_arg;
     int32_t max = (int32_t)max_arg;
     if (max < min) lt_runtime_error(vm, "Expected max to be >= min in math.randomInt!");
-    _lt_seed_random_once();
-    int32_t value = min + (rand() % (max - min + 1));
+    uint64_t range = (uint64_t)((int64_t)max - (int64_t)min) + 1;
+    uint32_t offset;
+    if (range > UINT32_MAX) offset = _lt_random_next(vm);
+    else
+    {
+        pcg32_random_t rng = { vm->rng_state, vm->rng_inc };
+        offset = pcg32_boundedrand_r(&rng, (uint32_t)range);
+        vm->rng_state = rng.state;
+        vm->rng_inc = rng.inc;
+    }
+    int32_t value = min + (int32_t)offset;
     lt_push(vm, LT_VALUE_NUMBER(value));
     return 1;
 }
@@ -158,8 +184,11 @@ static uint8_t _lt_seed(lt_VM* vm, uint8_t argc)
 {
     if (argc != 1) lt_runtime_error(vm, "Expected one argument to math.seed!");
     double seed = _lt_math_pop_number(vm, "Expected argument to math.seed to be number!");
-    srand((unsigned int)seed);
-    _lt_random_seeded = 1;
+    pcg32_random_t rng;
+    pcg32_srandom_r(&rng, (uint64_t)(uint32_t)seed, 0xda3e39cb94b95bdbULL);
+    vm->rng_state = rng.state;
+    vm->rng_inc = rng.inc;
+    vm->rng_seeded = 1;
     return 0;
 }
 
