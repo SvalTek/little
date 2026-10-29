@@ -33,3 +33,7 @@ reason]])` starts the close handshake. The only user-supplied close codes are
 `socket.url` and `socket.closed` are getters. Ping/pong frames are handled by
 the WebSocket layer. Subprotocols, extensions, and `permessage-deflate` are not
 negotiated.
+
+Use `.next()` chains for independent readers. The current async runtime polls
+`await` inline, so having both ends of a connection wait with `await` in the
+same VM can stall; the promise stream is the intended concurrent API.
