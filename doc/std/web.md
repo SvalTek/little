@@ -16,7 +16,9 @@ HTTP.
 `web.fetch(url [, init])` returns a promise for a `Response`. The optional
 `init` table can contain `method`, `headers`, and `body`. The default method is
 `GET`; headers are a table of string names and values, and the body is a
-string. Network failures reject the promise.
+string. Network failures reject the promise. The client also accepts
+`redirects` (integer `0..20`, default `0`), `proxy` (string, default empty and
+disabled), and `decompress` (boolean, default `false`).
 
 Responses expose `status`, `statusText`, `ok`, `url`, `headers`, and `body`.
 `ok` is true for status codes from 200 through 299. `response:text()` returns a

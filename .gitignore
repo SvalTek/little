@@ -5,6 +5,14 @@ dist/
 vendor/*
 !vendor/webui/
 !vendor/webui/**
+!vendor/llhttp/
+!vendor/llhttp/**
+!vendor/wslay/
+!vendor/wslay/**
+!vendor/yyjson/
+!vendor/yyjson/**
+!vendor/pcg/
+!vendor/pcg/**
 .env
 !.env.example
 tests/native/reenter.dll

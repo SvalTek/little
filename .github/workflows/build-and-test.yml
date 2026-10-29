@@ -39,14 +39,14 @@ jobs:
           persist-credentials: false
       - uses: go-task/setup-task@v2
       - name: Install OpenSSL development files
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev openssl ca-certificates
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libcurl4-openssl-dev openssl ca-certificates
       - name: Build CLI
         run: task build
       - name: Build release CLI
         if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release')
         run: task build:release
       - name: Build native libraries
-        if: hashFiles('nativelib/json/json.c') != ''
+        if: hashFiles('nativelib/webui/**') != ''
         run: task build:nativelibs
       - uses: actions/upload-artifact@v4
         with:
@@ -54,7 +54,6 @@ jobs:
           path: |
             build/little.exe
             build/little-release.exe
-            nativelib/json/build/json.so
             nativelib/webui/build/webui.so
           if-no-files-found: error
 
@@ -70,7 +69,7 @@ jobs:
           persist-credentials: false
       - uses: go-task/setup-task@v2
       - name: Install OpenSSL development files
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev openssl ca-certificates
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libcurl4-openssl-dev openssl ca-certificates
       - uses: actions/download-artifact@v4
         with:
           name: build-linux-x64
@@ -93,21 +92,21 @@ jobs:
           name: build-linux-x64
           path: .
       - name: Create development package
-        if: hashFiles('nativelib/json/json.c') != '' && github.ref != 'refs/heads/main' && !(github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release')
+        if: hashFiles('nativelib/webui/**') != '' && github.ref != 'refs/heads/main' && !(github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release')
         shell: pwsh
         run: ./scripts/package.ps1 -Target linux-x64
       - name: Create release package
-        if: hashFiles('nativelib/json/json.c') != '' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release'))
+        if: hashFiles('nativelib/webui/**') != '' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release'))
         shell: pwsh
         run: |
           ./scripts/package.ps1 -Target linux-x64 -Binary build/little-release.exe
       - name: Mark package ready
         id: package-ready
-        if: hashFiles('nativelib/json/json.c') != ''
+        if: hashFiles('nativelib/webui/**') != ''
         shell: pwsh
         run: '"ready=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append'
       - uses: actions/upload-artifact@v4
-        if: hashFiles('nativelib/json/json.c') != ''
+        if: hashFiles('nativelib/webui/**') != ''
         with:
           name: little-linux-x64
           path: dist/little-linux-x64.zip
@@ -127,7 +126,7 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make mingw-w64-ucrt-x86_64-openssl openssl
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-curl openssl
       - name: Configure toolchain
         shell: pwsh
         run: |
@@ -143,22 +142,21 @@ jobs:
         if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release')
         run: task build:release
       - name: Build native libraries
-        if: hashFiles('nativelib/json/json.c') != ''
+        if: hashFiles('nativelib/webui/**') != ''
         run: task build:nativelibs
-      - name: Collect OpenSSL runtime DLLs
+      - name: Collect runtime DLLs
         shell: pwsh
         run: |
           $gccPath = (Get-Content .env | Where-Object { $_ -like 'GCC_PATH=*' }) -replace '^GCC_PATH=', ''
-          Copy-Item -LiteralPath (Join-Path $gccPath 'bin/libssl-3-x64.dll'), (Join-Path $gccPath 'bin/libcrypto-3-x64.dll') -Destination build
+          $env:GCC_PATH = $gccPath
+          ./scripts/stage-runtime.ps1 -Output build
       - uses: actions/upload-artifact@v4
         with:
           name: build-windows-x64
           path: |
             build/little.exe
             build/little-release.exe
-            build/libssl-3-x64.dll
-            build/libcrypto-3-x64.dll
-            nativelib/json/build/json.dll
+            build/*.dll
             nativelib/webui/build/webui.dll
           if-no-files-found: error
 
@@ -178,7 +176,7 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make mingw-w64-ucrt-x86_64-openssl openssl
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-curl openssl
       - name: Configure toolchain
         shell: pwsh
         run: |
@@ -212,16 +210,16 @@ jobs:
           name: build-windows-x64
           path: .
       - name: Create development package
-        if: hashFiles('nativelib/json/json.c') != '' && github.ref != 'refs/heads/main' && !(github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release')
+        if: hashFiles('nativelib/webui/**') != '' && github.ref != 'refs/heads/main' && !(github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release')
         shell: pwsh
         run: ./scripts/package.ps1 -Target windows-x64
       - name: Create release package
-        if: hashFiles('nativelib/json/json.c') != '' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release'))
+        if: hashFiles('nativelib/webui/**') != '' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.package_kind == 'release'))
         shell: pwsh
         run: |
           ./scripts/package.ps1 -Target windows-x64 -Binary build/little-release.exe
       - name: Smoke test packaged executable and bundle
-        if: hashFiles('nativelib/json/json.c') != ''
+        if: hashFiles('nativelib/webui/**') != ''
         shell: pwsh
         run: |
           Expand-Archive dist/little-windows-x64.zip -DestinationPath build/package-smoke
@@ -235,11 +233,11 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $output -ne 'null') { throw 'Packaged bundle failed.' }
       - name: Mark package ready
         id: package-ready
-        if: hashFiles('nativelib/json/json.c') != ''
+        if: hashFiles('nativelib/webui/**') != ''
         shell: pwsh
         run: '"ready=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append'
       - uses: actions/upload-artifact@v4
-        if: hashFiles('nativelib/json/json.c') != ''
+        if: hashFiles('nativelib/webui/**') != ''
         with:
           name: little-windows-x64
           path: dist/little-windows-x64.zip

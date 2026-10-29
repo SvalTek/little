@@ -27,8 +27,6 @@ lt_Value ltasync_await(lt_VM* vm, lt_Value value);
 lt_Value ltasync_make_promise(lt_VM* vm);
 void ltasync_settle_promise(lt_VM* vm, lt_Value promise, lt_PromiseState state, lt_Value result);
 
-void lt_json_init(const lt_Api* api);
-lt_Value lt_json_open(lt_VM* vm, const lt_Api* api);
 uint8_t lt_json_parse(lt_VM* vm, const char* text, lt_Value* out);
 lt_Value lt_json_stringify(lt_VM* vm, lt_Value value);
 

@@ -82,6 +82,13 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     $platformCFlags `
     $includeFlags `
     -I (Join-Path $repo "src") `
+    -I (Join-Path $repo "vendor/llhttp") `
+    -I (Join-Path $repo "vendor/pcg") `
+    -I (Join-Path $repo "vendor/wslay/lib") `
+    -I (Join-Path $repo "vendor/wslay/lib/includes") `
+    -I (Join-Path $repo "vendor/yyjson") `
+    -DYYJSON_READER_DEPTH_LIMIT=64 `
+    -DYYJSON_WRITER_DEPTH_LIMIT=64 `
     $minizFlags `
     (Join-Path $repo "main.c") `
     (Join-Path $repo "src/little_bundle.c") `
@@ -101,8 +108,18 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     (Join-Path $repo "src/little_std_string.c") `
     (Join-Path $repo "src/little_std_gc.c") `
     (Join-Path $repo "src/little_std_json.c") `
+    (Join-Path $repo "src/little_std_ws.c") `
     (Join-Path $repo "src/little_async.c") `
-    (Join-Path $repo "nativelib/json/json.c") `
+    (Join-Path $repo "vendor/llhttp/llhttp.c") `
+    (Join-Path $repo "vendor/llhttp/api.c") `
+    (Join-Path $repo "vendor/llhttp/http.c") `
+    (Join-Path $repo "vendor/yyjson/yyjson.c") `
+    (Join-Path $repo "vendor/pcg/pcg_basic.c") `
+    (Join-Path $repo "vendor/wslay/lib/wslay_event.c") `
+    (Join-Path $repo "vendor/wslay/lib/wslay_frame.c") `
+    (Join-Path $repo "vendor/wslay/lib/wslay_net.c") `
+    (Join-Path $repo "vendor/wslay/lib/wslay_queue.c") `
+    (Join-Path $repo "vendor/wslay/lib/wslay_stack.c") `
     (Join-Path $repo "nativelib/term/term.c") `
     $minizSources `
     -I $terminalVendor `
@@ -111,7 +128,7 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     $dynamicFlags `
     $terminalLib `
     $terminalFlags `
-    -lssl -lcrypto `
+    -lssl -lcrypto -lcurl `
     $socketFlags `
     -lm `
     $extraLdFlags `

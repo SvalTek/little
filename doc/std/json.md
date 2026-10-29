@@ -15,6 +15,3 @@ document invalid. Nesting is limited to 64 levels.
 and tables. Non-finite numbers become `null`. Values that JSON cannot represent,
 such as functions, instances, and tables with non-string keys, make it return
 `null`.
-
-`nativelib/json` remains a loadable native-library example that exposes the
-same `parse` and `stringify` functions.

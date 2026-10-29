@@ -37,6 +37,12 @@ server to close the connection. See [web](std/web.md).
 `json.parse` and `json.stringify` limit arrays and tables to 64 levels of
 nesting. Deeper documents fail to parse, and deeper values fail to serialize.
 
+## WebSocket limits
+
+Each `ws.serve` server handles at most 8 connections. A message or queued
+outbound payload is limited to 4 MiB, and only one `socket:next()` promise may
+be pending per connection.
+
 ## Multi-return limits
 Multi-return counts are stored in `uint8_t`, so one call can produce at most `LT_MAX_RETURNS` returned values. `unpack` stops at that limit. Scalar contexts collapse multi-return values to the first value, or `null` if no values were returned.
 

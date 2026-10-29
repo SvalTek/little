@@ -131,11 +131,12 @@ void ltstd_open_loadlib(lt_VM* vm);
 void ltstd_open_term(lt_VM* vm);
 void ltstd_open_json(lt_VM* vm);
 void ltstd_open_web(lt_VM* vm);
+void ltstd_open_ws(lt_VM* vm);
 void ltasync_open_all(lt_VM* vm);
 ```
 The VM starts without standard libraries. Use `ltstd_open_all` for the
 traditional stdlib modules (`io`, `math`, `array`, `table`, `string`, `gc`,
-`json`, `web`, and core globals such as `pcall`, `unpack`, and `import`) and
+`json`, `web`, `ws`, and core globals such as `pcall`, `unpack`, and `import`) and
 `ltasync_open_all` for optional Promise, timer, and task globals.
 
 `loadLibrary` is deliberately opt-in. Embedders that want scripts to load native code can call `ltstd_open_loadlib(vm)`. Embedders that do not call it will not expose the `loadLibrary` global. The CLI opens it because it is designed to run full local scripts.

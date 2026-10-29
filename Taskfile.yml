@@ -18,7 +18,10 @@ tasks:
       - src/*.h
       - scripts/prepare-miniz.ps1
       - vendor/miniz/**
-      - nativelib/json/json.c
+      - vendor/llhttp/**
+      - vendor/wslay/**
+      - vendor/yyjson/**
+      - vendor/pcg/**
       - nativelib/term/**
       - vendor/pdcursesmod/**
     generates:
@@ -34,7 +37,10 @@ tasks:
       - src/*.h
       - scripts/prepare-miniz.ps1
       - vendor/miniz/**
-      - nativelib/json/json.c
+      - vendor/llhttp/**
+      - vendor/wslay/**
+      - vendor/yyjson/**
+      - vendor/pcg/**
       - nativelib/term/**
       - vendor/pdcursesmod/**
     generates:
@@ -50,7 +56,10 @@ tasks:
       - src/*.h
       - scripts/prepare-miniz.ps1
       - vendor/miniz/**
-      - nativelib/json/json.c
+      - vendor/llhttp/**
+      - vendor/wslay/**
+      - vendor/yyjson/**
+      - vendor/pcg/**
       - nativelib/term/**
       - vendor/pdcursesmod/**
     generates:
@@ -66,7 +75,10 @@ tasks:
       - src/*.h
       - scripts/prepare-miniz.ps1
       - vendor/miniz/**
-      - nativelib/json/json.c
+      - vendor/llhttp/**
+      - vendor/wslay/**
+      - vendor/yyjson/**
+      - vendor/pcg/**
       - nativelib/term/**
       - vendor/pdcursesmod/**
     generates:
@@ -82,7 +94,10 @@ tasks:
       - src/*.h
       - scripts/prepare-miniz.ps1
       - vendor/miniz/**
-      - nativelib/json/json.c
+      - vendor/llhttp/**
+      - vendor/wslay/**
+      - vendor/yyjson/**
+      - vendor/pcg/**
       - nativelib/term/**
       - vendor/pdcursesmod/**
     generates:
@@ -105,9 +120,9 @@ tasks:
       - src/*.h
       - vendor/webui/**
     generates:
-      - nativelib/json/build/json.dll
-      - nativelib/json/build/json.so
-      - nativelib/json/build/json.dylib
+      - nativelib/webui/build/webui.dll
+      - nativelib/webui/build/webui.so
+      - nativelib/webui/build/webui.dylib
 
   sizes:
     desc: Build release-size variants and print artifact sizes

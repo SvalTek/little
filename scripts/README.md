@@ -36,6 +36,7 @@ Tour order:
 10. `10_modules.little` covers module returns, named imports, directory modules, search paths, and package path templates.
 11. `11_conditions_operators.little` covers `if`, `elseif`, `else`, `while`, truthiness, `is`/`isnt`, logical operators, and operator precedence.
 12. `12_web_http.little` covers `web.serve`, `web.fetch`, `web.Response`, request fields, custom headers, `response:json()`, promise-returning handlers, and driving web work with `mainloop.run`.
+13. `13_websockets.little` covers `ws.serve`, `ws.connect`, text and binary messages, and the promise stream returned by `socket:next()`.
 
 The file IO script writes to `build/example-note.txt`.
 The module tutorial imports fixture modules from `scripts/tutorial_modules/` and

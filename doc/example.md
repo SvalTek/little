@@ -78,20 +78,10 @@ This keeps libraries portable on Windows and Unix-like platforms without linking
 the library against `little.exe`. The `lt_Api` table is the ABI boundary:
 libraries should validate the pointer, version, and size before using it.
 
-The project includes an optional JSON native library as a larger example. The
-CLI also includes the same functionality as the built-in `json` module:
+The project includes `nativelib/native_math` as a small native-library example.
 
-```js
-    var json = loadLibrary("nativelib/json/build/json")
-
-    var data = json.parse("{\"name\":\"Ada\",\"ok\":true}")
-    io.print(data.name)
-
-    io.print(json.stringify([ "Ada", 2, true, null ]))
-```
-
-Build systems or test scripts must compile the native library for the current
-platform before loading it. The included JSON library can be built with:
+Build systems or test scripts must compile native libraries for the current
+platform before loading them. The included native libraries can be built with:
 
 ```powershell
     task build:nativelibs
@@ -100,7 +90,7 @@ platform before loading it. The included JSON library can be built with:
 ## Optional library loading
 
 ```c
-    ltstd_open_all(vm);    // pcall, io, math, array, table, string, gc, json, web
+    ltstd_open_all(vm);    // pcall, io, math, array, table, string, gc, json, web, ws
     ltstd_open_loadlib(vm); // optional loadLibrary for native code
     ltasync_open_all(vm);  // Promise, timers, task.run
 ```

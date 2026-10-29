@@ -11,9 +11,8 @@
 #include <limits.h>
 #include <stdatomic.h>
 #include <stdint.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#include <openssl/x509v3.h>
+#include <curl/curl.h>
+#include "llhttp.h"
 
 #ifdef _WIN32
 #ifndef _WIN32_WINNT
@@ -21,7 +20,6 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <wincrypt.h>
 #else
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -59,8 +57,23 @@ typedef struct {
 #else
     int socket;
 #endif
+    lt_VM* vm;
+    llhttp_t parser;
+    lt_Value headers;
     char input[65536];
     size_t input_len;
+    char method[32];
+    size_t method_len;
+    char path[2048];
+    size_t path_len;
+    char header_name[256];
+    size_t header_name_len;
+    char header_value[8192];
+    size_t header_value_len;
+    char body[65536];
+    size_t body_len;
+    uint8_t chunked_request;
+    uint8_t message_complete;
     char* output;
     size_t output_len;
     size_t output_sent;
@@ -297,7 +310,6 @@ static uint8_t response_json(lt_VM* vm, uint8_t argc)
     if (argc != 1) web_api->runtime_error(vm, "Response.json expects no arguments!");
     lt_Value instance = web_api->pop(vm);
     WebResponseData* rd = web_api->instance_get_native_data(vm, instance, web_instance_class(vm, instance, web_destroy_response));
-    lt_json_init(ltstd_native_api());
     lt_Value value = LT_VALUE_NULL;
     uint8_t ok = lt_json_parse(vm, rd && rd->body ? rd->body : "", &value);
     if (ok) web_api->root(vm, value);
@@ -356,53 +368,6 @@ static char* web_strdup(const char* s)
     return c;
 }
 
-static int parse_url(const char* url, char* host, size_t hostsz, int* port, int* secure, char* path, size_t pathsz)
-{
-    const char* p;
-    if (strncmp(url, "http://", 7) == 0) { *secure = 0; p = url + 7; }
-    else if (strncmp(url, "https://", 8) == 0) { *secure = 1; p = url + 8; }
-    else return 0;
-    const char* authority_end = p + strcspn(p, "/?#");
-    const char* host_start = p;
-    const char* host_end = authority_end;
-    const char* port_start = 0;
-    if (p < authority_end && *p == '[') {
-        host_start = p + 1;
-        host_end = memchr(host_start, ']', (size_t)(authority_end - host_start));
-        if (!host_end) return 0;
-        if (host_end + 1 < authority_end) {
-            if (host_end[1] != ':') return 0;
-            port_start = host_end + 2;
-        }
-    } else {
-        const char* colon = memchr(p, ':', (size_t)(authority_end - p));
-        if (colon) { host_end = colon; port_start = colon + 1; }
-    }
-    size_t host_len = (size_t)(host_end - host_start);
-    if (!host_len || host_len >= hostsz || memchr(host_start, '@', host_len)) return 0;
-    memcpy(host, host_start, host_len); host[host_len] = 0;
-    *port = *secure ? 443 : 80;
-    if (port_start) {
-        int n = 0;
-        if (port_start == authority_end) return 0;
-        for (const char* q = port_start; q < authority_end; ++q) {
-            if (!isdigit((unsigned char)*q) || n > 6553) return 0;
-            n = n * 10 + (*q - '0');
-        }
-        if (n < 1 || n > 65535) return 0;
-        *port = n;
-    }
-    const char* path_end = authority_end + strcspn(authority_end, "#");
-    size_t path_len = (size_t)(path_end - authority_end);
-    int needs_slash = !path_len || *authority_end == '?';
-    if (path_len + (size_t)needs_slash >= pathsz) return 0;
-    if (needs_slash) path[0] = '/';
-    memcpy(path + needs_slash, authority_end, path_len);
-    path[path_len + needs_slash] = 0;
-    return 1;
-}
-
-/* Append only complete fields; snprintf's return value can exceed the buffer. */
 static int web_append(char* buffer, size_t capacity, size_t* length, const char* format, ...)
 {
     va_list args;
@@ -482,86 +447,6 @@ static int web_would_block(void)
 #endif
 }
 
-static int web_send_all(WebSocket socket_fd, const char* data, size_t length)
-{
-    while (length) {
-        int chunk = length > INT_MAX ? INT_MAX : (int)length;
-#ifdef MSG_NOSIGNAL
-        int sent = send(socket_fd, data, chunk, MSG_NOSIGNAL);
-#else
-        int sent = send(socket_fd, data, chunk, 0);
-#endif
-        if (sent <= 0) return 0;
-        data += sent;
-        length -= (size_t)sent;
-    }
-    return 1;
-}
-
-#ifdef _WIN32
-/* Let Windows build and validate the chain so its root, distrust and usage
-   policies apply. OpenSSL still checks the requested DNS name or IP address. */
-static PCCERT_CONTEXT web_windows_certificate(X509* certificate)
-{
-    int length = i2d_X509(certificate, 0);
-    if (length <= 0) return 0;
-    unsigned char* encoded = malloc((size_t)length);
-    if (!encoded) return 0;
-    unsigned char* cursor = encoded;
-    PCCERT_CONTEXT result = 0;
-    if (i2d_X509(certificate, &cursor) == length)
-        result = CertCreateCertificateContext(X509_ASN_ENCODING, encoded, (DWORD)length);
-    free(encoded);
-    return result;
-}
-
-static int web_windows_verify(X509_STORE_CTX* verify, void* context)
-{
-    const char* host = context;
-    X509* leaf = X509_STORE_CTX_get0_cert(verify);
-    PCCERT_CONTEXT certificate = 0;
-    PCCERT_CHAIN_CONTEXT chain = 0;
-    HCERTSTORE extra = 0;
-    int valid = 0;
-    unsigned char address[16];
-    int is_ip = inet_pton(AF_INET, host, address) == 1 || inet_pton(AF_INET6, host, address) == 1;
-    if (!leaf || (is_ip ? X509_check_ip_asc(leaf, host, 0) : X509_check_host(leaf, host, 0, 0, 0)) != 1)
-        goto done;
-    certificate = web_windows_certificate(leaf);
-    extra = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, CERT_STORE_CREATE_NEW_FLAG, 0);
-    if (!certificate || !extra) goto done;
-    STACK_OF(X509)* peers = X509_STORE_CTX_get0_untrusted(verify);
-    for (int i = 0; peers && i < sk_X509_num(peers); ++i) {
-        PCCERT_CONTEXT peer = web_windows_certificate(sk_X509_value(peers, i));
-        if (!peer) goto done;
-        BOOL added = CertAddCertificateContextToStore(extra, peer, CERT_STORE_ADD_USE_EXISTING, 0);
-        CertFreeCertificateContext(peer);
-        if (!added) goto done;
-    }
-    LPSTR usage = szOID_PKIX_KP_SERVER_AUTH;
-    CERT_CHAIN_PARA parameters;
-    memset(&parameters, 0, sizeof(parameters));
-    parameters.cbSize = sizeof(parameters);
-    parameters.RequestedUsage.dwType = USAGE_MATCH_TYPE_AND;
-    parameters.RequestedUsage.Usage.cUsageIdentifier = 1;
-    parameters.RequestedUsage.Usage.rgpszUsageIdentifier = &usage;
-    if (!CertGetCertificateChain(0, certificate, 0, extra, &parameters, 0, 0, &chain)) goto done;
-    CERT_CHAIN_POLICY_PARA policy;
-    CERT_CHAIN_POLICY_STATUS status;
-    memset(&policy, 0, sizeof(policy));
-    memset(&status, 0, sizeof(status));
-    policy.cbSize = sizeof(policy);
-    status.cbSize = sizeof(status);
-    valid = CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_BASE, chain, &policy, &status) && status.dwError == 0;
-done:
-    if (chain) CertFreeCertificateChain(chain);
-    if (extra) CertCloseStore(extra, 0);
-    if (certificate) CertFreeCertificateContext(certificate);
-    if (!valid) X509_STORE_CTX_set_error(verify, X509_V_ERR_CERT_REJECTED);
-    return valid;
-}
-#endif
-
 static lt_Value create_response_instance(lt_VM* vm, int status, const char* status_text, lt_Value headers, const char* body, const char* url)
 {
     web_api->root(vm, headers);
@@ -621,24 +506,37 @@ typedef struct {
     atomic_int done;
     lt_Value promise;
     uint32_t hook;
-    char host[256];
-    int port;
-    int secure;
     char* url;
-    char* request;
-    size_t request_len;
-    char* response;
-    size_t response_len;
-    const char* error;
+    char* method;
+    char* body;
+    char* proxy;
+    struct curl_slist* headers;
+    long redirects;
+    int decompress;
     int head;
+    int status;
+    char status_text[256];
+    char* header_data;
+    size_t header_len;
+    size_t header_cap;
+    char* response_data;
+    size_t response_len;
+    size_t response_cap;
+    int too_large;
+    int binary;
+    const char* error;
 } WebFetch;
 
 static void web_fetch_release(WebFetch* f)
 {
     if (atomic_fetch_sub(&f->refs, 1) != 1) return;
+    if (f->headers) curl_slist_free_all(f->headers);
     free(f->url);
-    free(f->request);
-    free(f->response);
+    free(f->method);
+    free(f->body);
+    free(f->proxy);
+    free(f->header_data);
+    free(f->response_data);
     free(f);
 }
 
@@ -649,231 +547,159 @@ static void web_fetch_destroy(lt_VM* vm, void* context)
     web_fetch_release(f);
 }
 
-/* Return 1 for complete, 0 for incomplete, -1 for malformed. */
-static int web_chunks(char* body, size_t length, size_t* consumed, int decode)
+static const char* web_fetch_curl_error(CURLcode code, const WebFetch* f)
 {
-    size_t pos = 0, out = 0;
-    for (;;) {
-        size_t start = pos, n = 0;
-        while (pos < length && isxdigit((unsigned char)body[pos])) {
-            unsigned char ch = (unsigned char)body[pos++];
-            unsigned digit = isdigit(ch) ? (unsigned)(ch - '0') : (unsigned)(tolower(ch) - 'a' + 10);
-            if (n > (SIZE_MAX - digit) / 16) return -1;
-            n = n * 16 + digit;
-        }
-        if (pos == start) return pos == length ? 0 : -1;
-        if (pos == length) return 0;
-        if (body[pos] == ';') {
-            while (pos < length && body[pos] != '\r') ++pos;
-        }
-        if (pos + 1 >= length) return 0;
-        if (body[pos] != '\r' || body[pos + 1] != '\n') return -1;
-        pos += 2;
-        if (!n) {
-            for (;;) {
-                size_t line = pos;
-                while (pos + 1 < length && !(body[pos] == '\r' && body[pos + 1] == '\n')) ++pos;
-                if (pos + 1 >= length) return 0;
-                pos += 2;
-                if (pos == line + 2) { *consumed = decode ? out : pos; return 1; }
-            }
-        }
-        if (n > length - pos || length - pos - n < 2) return 0;
-        if (body[pos + n] != '\r' || body[pos + n + 1] != '\n') return -1;
-        if (decode) memmove(body + out, body + pos, n);
-        out += n;
-        pos += n + 2;
+    if (f->too_large) return "HTTP response too large";
+    if (f->binary) return "Binary HTTP response is not supported";
+    if (f->error) return f->error;
+    switch (code)
+    {
+    case CURLE_COULDNT_RESOLVE_HOST: return "DNS lookup failed";
+    case CURLE_COULDNT_CONNECT: return "Connection failed";
+    case CURLE_PEER_FAILED_VERIFICATION:
+    case CURLE_SSL_CERTPROBLEM: return "TLS certificate verification failed";
+    case CURLE_SSL_CONNECT_ERROR: return "TLS handshake failed";
+    case CURLE_OPERATION_TIMEDOUT: return "HTTP response read failed";
+    case CURLE_UNSUPPORTED_PROTOCOL:
+    case CURLE_URL_MALFORMAT: return "Unsupported URL";
+    case CURLE_TOO_MANY_REDIRECTS: return "Too many redirects";
+    case CURLE_WRITE_ERROR: return "HTTP response read failed";
+    default: return "HTTP request failed";
     }
 }
 
-static int web_response_framing(char* buf, size_t len, int head, size_t* header_len, size_t* body_len, int* chunked)
+static size_t web_curl_header(char* data, size_t size, size_t count, void* userdata)
 {
-    char* end = strstr(buf, "\r\n\r\n");
-    if (!end) return 0;
-    char* line = strstr(buf, "\r\n");
-    int status = 0;
-    if (!line || sscanf(buf, "HTTP/%*u.%*u %d", &status) != 1 || status < 100 || status > 999) return -1;
-    size_t content = 0;
-    int has_length = 0;
-    *chunked = 0;
-    for (char* p = line + 2; p < end;) {
-        char* next = strstr(p, "\r\n");
-        if (!next || next > end) return -1;
-        char* colon = memchr(p, ':', (size_t)(next - p));
-        if (!colon) return -1;
-        size_t name_len = (size_t)(colon - p);
-        char name[64];
-        if (name_len >= sizeof(name)) { p = next + 2; continue; }
-        memcpy(name, p, name_len); name[name_len] = 0;
-        char* value = colon + 1;
-        while (value < next && (*value == ' ' || *value == '\t')) ++value;
-        if (web_header_is(name, "Content-Length")) {
-            size_t n = 0; char* q = value;
-            if (q == next || !isdigit((unsigned char)*q)) return -1;
-            while (q < next && isdigit((unsigned char)*q)) {
-                unsigned d = (unsigned)(*q++ - '0');
-                if (n > (SIZE_MAX - d) / 10) return -1;
-                n = n * 10 + d;
-            }
-            while (q < next && (*q == ' ' || *q == '\t')) ++q;
-            if (q != next || (has_length && content != n)) return -1;
-            has_length = 1; content = n;
-        } else if (web_header_is(name, "Transfer-Encoding")) {
-            size_t n = (size_t)(next - value);
-            while (n && (value[n-1] == ' ' || value[n-1] == '\t')) --n;
-            if (n != 7) return -1;
-            char encoding[8]; memcpy(encoding, value, n); encoding[n] = 0;
-            if (!web_header_is(encoding, "chunked") || *chunked) return -1;
-            *chunked = 1;
+    WebFetch* f = userdata;
+    size_t length = size * count;
+    if (length >= 5 && strncmp(data, "HTTP/", 5) == 0)
+    {
+        int status = 0;
+        char reason[256] = "";
+        sscanf(data, "HTTP/%*u.%*u %d %255[^\r\n]", &status, reason);
+        if (status >= 100)
+        {
+            f->status = status;
+            strncpy(f->status_text, reason, sizeof(f->status_text) - 1);
+            f->status_text[sizeof(f->status_text) - 1] = 0;
         }
-        p = next + 2;
+        return length;
     }
-    if (*chunked && has_length) return -1;
-    *header_len = (size_t)(end + 4 - buf);
-    if (head || (status >= 100 && status < 200) || status == 204 || status == 304) {
-        /* These responses may carry Transfer-Encoding but no chunk stream. */
-        *chunked = 0;
-        *body_len = 0;
-        return 1;
+
+    size_t line = length;
+    while (line && (data[line - 1] == '\r' || data[line - 1] == '\n')) --line;
+    if (line == 0) return length;
+    if (f->header_len + line + 2 > 65535)
+    {
+        f->error = "HTTP response headers too large";
+        return 0;
     }
-    size_t available = len - *header_len;
-    if (*chunked) return web_chunks(buf + *header_len, available, body_len, 0);
-    if (has_length) { *body_len = content; return available >= content ? 1 : 0; }
-    *body_len = available;
-    return 2; /* close-delimited */
+    if (f->header_len + line + 2 > f->header_cap)
+    {
+        size_t capacity = f->header_cap ? f->header_cap * 2 : 1024;
+        while (capacity < f->header_len + line + 2) capacity *= 2;
+        char* grown = realloc(f->header_data, capacity);
+        if (!grown) { f->error = "Out of memory"; return 0; }
+        f->header_data = grown;
+        f->header_cap = capacity;
+    }
+    memcpy(f->header_data + f->header_len, data, line);
+    f->header_len += line;
+    f->header_data[f->header_len++] = '\n';
+    return length;
+}
+
+static size_t web_curl_body(char* data, size_t size, size_t count, void* userdata)
+{
+    WebFetch* f = userdata;
+    size_t length = size * count;
+    if (memchr(data, 0, length))
+    {
+        f->binary = 1;
+        return 0;
+    }
+    if (f->response_len + length > 4194304)
+    {
+        f->too_large = 1;
+        return 0;
+    }
+    if (f->response_len + length + 1 > f->response_cap)
+    {
+        size_t capacity = f->response_cap ? f->response_cap * 2 : 8192;
+        while (capacity < f->response_len + length + 1) capacity *= 2;
+        char* grown = realloc(f->response_data, capacity);
+        if (!grown) { f->error = "Out of memory"; return 0; }
+        f->response_data = grown;
+        f->response_cap = capacity;
+    }
+    memcpy(f->response_data + f->response_len, data, length);
+    f->response_len += length;
+    f->response_data[f->response_len] = 0;
+    return length;
 }
 
 static void web_fetch_worker(WebFetch* f)
 {
-#ifdef _WIN32
-    WSADATA wsa;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { f->error = "Socket initialization failed"; goto done; }
-#else
-    /* OpenSSL's socket BIO cannot use MSG_NOSIGNAL. Keep SIGPIPE local to
-       this detached worker, where any pending signal disappears on exit. */
-    sigset_t signals;
-    sigemptyset(&signals);
-    sigaddset(&signals, SIGPIPE);
-    if (f->secure && pthread_sigmask(SIG_BLOCK, &signals, 0) != 0) { f->error = "Socket initialization failed"; goto sockets_done; }
-#endif
-    SSL_CTX* tls_context = 0;
-    SSL* tls = 0;
-    struct addrinfo hints, *addresses = 0;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    char port[16];
-    snprintf(port, sizeof(port), "%d", f->port);
-    if (getaddrinfo(f->host, port, &hints, &addresses) != 0) { f->error = "DNS lookup failed"; goto sockets_done; }
-    WebSocket socket_fd = WEB_BAD_SOCKET;
-    for (struct addrinfo* a = addresses; a; a = a->ai_next) {
-        socket_fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
-        if (socket_fd == WEB_BAD_SOCKET) continue;
-        web_no_sigpipe(socket_fd);
-#ifdef _WIN32
-        DWORD timeout = 10000;
-        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-        setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
-#else
-        struct timeval timeout = { 10, 0 };
-        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-        setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-#endif
-        if (connect(socket_fd, a->ai_addr, (int)a->ai_addrlen) == 0) break;
-        web_close_socket(socket_fd); socket_fd = WEB_BAD_SOCKET;
+    CURL* curl = curl_easy_init();
+    if (!curl)
+    {
+        f->error = "HTTP request failed";
+        goto done;
     }
-    freeaddrinfo(addresses);
-    if (socket_fd == WEB_BAD_SOCKET) { f->error = "Connection failed"; goto sockets_done; }
-    if (f->secure) {
-        tls_context = SSL_CTX_new(TLS_client_method());
-        if (!tls_context) { f->error = "TLS trust setup failed"; goto close_socket; }
+
+    char error_buffer[CURL_ERROR_SIZE] = "";
+    curl_easy_setopt(curl, CURLOPT_URL, f->url);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 1L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 10L);
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, web_curl_body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, f);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, web_curl_header);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, f);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, f->headers);
+    curl_easy_setopt(curl, CURLOPT_PROXY, f->proxy);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, f->redirects > 0 ? 1L : 0L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, f->redirects);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    const char* ca_file = getenv("CURL_CA_BUNDLE");
+    if (!ca_file || !*ca_file) ca_file = getenv("SSL_CERT_FILE");
+    if (ca_file && *ca_file) curl_easy_setopt(curl, CURLOPT_CAINFO, ca_file);
+    const char* ca_dir = getenv("SSL_CERT_DIR");
+    if (ca_dir && *ca_dir) curl_easy_setopt(curl, CURLOPT_CAPATH, ca_dir);
 #ifdef _WIN32
-        const char* trust_file = getenv("SSL_CERT_FILE");
-        if (!trust_file || !*trust_file)
-            SSL_CTX_set_cert_verify_callback(tls_context, web_windows_verify, f->host);
-        else
+    if (!getenv("SSL_CERT_FILE")) curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
 #endif
-        if (SSL_CTX_set_default_verify_paths(tls_context) != 1) { f->error = "TLS trust setup failed"; goto close_socket; }
-        SSL_CTX_set_verify(tls_context, SSL_VERIFY_PEER, 0);
-        tls = SSL_new(tls_context);
-        if (!tls) { f->error = "TLS initialization failed"; goto close_socket; }
-        unsigned char address[16];
-        int is_ip = inet_pton(AF_INET, f->host, address) == 1 || inet_pton(AF_INET6, f->host, address) == 1;
-        X509_VERIFY_PARAM* verify = SSL_get0_param(tls);
-        if ((is_ip ? X509_VERIFY_PARAM_set1_ip_asc(verify, f->host) :
-                     (SSL_set_tlsext_host_name(tls, f->host) && X509_VERIFY_PARAM_set1_host(verify, f->host, 0))) != 1 ||
-            SSL_set_fd(tls, (int)socket_fd) != 1) {
-            f->error = "TLS initialization failed"; goto close_socket;
-        }
-        ERR_clear_error();
-        if (SSL_connect(tls) != 1) {
-            f->error = SSL_get_verify_result(tls) != X509_V_OK ? "TLS certificate verification failed" : "TLS handshake failed";
-            goto close_socket;
-        }
-        size_t sent = 0;
-        while (sent < f->request_len) {
-            size_t remaining = f->request_len - sent;
-            ERR_clear_error();
-            int count = SSL_write(tls, f->request + sent, remaining > INT_MAX ? INT_MAX : (int)remaining);
-            if (count <= 0) { f->error = "TLS request send failed"; goto close_socket; }
-            sent += (size_t)count;
-        }
-    } else if (!web_send_all(socket_fd, f->request, f->request_len)) { f->error = "Request send failed"; goto close_socket; }
-    size_t cap = 8192, len = 0;
-    char* data = malloc(cap);
-    if (!data) { f->error = "Out of memory"; goto close_socket; }
-    data[0] = 0;
-    int complete = 0;
-    for (;;) {
-        if (len + 4096 + 1 > cap) {
-            if (cap >= 4194304) { f->error = "HTTP response too large"; break; }
-            size_t next = cap * 2;
-            char* grown = realloc(data, next);
-            if (!grown) { f->error = "Out of memory"; break; }
-            data = grown; cap = next;
-        }
-        if (tls) ERR_clear_error();
-        int count = tls ? SSL_read(tls, data + len, (int)(cap - len - 1)) : recv(socket_fd, data + len, (int)(cap - len - 1), 0);
-        if (tls && count <= 0) {
-            int error = SSL_get_error(tls, count);
-            if (error == SSL_ERROR_ZERO_RETURN) count = 0;
-            else { f->error = "TLS response read failed"; break; }
-        }
-        if (count < 0) { f->error = "HTTP response read failed"; break; }
-        if (count == 0) {
-            size_t h = 0, b = 0; int chunked = 0;
-            int framing = web_response_framing(data, len, f->head, &h, &b, &chunked);
-            if (framing == 1 || framing == 2) complete = 1;
-            else f->error = "Invalid or incomplete HTTP response";
-            break;
-        }
-        if (memchr(data + len, 0, (size_t)count)) { f->error = "Binary HTTP response is not supported"; break; }
-        len += (size_t)count; data[len] = 0;
-        size_t h = 0, b = 0; int chunked = 0;
-        int framing = web_response_framing(data, len, f->head, &h, &b, &chunked);
-        int status = 0;
-        while (h && sscanf(data, "HTTP/%*u.%*u %d", &status) == 1 && status >= 100 && status < 200) {
-            if (status == 101) { f->error = "HTTP protocol upgrades are not supported"; break; }
-            memmove(data, data + h, len - h);
-            len -= h; data[len] = 0;
-            h = 0;
-            framing = web_response_framing(data, len, f->head, &h, &b, &chunked);
-        }
-        if (f->error) break;
-        if (framing < 0) { f->error = "Invalid HTTP response framing"; break; }
-        if (framing == 1) { complete = 1; break; }
+
+    if (f->decompress) curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+    if (f->head) curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+    else if (f->body && f->body[0])
+    {
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, f->body);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(f->body));
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, f->method);
     }
-    if (complete) { f->response = data; f->response_len = len; }
-    else free(data);
-close_socket:
-    if (tls) SSL_free(tls);
-    if (tls_context) SSL_CTX_free(tls_context);
-    web_close_socket(socket_fd);
-sockets_done:
-#ifdef _WIN32
-    WSACleanup();
+    else if (!web_header_is(f->method, "GET"))
+    {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, f->method);
+    }
+
+    CURLcode code = curl_easy_perform(curl);
+    if (code != CURLE_OK) f->error = web_fetch_curl_error(code, f);
+    else
+    {
+        long status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        if (status > 0) f->status = (int)status;
+    }
+    curl_easy_cleanup(curl);
+
 done:
-#endif
     atomic_store_explicit(&f->done, 1, memory_order_release);
     web_fetch_release(f);
 }
@@ -888,120 +714,147 @@ static lt_PollResult web_fetch_poll(lt_VM* vm, void* context)
 {
     WebFetch* f = context;
     if (!atomic_load_explicit(&f->done, memory_order_acquire)) return LT_POLL_PENDING;
-    if (f->error) {
+    if (f->error)
+    {
         ltasync_settle_promise(vm, f->promise, LT_PROMISE_REJECTED, web_api->make_string(vm, f->error));
-    } else {
-        size_t header_len = 0, body_len = 0; int chunked = 0;
-        int framing = web_response_framing(f->response, f->response_len, f->head, &header_len, &body_len, &chunked);
-        char* body = f->response + header_len;
-        if (chunked && web_chunks(body, f->response_len - header_len, &body_len, 1) != 1) framing = -1;
-        if (framing < 1) {
-            ltasync_settle_promise(vm, f->promise, LT_PROMISE_REJECTED, web_api->make_string(vm, "Invalid HTTP response framing"));
-        } else {
-            body[body_len] = 0;
-            int status = 0; char status_text[256] = "";
-            sscanf(f->response, "HTTP/%*u.%*u %d %255[^\r]", &status, status_text);
-            lt_Value headers = web_api->make_table(vm);
-            web_api->root(vm, headers);
-            char* p = strstr(f->response, "\r\n") + 2;
-            char* end = f->response + header_len - 2;
-            while (p < end) {
-                char* next = strstr(p, "\r\n");
-                if (!next || next > end) break;
-                char* colon = memchr(p, ':', (size_t)(next - p));
-                if (!colon) break;
-                *colon = 0; *next = 0;
+    }
+    else
+    {
+        lt_Value headers = web_api->make_table(vm);
+        web_api->root(vm, headers);
+        char* cursor = f->header_data;
+        while (cursor && *cursor)
+        {
+            char* end = strchr(cursor, '\n');
+            if (!end) end = cursor + strlen(cursor);
+            char saved = *end;
+            *end = 0;
+            char* colon = strchr(cursor, ':');
+            if (colon)
+            {
+                *colon = 0;
                 char* value = colon + 1;
                 while (*value == ' ' || *value == '\t') ++value;
-                web_api->table_set(vm, headers, web_api->make_string(vm, p), web_api->make_string(vm, value));
-                p = next + 2;
+                char* tail = value + strlen(value);
+                while (tail > value && (tail[-1] == ' ' || tail[-1] == '\t')) --tail;
+                *tail = 0;
+                if (web_header_valid(cursor, value))
+                    web_api->table_set(vm, headers, web_api->make_string(vm, cursor), web_api->make_string(vm, value));
             }
-            lt_Value response = create_response_instance(vm, status, status_text, headers, body, f->url);
-            ltasync_settle_promise(vm, f->promise, LT_PROMISE_FULFILLED, response);
+            *end = saved;
+            cursor = saved ? end + 1 : end;
         }
+        const char* body = f->response_data ? f->response_data : "";
+        lt_Value response = create_response_instance(vm, f->status, f->status_text, headers, body, f->url);
+        ltasync_settle_promise(vm, f->promise, LT_PROMISE_FULFILLED, response);
     }
     web_api->remove_poll_hook(vm, f->hook);
     return LT_POLL_WORK;
 }
-
-/* ---------- fetch ---------- */
 
 static uint8_t web_fetch(lt_VM* vm, uint8_t argc)
 {
     if (argc < 1 || argc > 2) { web_api->runtime_error(vm, "web.fetch expects url and optional init!"); return 0; }
     lt_Value init = argc == 2 ? web_api->pop(vm) : LT_VALUE_NULL;
     lt_Value url_value = web_api->pop(vm);
-    if (!LT_IS_STRING(url_value)) { web_api->runtime_error(vm, "web.fetch url must be string!"); return 0; }
+    if (!LT_IS_STRING(url_value)) { web_api->runtime_error(vm, "web.fetch url must be a string!"); return 0; }
+    if (!LT_IS_NULL(init) && !LT_IS_TABLE(init)) { web_api->runtime_error(vm, "web.fetch init must be a table!"); return 0; }
     web_api->root(vm, url_value);
     web_api->root(vm, init);
-    const char* url = web_api->get_string(vm, url_value);
-    char host[256], path[1024];
-    int port, secure;
-    if (!parse_url(url, host, sizeof(host), &port, &secure, path, sizeof(path)) || !host[0] || port > 65535 ||
-        strpbrk(host, " \r\n\t") || strpbrk(path, " \r\n\t")) {
-        lt_Value promise = ltasync_make_promise(vm);
-        web_api->root(vm, promise);
-        ltasync_settle_promise(vm, promise, LT_PROMISE_REJECTED, web_api->make_string(vm, "Unsupported URL"));
-        web_api->push(vm, promise);
-        return 1;
-    }
 
     const char* method = "GET";
     const char* body = "";
     lt_Value headers = LT_VALUE_NULL;
-    if (LT_IS_TABLE(init)) {
+    long redirects = 0;
+    const char* proxy = "";
+    int decompress = 0;
+    if (LT_IS_TABLE(init))
+    {
         lt_Value value = web_api->table_get(vm, init, web_api->make_string(vm, "method"));
-        if (LT_IS_STRING(value)) method = web_api->get_string(vm, value);
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_STRING(value)) { web_api->runtime_error(vm, "web.fetch method must be a string!"); return 0; }
+            method = web_api->get_string(vm, value);
+        }
         value = web_api->table_get(vm, init, web_api->make_string(vm, "body"));
-        if (LT_IS_STRING(value)) body = web_api->get_string(vm, value);
-        headers = web_api->table_get(vm, init, web_api->make_string(vm, "headers"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_STRING(value)) { web_api->runtime_error(vm, "web.fetch body must be a string!"); return 0; }
+            body = web_api->get_string(vm, value);
+        }
+        value = web_api->table_get(vm, init, web_api->make_string(vm, "headers"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_TABLE(value)) { web_api->runtime_error(vm, "web.fetch headers must be a table!"); return 0; }
+            headers = value;
+        }
+        value = web_api->table_get(vm, init, web_api->make_string(vm, "redirects"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_NUMBER(value)) { web_api->runtime_error(vm, "web.fetch redirects must be an integer from 0 to 20!"); return 0; }
+            double n = web_api->get_number(value);
+            if (n < 0 || n > 20 || n != (double)(int)n) { web_api->runtime_error(vm, "web.fetch redirects must be an integer from 0 to 20!"); return 0; }
+            redirects = (long)n;
+        }
+        value = web_api->table_get(vm, init, web_api->make_string(vm, "proxy"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_STRING(value)) { web_api->runtime_error(vm, "web.fetch proxy must be a string!"); return 0; }
+            proxy = web_api->get_string(vm, value);
+        }
+        value = web_api->table_get(vm, init, web_api->make_string(vm, "decompress"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_TRUE(value) && !LT_IS_FALSE(value)) { web_api->runtime_error(vm, "web.fetch decompress must be a boolean!"); return 0; }
+            decompress = LT_IS_TRUE(value);
+        }
     }
-    if (!web_header_valid(method, "")) { web_api->runtime_error(vm, "Invalid HTTP method!"); return 0; }
-    char header[8192]; size_t header_len = 0;
-    int valid;
-    if (strchr(host, ':') && port == (secure ? 443 : 80))
-        valid = web_append(header, sizeof(header), &header_len, "%s %s HTTP/1.1\r\nHost: [%s]\r\nConnection: close\r\n", method, path, host);
-    else if (strchr(host, ':'))
-        valid = web_append(header, sizeof(header), &header_len, "%s %s HTTP/1.1\r\nHost: [%s]:%d\r\nConnection: close\r\n", method, path, host, port);
-    else if (port == (secure ? 443 : 80))
-        valid = web_append(header, sizeof(header), &header_len, "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n", method, path, host);
-    else
-        valid = web_append(header, sizeof(header), &header_len, "%s %s HTTP/1.1\r\nHost: %s:%d\r\nConnection: close\r\n", method, path, host, port);
-    size_t body_len = strlen(body);
-    if (body_len) valid = valid && web_append(header, sizeof(header), &header_len, "Content-Length: %zu\r\n", body_len);
-    uint64_t cursor = 0; lt_Value key, value;
-    while (LT_IS_TABLE(headers) && web_api->table_next(vm, headers, &cursor, &key, &value)) {
-        if (!LT_IS_STRING(key) || !LT_IS_STRING(value)) { valid = 0; break; }
-        const char* name = web_api->get_string(vm, key);
-        const char* text = web_api->get_string(vm, value);
-        if (!web_header_valid(name, text)) { valid = 0; break; }
-        if (web_header_is(name, "Host") || web_header_is(name, "Connection") ||
-            web_header_is(name, "Content-Length") || web_header_is(name, "Transfer-Encoding")) continue;
-        valid = valid && web_append(header, sizeof(header), &header_len, "%s: %s\r\n", name, text);
-    }
-    valid = valid && web_append(header, sizeof(header), &header_len, "\r\n");
-    if (!valid || body_len > SIZE_MAX - header_len - 1) { web_api->runtime_error(vm, "Invalid or oversized request headers!"); return 0; }
 
+    const char* url = web_api->get_string(vm, url_value);
     WebFetch* f = calloc(1, sizeof(*f));
     if (!f) { web_api->runtime_error(vm, "Out of memory creating fetch!"); return 0; }
     f->url = web_strdup(url);
-    f->request = malloc(header_len + body_len + 1);
-    if (!f->url || !f->request) {
-        free(f->url); free(f->request); free(f);
+    f->method = web_strdup(method);
+    f->body = web_strdup(body);
+    f->proxy = web_strdup(proxy);
+    f->redirects = redirects;
+    f->decompress = decompress;
+    f->head = web_header_is(method, "HEAD");
+    if (!f->url || !f->method || !f->body || !f->proxy)
+    {
+        web_fetch_release(f);
         web_api->runtime_error(vm, "Out of memory creating fetch!");
         return 0;
     }
-    memcpy(f->host, host, strlen(host) + 1);
-    f->port = port;
-    f->secure = secure;
-    f->head = web_header_is(method, "HEAD");
-    memcpy(f->request, header, header_len);
-    memcpy(f->request + header_len, body, body_len);
-    f->request_len = header_len + body_len;
-    atomic_init(&f->refs, 2);
-    atomic_init(&f->done, 0);
+
+    if (LT_IS_TABLE(headers))
+    {
+        uint64_t cursor = 0;
+        lt_Value key = LT_VALUE_NULL;
+        lt_Value value = LT_VALUE_NULL;
+        while (web_api->table_next(vm, headers, &cursor, &key, &value))
+        {
+            if (!LT_IS_STRING(key) || !LT_IS_STRING(value)) { web_fetch_release(f); web_api->runtime_error(vm, "web.fetch headers must contain string names and values!"); return 0; }
+            const char* name = web_api->get_string(vm, key);
+            const char* text = web_api->get_string(vm, value);
+            if (!web_header_valid(name, text)) { web_fetch_release(f); web_api->runtime_error(vm, "Invalid web.fetch header!"); return 0; }
+            if (web_header_is(name, "Host") || web_header_is(name, "Connection") ||
+                web_header_is(name, "Content-Length") || web_header_is(name, "Transfer-Encoding")) continue;
+            size_t length = strlen(name) + strlen(text) + 3;
+            char* line = malloc(length);
+            if (!line) { web_fetch_release(f); web_api->runtime_error(vm, "Out of memory creating fetch!"); return 0; }
+            snprintf(line, length, "%s: %s", name, text);
+            struct curl_slist* grown = curl_slist_append(f->headers, line);
+            free(line);
+            if (!grown) { web_fetch_release(f); web_api->runtime_error(vm, "Out of memory creating fetch!"); return 0; }
+            f->headers = grown;
+        }
+    }
+
     f->promise = ltasync_make_promise(vm);
     web_api->root_persistent(vm, f->promise);
+    atomic_init(&f->refs, 2);
+    atomic_init(&f->done, 0);
     f->hook = ltasync_add_owned_poll_hook(vm, web_fetch_poll, f, web_fetch_destroy);
 #ifdef _WIN32
     HANDLE thread = CreateThread(NULL, 0, web_fetch_thread, f, 0, NULL);
@@ -1019,7 +872,122 @@ static uint8_t web_fetch(lt_VM* vm, uint8_t argc)
     web_api->push(vm, f->promise);
     return 1;
 }
+
+
 /* ---------- serve ---------- */
+
+static int web_http_message_begin(llhttp_t* parser)
+{
+    WebClientData* client = parser->data;
+    client->method_len = 0;
+    client->path_len = 0;
+    client->header_name_len = 0;
+    client->header_value_len = 0;
+    client->body_len = 0;
+    client->chunked_request = 0;
+    client->message_complete = 0;
+    client->method[0] = 0;
+    client->path[0] = 0;
+    client->body[0] = 0;
+    return 0;
+}
+
+static int web_http_method(llhttp_t* parser, const char* at, size_t length)
+{
+    WebClientData* client = parser->data;
+    if (client->method_len + length >= sizeof(client->method)) return HPE_USER;
+    memcpy(client->method + client->method_len, at, length);
+    client->method_len += length;
+    client->method[client->method_len] = 0;
+    return 0;
+}
+
+static int web_http_url(llhttp_t* parser, const char* at, size_t length)
+{
+    WebClientData* client = parser->data;
+    if (client->path_len + length >= sizeof(client->path)) return HPE_USER;
+    memcpy(client->path + client->path_len, at, length);
+    client->path_len += length;
+    client->path[client->path_len] = 0;
+    return 0;
+}
+
+static int web_http_header_field(llhttp_t* parser, const char* at, size_t length)
+{
+    WebClientData* client = parser->data;
+    if (client->header_name_len + length >= sizeof(client->header_name)) return HPE_USER;
+    memcpy(client->header_name + client->header_name_len, at, length);
+    client->header_name_len += length;
+    client->header_name[client->header_name_len] = 0;
+    return 0;
+}
+
+static int web_http_header_value(llhttp_t* parser, const char* at, size_t length)
+{
+    WebClientData* client = parser->data;
+    if (client->header_value_len + length >= sizeof(client->header_value)) return HPE_USER;
+    memcpy(client->header_value + client->header_value_len, at, length);
+    client->header_value_len += length;
+    client->header_value[client->header_value_len] = 0;
+    return 0;
+}
+
+static int web_http_header_value_complete(llhttp_t* parser)
+{
+    WebClientData* client = parser->data;
+    if (!web_header_valid(client->header_name, client->header_value)) return HPE_USER;
+    if (web_header_is(client->header_name, "Transfer-Encoding")) client->chunked_request = 1;
+    web_api->table_set(client->vm, client->headers,
+        web_api->make_string(client->vm, client->header_name),
+        web_api->make_string(client->vm, client->header_value));
+    client->header_name_len = 0;
+    client->header_value_len = 0;
+    client->header_name[0] = 0;
+    client->header_value[0] = 0;
+    return 0;
+}
+
+static int web_http_headers_complete(llhttp_t* parser)
+{
+    WebClientData* client = parser->data;
+    if (client->chunked_request || (parser->flags & F_CHUNKED)) return HPE_USER;
+    if (parser->content_length > sizeof(client->body) - 1) return HPE_USER;
+    client->head_request = web_header_is(client->method, "HEAD");
+    return 0;
+}
+
+static int web_http_body(llhttp_t* parser, const char* at, size_t length)
+{
+    WebClientData* client = parser->data;
+    if (client->body_len + length >= sizeof(client->body)) return HPE_USER;
+    memcpy(client->body + client->body_len, at, length);
+    client->body_len += length;
+    client->body[client->body_len] = 0;
+    return 0;
+}
+
+static int web_http_message_complete(llhttp_t* parser)
+{
+    WebClientData* client = parser->data;
+    client->message_complete = 1;
+    return HPE_PAUSED;
+}
+
+static llhttp_settings_t web_http_settings;
+
+static void web_http_settings_init(void)
+{
+    llhttp_settings_init(&web_http_settings);
+    web_http_settings.on_message_begin = web_http_message_begin;
+    web_http_settings.on_method = web_http_method;
+    web_http_settings.on_url = web_http_url;
+    web_http_settings.on_header_field = web_http_header_field;
+    web_http_settings.on_header_value = web_http_header_value;
+    web_http_settings.on_header_value_complete = web_http_header_value_complete;
+    web_http_settings.on_headers_complete = web_http_headers_complete;
+    web_http_settings.on_body = web_http_body;
+    web_http_settings.on_message_complete = web_http_message_complete;
+}
 
 static void web_server_remove_client(lt_VM* vm, WebServerData* sd, size_t index)
 {
@@ -1027,6 +995,7 @@ static void web_server_remove_client(lt_VM* vm, WebServerData* sd, size_t index)
     if (!client) return;
     web_close_socket(client->socket);
     free(client->output);
+    if (!LT_IS_NULL(client->headers)) web_api->unroot_persistent(vm, client->headers);
     if (!LT_IS_NULL(client->pending)) web_api->unroot_persistent(vm, client->pending);
     free(client);
     sd->clients[index] = 0;
@@ -1046,46 +1015,6 @@ static void web_server_hook_destroy(lt_VM* vm, void* context)
     web_api->unroot_persistent(vm, hook->handler);
     web_api->unroot_persistent(vm, hook->instance);
     free(hook);
-}
-
-/* Determine whether a complete request is available. */
-static int web_server_request_length(WebClientData* sd, size_t* total)
-{
-    char* end = strstr(sd->input, "\r\n\r\n");
-    if (!end) return 0;
-    char* first = strstr(sd->input, "\r\n");
-    if (!first || first > end) return -1;
-    size_t length = 0; int has_length = 0;
-    for (char* p = first + 2; p < end;) {
-        char* next = strstr(p, "\r\n");
-        if (!next || next > end) return -1;
-        char* colon = memchr(p, ':', (size_t)(next - p));
-        if (!colon) return -1;
-        size_t n = (size_t)(colon - p);
-        char name[64];
-        if (n >= sizeof(name)) return -1;
-        memcpy(name, p, n); name[n] = 0;
-        char* value = colon + 1;
-        while (value < next && (*value == ' ' || *value == '\t')) ++value;
-        if (web_header_is(name, "Transfer-Encoding")) return -1;
-        if (web_header_is(name, "Content-Length")) {
-            size_t num = 0; char* q = value;
-            if (q == next || !isdigit((unsigned char)*q)) return -1;
-            while (q < next && isdigit((unsigned char)*q)) {
-                unsigned digit = (unsigned)(*q++ - '0');
-                if (num > (SIZE_MAX - digit) / 10) return -1;
-                num = num * 10 + digit;
-            }
-            while (q < next && (*q == ' ' || *q == '\t')) ++q;
-            if (q != next || (has_length && length != num)) return -1;
-            length = num; has_length = 1;
-        }
-        p = next + 2;
-    }
-    size_t header_len = (size_t)(end + 4 - sd->input);
-    if (length > sizeof(sd->input) - 1 - header_len) return -1;
-    *total = header_len + length;
-    return sd->input_len >= *total ? 1 : 0;
 }
 
 static int web_server_output(lt_VM* vm, WebClientData* sd, lt_Value result, int failed)
@@ -1139,40 +1068,22 @@ static int web_server_output(lt_VM* vm, WebClientData* sd, lt_Value result, int 
     return 1;
 }
 
-static int web_server_handle(lt_VM* vm, WebServerHook* hook, WebClientData* sd, size_t total)
+static int web_server_handle(lt_VM* vm, WebServerHook* hook, WebClientData* sd)
 {
-    sd->input[total] = 0;
-    char method[32], path[2048], version[16];
-    if (sscanf(sd->input, "%31s %2047s %15s", method, path, version) != 3 ||
-        strncmp(version, "HTTP/1.", 7) != 0) return 0;
-    sd->head_request = web_header_is(method, "HEAD");
-    char* end = strstr(sd->input, "\r\n\r\n");
-    char* body = end + 4;
-    lt_Value headers = web_api->make_table(vm);
-    web_api->root(vm, headers);
-    char* p = strstr(sd->input, "\r\n") + 2;
-    while (p < end) {
-        char* next = strstr(p, "\r\n");
-        char* colon = memchr(p, ':', (size_t)(next - p));
-        *colon = 0; *next = 0;
-        char* value = colon + 1;
-        while (*value == ' ' || *value == '\t') ++value;
-        if (!web_header_valid(p, value)) return 0;
-        web_api->table_set(vm, headers, web_api->make_string(vm, p), web_api->make_string(vm, value));
-        p = next + 2;
-    }
-    lt_Value request = create_request_instance(vm, path, method, body, headers);
+    lt_Value request = create_request_instance(vm, sd->path, sd->method, sd->body, sd->headers);
     web_api->push(vm, request);
     lt_Value result = LT_VALUE_NULL;
     hook->server->dispatching = 1;
     if (ltasync_is_async_callable(hook->handler)) result = ltasync_call(vm, hook->handler, 1);
-    else {
+    else
+    {
         uint16_t count = web_api->exec(vm, hook->handler, 1);
         if (count) { result = web_api->pop(vm); while (--count) web_api->pop(vm); }
     }
     hook->server->dispatching = 0;
     if (hook->server->closed) { web_api->remove_poll_hook(vm, hook->server->hook); return 1; }
-    if (web_api->is_promise(result)) {
+    if (web_api->is_promise(result))
+    {
         sd->pending = result;
         web_api->root_persistent(vm, result);
         return 1;
@@ -1184,7 +1095,8 @@ static lt_PollResult web_server_poll_client(lt_VM* vm, WebServerHook* hook, size
 {
     WebServerData* server = hook->server;
     WebClientData* sd = server->clients[index];
-    if (!LT_IS_NULL(sd->pending)) {
+    if (!LT_IS_NULL(sd->pending))
+    {
         lt_PromiseState state = web_api->promise_state(sd->pending);
         if (state == LT_PROMISE_PENDING) return LT_POLL_PENDING;
         lt_Value result = web_api->promise_result(sd->pending);
@@ -1194,7 +1106,8 @@ static lt_PollResult web_server_poll_client(lt_VM* vm, WebServerHook* hook, size
         if (!web_server_output(vm, sd, result, state == LT_PROMISE_REJECTED)) web_server_remove_client(vm, server, index);
         return LT_POLL_WORK;
     }
-    if (sd->output) {
+    if (sd->output)
+    {
         size_t remaining = sd->output_len - sd->output_sent;
         int count = send(sd->socket, sd->output + sd->output_sent, remaining > INT_MAX ? INT_MAX : (int)remaining,
 #ifdef MSG_NOSIGNAL
@@ -1203,7 +1116,8 @@ static lt_PollResult web_server_poll_client(lt_VM* vm, WebServerHook* hook, size
             0
 #endif
         );
-        if (count > 0) {
+        if (count > 0)
+        {
             sd->output_sent += (size_t)count;
             if (sd->output_sent == sd->output_len) web_server_remove_client(vm, server, index);
             return LT_POLL_WORK;
@@ -1212,19 +1126,39 @@ static lt_PollResult web_server_poll_client(lt_VM* vm, WebServerHook* hook, size
         web_server_remove_client(vm, server, index);
         return LT_POLL_WORK;
     }
-    if (sd->input_len == sizeof(sd->input) - 1) { web_server_remove_client(vm, server, index); return LT_POLL_WORK; }
+    if (sd->message_complete)
+    {
+        if (!web_server_handle(vm, hook, sd)) web_server_remove_client(vm, server, index);
+        return LT_POLL_WORK;
+    }
+    if (sd->input_len == sizeof(sd->input) - 1)
+    {
+        web_server_remove_client(vm, server, index);
+        return LT_POLL_WORK;
+    }
     int count = recv(sd->socket, sd->input + sd->input_len, (int)(sizeof(sd->input) - 1 - sd->input_len), 0);
     if (count < 0 && web_would_block()) return LT_POLL_PENDING;
-    if (count <= 0 || memchr(sd->input + sd->input_len, 0, (size_t)(count > 0 ? count : 0))) {
-        web_server_remove_client(vm, server, index); return LT_POLL_WORK;
+    if (count <= 0 || memchr(sd->input + sd->input_len, 0, (size_t)(count > 0 ? count : 0)))
+    {
+        web_server_remove_client(vm, server, index);
+        return LT_POLL_WORK;
     }
+    size_t previous = sd->input_len;
     sd->input_len += (size_t)count;
     sd->input[sd->input_len] = 0;
-    size_t total = 0;
-    int ready = web_server_request_length(sd, &total);
-    if (ready < 0 || (ready == 1 && !web_server_handle(vm, hook, sd, total))) web_server_remove_client(vm, server, index);
+    llhttp_errno_t error = llhttp_execute(&sd->parser, sd->input + previous, (size_t)count);
+    if (error != HPE_OK && error != HPE_PAUSED)
+    {
+        web_server_remove_client(vm, server, index);
+        return LT_POLL_WORK;
+    }
+    if (sd->message_complete && !web_server_handle(vm, hook, sd))
+    {
+        web_server_remove_client(vm, server, index);
+    }
     return LT_POLL_WORK;
 }
+
 
 static lt_PollResult web_server_poll(lt_VM* vm, void* context)
 {
@@ -1247,6 +1181,11 @@ static lt_PollResult web_server_poll(lt_VM* vm, void* context)
         } else {
             client->socket = socket_fd;
             client->pending = LT_VALUE_NULL;
+            client->vm = vm;
+            client->headers = web_api->make_table(vm);
+            web_api->root_persistent(vm, client->headers);
+            llhttp_init(&client->parser, HTTP_REQUEST, &web_http_settings);
+            client->parser.data = client;
             sd->clients[i] = client;
         }
         result = LT_POLL_WORK;
@@ -1368,6 +1307,18 @@ static uint8_t server_port(lt_VM* vm, uint8_t argc)
 }
 void ltstd_open_web(lt_VM* vm)
 {
+    static int curl_initialized = 0;
+    if (!curl_initialized)
+    {
+        if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK)
+        {
+            lt_runtime_error(vm, "Failed to initialize libcurl!");
+            return;
+        }
+        curl_initialized = 1;
+    }
+    web_http_settings_init();
+
     lt_Value response_class, request_class, server_class;
 
     response_class = web_api->class_create(vm, "Response");

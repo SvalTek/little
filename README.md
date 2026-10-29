@@ -113,11 +113,11 @@ repl_echo = true
 Repeat `module_path` or `library_path` to register more paths. `repl_echo`
 defaults to `false`.
 
-The CLI and standard library require OpenSSL headers and libraries to build.
-On Debian or Ubuntu, install `libssl-dev`, `openssl`, and `ca-certificates`.
+The CLI and standard library require OpenSSL and libcurl headers and libraries to build.
+On Debian or Ubuntu, install `libssl-dev`, `libcurl4-openssl-dev`, `openssl`, and `ca-certificates`.
 On Windows, install MSYS2 UCRT64 packages `mingw-w64-ucrt-x86_64-gcc`,
-`mingw-w64-ucrt-x86_64-make`, and `mingw-w64-ucrt-x86_64-openssl`, plus
-the MSYS2 `openssl` CLI for tests. Copy `.env.example` to `.env` and set
+`mingw-w64-ucrt-x86_64-make`, `mingw-w64-ucrt-x86_64-openssl`, `mingw-w64-ucrt-x86_64-curl`,
+plus the MSYS2 `openssl` CLI for tests. Copy `.env.example` to `.env` and set
 `GCC_PATH` to the UCRT64 root; the Taskfile loads it without committing it.
 Keep the UCRT64 `bin` directory on PATH when running builds and tests, including
 tests that copy executables or create bundles in other directories.
@@ -133,16 +133,16 @@ run for any ref, defaulting to `develop`, with either package type.
 
 Each run uploads one package for every target:
 
-* `little-windows-x64.zip` contains `little.exe`, `libssl-3-x64.dll`,
-  `libcrypto-3-x64.dll`, `libs/json/json.dll`, and `libs/webui/webui.dll`.
-* `little-linux-x64.zip` contains `little`, `libs/json/json.so`, and
+* `little-windows-x64.zip` contains `little.exe`, libcurl and OpenSSL runtime
+  DLLs (including their non-system dependencies), and `libs/webui/webui.dll`.
+* `little-linux-x64.zip` contains `little` and
   `libs/webui/webui.so`.
 
 The executable is at the archive root and native libraries are below `./libs`.
-The Linux package requires compatible system OpenSSL shared libraries. By
-default, HTTPS certificate verification uses the Windows certificate trust
-store on Windows and OpenSSL's configured CA trust paths on Linux. The packages
-do not include a CA trust store. The CLI also recognizes an installed
+The Linux package requires compatible system OpenSSL and libcurl shared
+libraries. By default, certificate verification uses the Windows certificate
+trust store on Windows and the configured CA trust paths on Linux. The
+packages do not include a CA trust store. The CLI also recognizes an installed
 `bin` plus `lib/little` layout for manual deployments. Native packages may use
 either `name/name.<platform-extension>` or the flat `name.<platform-extension>`
 layout.

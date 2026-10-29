@@ -16,3 +16,4 @@ The Little standard library is divided into modules. Embedders can load the norm
 - [async](std/async.md)
 - [task](std/task.md)
 - [web](std/web.md)
+- [ws](std/ws.md)

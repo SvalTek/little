@@ -1,0 +1,33 @@
+io.print("web sockets")
+
+; ws.serve accepts a handler with the live socket and upgrade request.
+var server = ws.serve(fn(socket, request) {
+    io.print("server", request.url)
+    socket:next().next(fn(text) {
+        io.print("server text", text)
+        socket:send(text)
+        socket:next().next(fn(binary) {
+            io.print("server binary", array.len(binary), binary[2])
+            socket:send(binary)
+        })
+    })
+}, { hostname: "127.0.0.1" port: 0 })
+
+var port = string.format("%d", server.port)
+ws.connect(string.expand("ws://127.0.0.1:{{port}}/chat", { port })).next(fn(socket) {
+    io.print("client open")
+    socket:send("hello")
+    socket:next().next(fn(text) {
+        io.print("client text", text)
+        socket:send([1, 2, 255])
+        socket:next().next(fn(binary) {
+            io.print("client binary", array.len(binary), binary[2])
+            socket:close()
+            mainloop.stop()
+        })
+    })
+})
+
+mainloop.run()
+server:close()
+io.print("done")
