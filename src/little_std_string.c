@@ -1,6 +1,7 @@
 #include "little_std.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,6 +139,8 @@ static uint8_t _lt_string_byte(lt_VM* vm, uint8_t argc)
 
     if (!LT_IS_NUMBER(indexval)) lt_runtime_error(vm, "Non-number index to string.byte!");
     double raw = LT_GET_NUMBER(indexval);
+    double integral = 0;
+    if (modf(raw, &integral) != 0) lt_runtime_error(vm, "Expected a whole index to string.byte!");
     uint32_t str_len = (uint32_t)strlen(cstr);
     if (raw < 0 || raw >= (double)str_len)
     {
@@ -146,7 +149,6 @@ static uint8_t _lt_string_byte(lt_VM* vm, uint8_t argc)
     }
 
     uint32_t index = (uint32_t)raw;
-    if ((double)index != raw) lt_runtime_error(vm, "Expected a whole index to string.byte!");
     lt_push(vm, LT_VALUE_NUMBER((double)(unsigned char)cstr[index]));
     return 1;
 }

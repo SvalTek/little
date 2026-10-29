@@ -11,8 +11,9 @@ String literals support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
 `string.sub(str, start [, length])` creates a substring. If `length` is omitted, the rest of the string is returned.
 
 `string.byte(str, index)` returns the byte at `index` as a number, or `null`
-when the index is outside the string. Indexes are 0-based, like `string.sub`,
-and count bytes rather than characters.
+when a whole index is outside the string. Indexes are 0-based, like
+`string.sub`, and count bytes rather than characters. A fractional index
+raises an error.
 
 `string.char(code)` returns a one-byte string for a whole `code` between 1 and
 255. Byte 0 is rejected, because Little strings are NUL-terminated: storing one
