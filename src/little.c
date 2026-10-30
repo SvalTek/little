@@ -139,7 +139,7 @@ static void _lt_push_diagnostic(lt_VM* vm, lt_Span span, uint16_t line, uint16_t
 	lt_buffer_push(vm, &vm->diagnostics, &diagnostic);
 }
 
-static void _lt_tokenize_error(lt_VM* vm, const char* module, uint16_t line, uint16_t col, lt_Span span, const char* message)
+static void _lt_syntax_error(lt_VM* vm, const char* module, lt_Span span, uint16_t line, uint16_t col, const char* message)
 {
 	_lt_push_diagnostic(vm, span, line, col, LT_DIAG_ERROR, message);
 
@@ -148,13 +148,14 @@ static void _lt_tokenize_error(lt_VM* vm, const char* module, uint16_t line, uin
 	lt_error(vm, sprint_buf);
 }
 
+static void _lt_tokenize_error(lt_VM* vm, const char* module, uint16_t line, uint16_t col, lt_Span span, const char* message)
+{
+	_lt_syntax_error(vm, module, span, line, col, message);
+}
+
 static void _lt_parse_error(lt_VM* vm, const char* module, lt_Token* t, const char* message)
 {
-	_lt_push_diagnostic(vm, t->span, t->line, t->col, LT_DIAG_ERROR, message);
-
-	char sprint_buf[128];
-	sprintf_s(sprint_buf, 128, "%s|%d:%d: %s", module, t->line, t->col, message);
-	lt_error(vm, sprint_buf);
+	_lt_syntax_error(vm, module, t->span, t->line, t->col, message);
 }
 
 static lt_DebugInfo* _lt_get_debuginfo(lt_Object* obj)
@@ -877,6 +878,7 @@ lt_AstNode* _lt_get_node_of_type(lt_VM* vm, lt_Token* current, lt_Parser* p, lt_
 	new_node->type = type;
 	new_node->loc.line = current->line;
 	new_node->loc.col = current->col;
+	new_node->span = current->span;
 
 	lt_buffer_push(vm, &p->ast_nodes, &new_node);
 	return *(void**)lt_buffer_last(&p->ast_nodes);
@@ -2441,12 +2443,12 @@ expr_end:
 		lt_AstNode* node = *(lt_AstNode**)lt_buffer_at(&result, i);
 		if (node->type == LT_AST_NODE_BINARYOP)
 		{
-			if (operands < 2) _lt_parse_error(vm, p->tkn->module, start, "Malformed expression!");
+			if (operands < 2) _lt_syntax_error(vm, p->tkn->module, node->span, node->loc.line, node->loc.col, "Malformed expression!");
 			operands -= 1;
 		}
 		else if (node->type == LT_AST_NODE_UNARYOP)
 		{
-			if (operands < 1) _lt_parse_error(vm, p->tkn->module, start, "Malformed expression!");
+			if (operands < 1) _lt_syntax_error(vm, p->tkn->module, node->span, node->loc.line, node->loc.col, "Malformed expression!");
 		}
 		else operands += 1;
 	}

@@ -291,6 +291,7 @@ typedef struct {
 typedef struct lt_AstNode {
 	lt_AstNodeType type;
 	lt_DebugLoc loc;
+	lt_Span span;
 
 	union {
 		struct {
