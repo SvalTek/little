@@ -1760,6 +1760,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			}
 
 			current++; // eat closing brace
+			klass->end_token = current - 1;
 			lt_buffer_push(vm, dst, &klass);
 			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
@@ -2548,6 +2549,139 @@ expr_end:
 	return current;
 }
 
+static uint32_t _lt_token_span_end(lt_Token* token)
+{
+	return token ? token->span.end : 0;
+}
+
+/* A block's scope ends on the token after its closing brace, so the brace
+   itself is the previous token. */
+static uint32_t _lt_scope_span_end(lt_Parser* p, lt_Scope* scope)
+{
+	if (!scope || !scope->end) return 0;
+
+	lt_Token* tokens = (lt_Token*)p->tkn->token_buffer.data;
+	if (scope->end <= tokens) return 0;
+	return (scope->end - 1)->span.end;
+}
+
+static void _lt_raise(uint32_t* end, uint32_t candidate)
+{
+	if (candidate > *end) *end = candidate;
+}
+
+static uint32_t _lt_compute_node_end(lt_VM* vm, lt_Parser* p, lt_AstNode* node);
+
+static uint32_t _lt_compute_body_end(lt_VM* vm, lt_Parser* p, lt_Buffer* body)
+{
+	uint32_t end = 0;
+	for (uint32_t i = 0; i < body->length; i++)
+		_lt_raise(&end, _lt_compute_node_end(vm, p, *(lt_AstNode**)lt_buffer_at(body, i)));
+	return end;
+}
+
+/* Extends each node's span to cover everything it contains, so tooling gets a
+   declaration range rather than just the token that introduced it. */
+static uint32_t _lt_compute_node_end(lt_VM* vm, lt_Parser* p, lt_AstNode* node)
+{
+	if (!node) return 0;
+
+	uint32_t end = node->span.end;
+	_lt_raise(&end, _lt_token_span_end(node->end_token));
+
+	switch (node->type)
+	{
+	case LT_AST_NODE_CHUNK:
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->chunk.body));
+		_lt_raise(&end, _lt_scope_span_end(p, node->chunk.scope));
+		break;
+	case LT_AST_NODE_TABLE:
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->table.keys));
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->table.values));
+		break;
+	case LT_AST_NODE_ARRAY:
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->array.values));
+		break;
+	case LT_AST_NODE_INDEX:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->index.source));
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->index.idx));
+		break;
+	case LT_AST_NODE_BINARYOP:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->binary_op.left));
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->binary_op.right));
+		break;
+	case LT_AST_NODE_UNARYOP:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->unary_op.expr));
+		break;
+	case LT_AST_NODE_DECLARE:
+		_lt_raise(&end, _lt_token_span_end(node->declare.identifier));
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->declare.expr));
+		for (uint32_t i = 0; i < node->declare.entries.length; i++)
+		{
+			lt_DestructureEntry* entry = lt_buffer_at(&node->declare.entries, i);
+			_lt_raise(&end, _lt_token_span_end(entry->key));
+			_lt_raise(&end, _lt_token_span_end(entry->local));
+		}
+		break;
+	case LT_AST_NODE_CLASS:
+		_lt_raise(&end, _lt_token_span_end(node->class_decl.identifier));
+		_lt_raise(&end, _lt_token_span_end(node->class_decl.superclass));
+		for (uint32_t i = 0; i < node->class_decl.members.length; i++)
+		{
+			lt_ClassMember* member = lt_buffer_at(&node->class_decl.members, i);
+			_lt_raise(&end, _lt_token_span_end(member->name));
+			_lt_raise(&end, _lt_compute_node_end(vm, p, member->value));
+		}
+		break;
+	case LT_AST_NODE_ASSIGN:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->assign.left));
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->assign.right));
+		break;
+	case LT_AST_NODE_FN:
+		for (uint8_t i = 0; i <= LT_MAX_FUNCTION_PARAMS; i++)
+			_lt_raise(&end, _lt_token_span_end(node->fn.args[i]));
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->fn.body));
+		_lt_raise(&end, _lt_scope_span_end(p, node->fn.scope));
+		break;
+	case LT_AST_NODE_CALL:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->call.callee));
+		for (uint8_t i = 0; i <= LT_MAX_CALL_ARGS + 1; i++)
+			_lt_raise(&end, _lt_compute_node_end(vm, p, node->call.args[i]));
+		break;
+	case LT_AST_NODE_AWAIT:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->await.expr));
+		break;
+	case LT_AST_NODE_RETURN:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->ret.expr));
+		break;
+	case LT_AST_NODE_IF:
+	case LT_AST_NODE_ELSEIF:
+	case LT_AST_NODE_ELSE:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->branch.expr));
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->branch.body));
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->branch.next));
+		break;
+	case LT_AST_NODE_FOR:
+	case LT_AST_NODE_WHILE:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->loop.iterator));
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->loop.body));
+		break;
+	case LT_AST_NODE_WITH:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->with_stmt.expr));
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->with_stmt.body));
+		_lt_raise(&end, _lt_scope_span_end(p, node->with_stmt.scope));
+		break;
+	case LT_AST_NODE_SUPER:
+		_lt_raise(&end, _lt_token_span_end(node->super_expr.method));
+		break;
+	default:
+		break;
+	}
+
+	node->span.end = end;
+	return end;
+}
+
 lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 {
 	lt_Parser p;
@@ -2575,6 +2709,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 		lt_Scope* file_scope = _lt_parse_block(vm, &p, tkn->token_buffer.data, &p.root->chunk.body, 0, 1, 0);
 
 		p.root->chunk.scope = file_scope;
+		_lt_compute_node_end(vm, &p, p.root);
 		p.is_valid = !p.had_error;
 	}
 
