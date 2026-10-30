@@ -660,6 +660,7 @@ struct lt_VM {
 	uint8_t rng_seeded;
 	lt_VMInitFn worker_vm_init;
 	uint8_t collect_diagnostics;
+	uint16_t error_line;
 	lt_Buffer diagnostics;
 };
 

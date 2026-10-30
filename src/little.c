@@ -141,6 +141,7 @@ static void _lt_push_diagnostic(lt_VM* vm, lt_Span span, uint16_t line, uint16_t
 
 static void _lt_syntax_error(lt_VM* vm, const char* module, lt_Span span, uint16_t line, uint16_t col, const char* message)
 {
+	vm->error_line = line;
 	_lt_push_diagnostic(vm, span, line, col, LT_DIAG_ERROR, message);
 
 	char sprint_buf[128];
@@ -1389,6 +1390,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 	}
 
 	lt_Token* current = start;
+	void* block_error_buf = vm->error_buf;
 
 #define PEEK() (current + 1)
 #define NEXT() (last = current, current++)
@@ -1398,6 +1400,40 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 	while (current->type != LT_TOKEN_END)
 	{
+		/* A broken statement must not abort the rest of the file. Trap the
+		   parser error, restore the statement's state, skip past the broken
+		   statement and continue with the next one. */
+		lt_Token* statement_start = current;
+		lt_Scope* statement_scope = p->current;
+		uint8_t statement_async = p->in_async;
+		uint8_t statement_constructor = p->in_constructor;
+		uint8_t statement_table_call = p->allow_table_call;
+		lt_Token* statement_self = p->self_token;
+
+		void* saved_error_buf = vm->error_buf;
+		jmp_buf recovery;
+		vm->error_buf = &recovery;
+
+		if (setjmp(recovery))
+		{
+			vm->error_buf = saved_error_buf;
+			p->had_error = 1;
+			p->current = statement_scope;
+			p->in_async = statement_async;
+			p->in_constructor = statement_constructor;
+			p->allow_table_call = statement_table_call;
+			p->self_token = statement_self;
+
+			uint16_t error_line = vm->error_line ? vm->error_line : statement_start->line;
+			current = statement_start;
+			while (current->type != LT_TOKEN_END && current->type != LT_TOKEN_CLOSEBRACE &&
+				current->line <= error_line) current++;
+			if (current == statement_start) current++;
+			continue;
+		}
+
+		vm->error_line = 0;
+
 		switch (current->type)
 		{
 		case LT_TOKEN_CLOSEBRACE:
@@ -1783,8 +1819,14 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 		} break;
 		default: {
 parse_expression_statement:
+			lt_Token* expression_start = current;
 			lt_AstNode* result = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 			current = _lt_parse_expression(vm, p, current, result);
+
+			/* A token that cannot start an expression is consumed by nothing;
+			   without this check the block would loop forever. */
+			if (current == expression_start)
+				_lt_parse_error(vm, p->tkn->module, current, "Unexpected token!");
 
 			if (current->type == LT_TOKEN_ASSIGN)
 			{
@@ -1803,9 +1845,14 @@ parse_expression_statement:
 			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		}
+
+		vm->error_buf = saved_error_buf;
 	}
 	
 end_block:
+	/* A `goto end_block` skips the per-statement restore, and the trap's
+	   jmp_buf lives in this frame, so it must be reset before returning. */
+	vm->error_buf = block_error_buf;
 	p->current->end = current;
 	lt_Scope* new_scope = p->current;
 
@@ -2521,6 +2568,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 		p.in_async = 0;
 		p.allow_table_call = 1;
 		p.had_error = 0;
+		vm->error_line = 0;
 		p.root = _lt_get_node_of_type(vm, (lt_Token*)tkn->token_buffer.data, &p, LT_AST_NODE_CHUNK);
 		p.root->chunk.body = lt_buffer_new(sizeof(lt_AstNode*));
 
