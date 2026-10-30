@@ -2012,7 +2012,7 @@ uint8_t ltasync_native_task_run(lt_VM* vm, uint8_t argc)
 		return 1;
 	}
 	worker->vm->error_context = worker;
-	ltstd_open_all(worker->vm);
+	if (vm->worker_vm_init) vm->worker_vm_init(worker->vm);
 	ltasync_open_promise(worker->vm);
 	ltasync_open_timer(worker->vm);
 	ltasync_open_mainloop(worker->vm);

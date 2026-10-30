@@ -121,8 +121,28 @@ double lt_get_number(lt_Value v)
 	return (double)u.flt;
 }
 
-static void _lt_tokenize_error(lt_VM* vm, const char* module, uint16_t line, uint16_t col, const char* message)
+static void _lt_push_diagnostic(lt_VM* vm, lt_Span span, uint16_t line, uint16_t col, uint8_t severity, const char* message)
 {
+	if (!vm->collect_diagnostics) return;
+
+	lt_Diagnostic diagnostic;
+	diagnostic.span = span;
+	diagnostic.line = line;
+	diagnostic.col = col;
+	diagnostic.severity = severity;
+	diagnostic.code = 0;
+
+	size_t length = strlen(message);
+	diagnostic.message = vm->alloc(length + 1);
+	memcpy(diagnostic.message, message, length + 1);
+
+	lt_buffer_push(vm, &vm->diagnostics, &diagnostic);
+}
+
+static void _lt_tokenize_error(lt_VM* vm, const char* module, uint16_t line, uint16_t col, lt_Span span, const char* message)
+{
+	_lt_push_diagnostic(vm, span, line, col, LT_DIAG_ERROR, message);
+
 	char sprint_buf[128];
 	sprintf_s(sprint_buf, 128, "%s|%d:%d: %s", module, line, col, message);
 	lt_error(vm, sprint_buf);
@@ -130,6 +150,8 @@ static void _lt_tokenize_error(lt_VM* vm, const char* module, uint16_t line, uin
 
 static void _lt_parse_error(lt_VM* vm, const char* module, lt_Token* t, const char* message)
 {
+	_lt_push_diagnostic(vm, t->span, t->line, t->col, LT_DIAG_ERROR, message);
+
 	char sprint_buf[128];
 	sprintf_s(sprint_buf, 128, "%s|%d:%d: %s", module, t->line, t->col, message);
 	lt_error(vm, sprint_buf);
@@ -514,20 +536,31 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 		const char* current = source;
 		uint16_t line = 1, col = 0;
 
-#define PUSH_TOKEN(new_type) { \
-	lt_Token _t; _t.type = new_type; _t.line = line; _t.col = col++; _t.idx = 0; \
-	lt_buffer_push(vm, &t.token_buffer, &_t); current++; found = 1;\
+#define PUSH_TOKEN_N(new_type, n) { \
+	lt_Token _t; _t.type = new_type; _t.line = line; _t.col = col; _t.idx = 0; _t.flags = 0; \
+	_t.span.start = (uint32_t)(token_start - source); _t.span.end = _t.span.start + (n); \
+	col += (n); \
+	lt_buffer_push(vm, &t.token_buffer, &_t); current += (n); found = 1;\
 };
+#define PUSH_TOKEN(type) PUSH_TOKEN_N(type, 1)
+#define TOKEN_SPAN(a, b) ((lt_Span){ (uint32_t)((a) - source), (uint32_t)((b) - source) })
 
 		while (*current)
 		{
+			const char* token_start = current;
 			uint8_t found = 0;
 			switch (*current)
 			{
 			case ' ': case '\t': { col++; current++; } found = 1; break;
 			case '\n': { col = 0; line++; current++; } found = 1; break;
 			case '\r': { current++; } found = 1; break;
-			case ';': { while (*current++ != '\n'); col = 1; line++; found = 1; } break;
+			/* A comment ends at the newline or at the end of input. The old
+			   loop scanned past the terminator when the comment was last. */
+			case ';': {
+				while (*current && *current != '\n') current++;
+				if (*current == '\n') { current++; col = 0; line++; }
+				found = 1;
+			} break;
 			case '.': PUSH_TOKEN(LT_TOKEN_PERIOD)		   break;
 			case ',': PUSH_TOKEN(LT_TOKEN_COMMA)		   break;
 			case ':': PUSH_TOKEN(LT_TOKEN_COLON)		   break;
@@ -549,25 +582,21 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 			{
 				if (*current == '>')
 				{
-					if (*(current + 1) == '=')
-					{
-						current++;
-						PUSH_TOKEN(LT_TOKEN_GTE);
-					}
-					else PUSH_TOKEN(LT_TOKEN_GT);
+					if (*(current + 1) == '=') { PUSH_TOKEN_N(LT_TOKEN_GTE, 2) }
+					else { PUSH_TOKEN(LT_TOKEN_GT) }
 				}
 				else if (*current == '<')
 				{
-					if (*(current + 1) == '=')
-					{
-						current++;
-						PUSH_TOKEN(LT_TOKEN_LTE);
-					}
-					else PUSH_TOKEN(LT_TOKEN_LT);
+					if (*(current + 1) == '=') { PUSH_TOKEN_N(LT_TOKEN_LTE, 2) }
+					else { PUSH_TOKEN(LT_TOKEN_LT) }
 				}
 				else if (*current == '"')
 				{
-					const char* start = ++current;
+					uint16_t start_line = line;
+					uint16_t start_col = col;
+					current++;
+					col++;
+					const char* start = current;
 					uint32_t raw_length = 0;
 					while (*current != '"')
 					{
@@ -576,15 +605,17 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						{
 							current += 2;
 							raw_length += 2;
+							col += 2;
 							continue;
 						}
 						if (*current == '\n') { col = 0; line++; }
+						else col++;
 						current++;
 						raw_length++;
 					}
 
 					const char* end = current;
-					if (*current == '"') current++;
+					if (*current == '"') { current++; col++; }
 
 					lt_Literal newlit;
 					newlit.type = LT_TOKEN_STRING_LITERAL;
@@ -617,9 +648,12 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 
 					lt_Token tok;
 					tok.type = LT_TOKEN_STRING_LITERAL;
-					tok.line = line;
-					tok.col = col; col += raw_length;
+					tok.line = start_line;
+					tok.col = start_col;
 					tok.idx = t.literal_buffer.length - 1;
+					tok.flags = 0;
+					tok.span.start = (uint32_t)(token_start - source);
+					tok.span.end = (uint32_t)(current - source);
 					lt_buffer_push(vm, &t.token_buffer, &tok);
 				}
 				else if (isalnum(*current) && !isalpha(*current))
@@ -634,29 +668,29 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 					{
 						current += 2;
 						uint8_t has_digits = isxdigit(*current) != 0;
-						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, "Expected hex digits after 0x!");
+						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Expected hex digits after 0x!");
 						while (isxdigit(*current)) current++;
 						if (*current == '.' || isalnum(*current) || *current == '_')
 						{
-							_lt_tokenize_error(vm, t.module, line, col, "Invalid character in hex number literal!");
+							_lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Invalid character in hex number literal!");
 							while (*current == '.' || isalnum(*current) || *current == '_') current++;
 						}
 
 						length = (uint32_t)(current - start);
 						char* end = 0;
 						unsigned long long parsed = strtoull(start + 2, &end, 16);
-						if (has_digits && end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse hex number!");
+						if (has_digits && end != current) _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Failed to parse hex number!");
 						number = has_digits ? (double)parsed : 0;
 					}
 					else if (*current == '0' && (*(current + 1) == 'b' || *(current + 1) == 'B'))
 					{
 						current += 2;
 						uint8_t has_digits = (*current == '0' || *current == '1');
-						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, "Expected binary digits after 0b!");
+						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Expected binary digits after 0b!");
 						while (*current == '0' || *current == '1') current++;
 						if (*current == '.' || isalnum(*current) || *current == '_')
 						{
-							_lt_tokenize_error(vm, t.module, line, col, "Invalid character in binary number literal!");
+							_lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Invalid character in binary number literal!");
 							while (*current == '.' || isalnum(*current) || *current == '_') current++;
 						}
 
@@ -677,7 +711,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						{
 							if (*current == '.')
 							{
-								if (has_decimal) _lt_tokenize_error(vm, t.module, line, col, "Can't have multiple decimals in number literal!");
+								if (has_decimal) _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Can't have multiple decimals in number literal!");
 								has_decimal = 1;
 							}
 							if (*current == 'e' || *current == 'E') has_exponent = 1;
@@ -689,13 +723,13 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						char* end = 0;
 						number = strtod(start, &end);
 
-						if (end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse number!");
+						if (end != current) _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Failed to parse number!");
 						/* A second exponent stops the scan without leaving the
 						   token short, so it has to be rejected here or the
 						   literal silently splits into a number and an
 						   identifier. */
 						if ((*current == 'e' || *current == 'E') && has_exponent)
-							_lt_tokenize_error(vm, t.module, line, col, "Can't have multiple exponents in number literal!");
+							_lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Can't have multiple exponents in number literal!");
 					}
 
 					lt_Literal newlit;
@@ -709,6 +743,9 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 					tok.line = line;
 					tok.col = start_col; col += length;
 					tok.idx = t.literal_buffer.length - 1;
+					tok.flags = 0;
+					tok.span.start = (uint32_t)(start - source);
+					tok.span.end = (uint32_t)(current - source);
 					lt_buffer_push(vm, &t.token_buffer, &tok);
 				}
 				else if (isalpha(*current) || *current == '_')
@@ -729,6 +766,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 #define PUSH_STR_TOKEN(name, new_type) \
 	if(faststrcmp(name, sizeof(name) - 1, start, length)) { \
 		lt_Token _t; _t.type = new_type; _t.line = line; _t.col = col; col += length; _t.idx = _lt_register_identifier_name(vm, &t, start, length); \
+		_t.flags = 0; _t.span.start = (uint32_t)(start - source); _t.span.end = _t.span.start + length; \
 		lt_buffer_push(vm, &t.token_buffer, &_t); found = 1; }
 
 				PUSH_STR_TOKEN("fn", LT_TOKEN_FN)
@@ -781,6 +819,9 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 							tok.line = line;
 							tok.col = col; col += length;
 							tok.idx = i;
+							tok.flags = 0;
+							tok.span.start = (uint32_t)(start - source);
+							tok.span.end = tok.span.start + length;
 							lt_buffer_push(vm, &t.token_buffer, &tok);
 							break;
 						}
@@ -801,11 +842,14 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						tok.line = line;
 						tok.col = col; col += length;
 						tok.idx = t.identifier_buffer.length - 1;
+						tok.flags = 0;
+						tok.span.start = (uint32_t)(start - source);
+						tok.span.end = tok.span.start + length;
 						lt_buffer_push(vm, &t.token_buffer, &tok);
 					}
 				}
 				}
-				else _lt_tokenize_error(vm, t.module, line, col, "Unrecognized token!");
+				else _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(current, current + 1), "Unrecognized token!");
 			}
 		}
 
@@ -813,6 +857,10 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 		tok.type = LT_TOKEN_END;
 		tok.line = line;
 		tok.col = col;
+		tok.idx = 0;
+		tok.flags = 0;
+		tok.span.start = (uint32_t)(current - source);
+		tok.span.end = tok.span.start;
 		lt_buffer_push(vm, &t.token_buffer, &tok);
 
 		t.is_valid = 1;
@@ -964,6 +1012,8 @@ static lt_Token* _lt_make_identifier_token(lt_VM* vm, lt_Parser* p, const char* 
 	tok->line = loc->line;
 	tok->col = loc->col;
 	tok->idx = idx;
+	tok->flags = LT_TOKEN_SYNTHETIC;
+	tok->span = loc->span;
 	lt_buffer_push(vm, &p->generated_tokens, &tok);
 	return tok;
 }
@@ -980,6 +1030,8 @@ static lt_Token* _lt_make_number_token(lt_VM* vm, lt_Parser* p, double number, l
 	tok->line = loc->line;
 	tok->col = loc->col;
 	tok->idx = p->tkn->literal_buffer.length - 1;
+	tok->flags = LT_TOKEN_SYNTHETIC;
+	tok->span = loc->span;
 	lt_buffer_push(vm, &p->generated_tokens, &tok);
 	return tok;
 }
@@ -1040,6 +1092,8 @@ static lt_AstNode* _lt_make_self_assignment_node(lt_VM* vm, lt_Parser* p, lt_Tok
 
 static void _lt_parse_soft_error(lt_VM* vm, lt_Parser* p, lt_Token* t, const char* message)
 {
+	_lt_push_diagnostic(vm, t->span, t->line, t->col, LT_DIAG_ERROR, message);
+
 	char sprint_buf[128];
 	sprintf_s(sprint_buf, 128, "%s|%d:%d: %s", p->tkn->module, t->line, t->col, message);
 	if (vm->error) vm->error(vm, sprint_buf);
@@ -1125,6 +1179,7 @@ static lt_AstNode* _lt_make_field_initializer_fn(lt_VM* vm, lt_Parser* p, lt_Tok
 	fn_scope->frame_slots = lt_buffer_new(sizeof(lt_Token*));
 	fn_scope->upvals = lt_buffer_new(sizeof(lt_Token));
 	fn_scope->captured = lt_buffer_new(sizeof(uint16_t));
+	lt_buffer_push(vm, &p->scopes, &fn_scope);
 	_lt_make_local(vm, fn_scope, fn->fn.args[0]);
 	fn->fn.scope = fn_scope;
 	return fn;
@@ -1326,6 +1381,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 		new_scope->frame_slots = lt_buffer_new(sizeof(lt_Token*));
 		new_scope->upvals = lt_buffer_new(sizeof(lt_Token));
 		new_scope->captured = lt_buffer_new(sizeof(uint16_t));
+		lt_buffer_push(vm, &p->scopes, &new_scope);
 
 		if (argnames) while (*argnames) _lt_make_local(vm, p->current, *argnames++);
 	}
@@ -1444,6 +1500,8 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			tok.line = ident->line;
 			tok.col = ident->col;
 			tok.idx = p->tkn->identifier_buffer.length - 1;
+			tok.flags = LT_TOKEN_SYNTHETIC;
+			tok.span = ident->span;
 
 			for_expr->loop.closureidx = _lt_make_local(vm, p->current, &tok);
 			for_expr->loop.iterator = iter_expr;
@@ -2430,6 +2488,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 	p.tkn = tkn;
 	p.ast_nodes = lt_buffer_new(sizeof(lt_AstNode*));
 	p.generated_tokens = lt_buffer_new(sizeof(lt_Token*));
+	p.scopes = lt_buffer_new(sizeof(lt_Scope*));
 
 	void* saved_error_buf = vm->error_buf;
 	jmp_buf error_buf;
@@ -2470,6 +2529,7 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 	vm->native_roots = lt_buffer_new(sizeof(lt_Value));
 	vm->native_libraries = lt_buffer_new(sizeof(lt_NativeLibrary));
 	vm->module_loaders = lt_buffer_new(sizeof(lt_ModuleLoader));
+	vm->diagnostics = lt_buffer_new(sizeof(lt_Diagnostic));
 	ltasync_init_state(vm);
 
 	vm->generate_debug = 1;
@@ -2499,8 +2559,33 @@ void lt_destroy(lt_VM* vm)
 	lt_buffer_destroy(vm, &vm->keepalive);
 	lt_buffer_destroy(vm, &vm->temporary_roots);
 	lt_buffer_destroy(vm, &vm->native_roots);
+	lt_diagnostics_clear(vm);
+	lt_buffer_destroy(vm, &vm->diagnostics);
 	if (vm->error_trap) vm->free(vm->error_trap);
 	vm->free(vm);
+}
+
+void lt_diagnostics_clear(lt_VM* vm)
+{
+	for (uint32_t i = 0; i < vm->diagnostics.length; i++)
+		vm->free(((lt_Diagnostic*)lt_buffer_at(&vm->diagnostics, i))->message);
+	vm->diagnostics.length = 0;
+}
+
+uint32_t lt_diagnostic_count(lt_VM* vm)
+{
+	return vm->diagnostics.length;
+}
+
+const lt_Diagnostic* lt_diagnostic_get(lt_VM* vm, uint32_t index)
+{
+	if (index >= vm->diagnostics.length) return 0;
+	return (const lt_Diagnostic*)lt_buffer_at(&vm->diagnostics, index);
+}
+
+void lt_set_worker_vm_init(lt_VM* vm, lt_VMInitFn init)
+{
+	vm->worker_vm_init = init;
 }
 
 void lt_add_module_loader(lt_VM* vm, lt_ModuleLoaderFn loader, void* userdata)
@@ -4478,7 +4563,6 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 		{
 		case LT_AST_NODE_CHUNK:
 			lt_buffer_destroy(vm, &entry->chunk.body);
-			if (entry->chunk.scope) lt_free_scope(vm, entry->chunk.scope);
 			break;
 		case LT_AST_NODE_CLASS:
 			lt_buffer_destroy(vm, &entry->class_decl.members);
@@ -4488,22 +4572,28 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 			break;
 		case LT_AST_NODE_TABLE: lt_buffer_destroy(vm, &entry->table.keys); lt_buffer_destroy(vm, &entry->table.values); break;
 		case LT_AST_NODE_ARRAY: lt_buffer_destroy(vm, &entry->array.values); break;
-		case LT_AST_NODE_FN:
-			if (entry->fn.scope) lt_free_scope(vm, entry->fn.scope);
-			break;
 		case LT_AST_NODE_IF: case LT_AST_NODE_ELSEIF: case LT_AST_NODE_ELSE: lt_buffer_destroy(vm, &entry->branch.body); break;
 		case LT_AST_NODE_WITH:
 			lt_buffer_destroy(vm, &entry->with_stmt.body);
-			if (entry->with_stmt.scope) lt_free_scope(vm, entry->with_stmt.scope);
 			break;
 		}
 
 		vm->free(entry);
 	}
 
+	/* Scopes are owned by the parser, not by the nodes that reference them, so
+	   partially parsed and abandoned scopes are released too. */
+	for (uint32_t i = 0; i < p->scopes.length; i++)
+	{
+		lt_Scope* scope = *(lt_Scope**)lt_buffer_at(&p->scopes, i);
+		lt_free_scope(vm, scope);
+		vm->free(scope);
+	}
+
 	for (uint32_t i = 0; i < p->generated_tokens.length; i++)
 		vm->free(*(lt_Token**)lt_buffer_at(&p->generated_tokens, i));
 	lt_buffer_destroy(vm, &p->generated_tokens);
+	lt_buffer_destroy(vm, &p->scopes);
 	lt_buffer_destroy(vm, &p->ast_nodes);
 }
 

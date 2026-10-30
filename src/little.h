@@ -152,10 +152,37 @@ typedef enum {
 	LT_TOKEN_END,
 } lt_TokenType;
 
+/* Byte offsets into the analysed source: [start, end). */
+typedef struct {
+	uint32_t start, end;
+} lt_Span;
+
+/* Token was fabricated by the parser (hidden `with` names, implicit `this`,
+   synthesized literals) rather than read from source. */
+#define LT_TOKEN_SYNTHETIC 0x01
+
 typedef struct {
 	lt_TokenType type;
 	uint16_t line, col, idx;
+	lt_Span span;
+	uint8_t flags;
 } lt_Token;
+
+/* Severity values match the language server protocol. */
+typedef enum {
+	LT_DIAG_ERROR = 1,
+	LT_DIAG_WARNING = 2,
+	LT_DIAG_INFO = 3,
+	LT_DIAG_HINT = 4,
+} lt_DiagnosticSeverity;
+
+typedef struct {
+	lt_Span span;
+	uint16_t line, col;
+	uint8_t severity;
+	int32_t code;
+	char* message;
+} lt_Diagnostic;
 
 typedef struct {
 	void* data;
@@ -385,6 +412,7 @@ typedef struct lt_Scope {
 typedef struct {
 	lt_Buffer ast_nodes;
 	lt_Buffer generated_tokens;
+	lt_Buffer scopes;
 	lt_AstNode* root;
 
 	lt_Tokenizer* tkn;
@@ -398,6 +426,16 @@ typedef struct {
 	uint32_t next_with_id;
 	lt_Token* self_token;
 } lt_Parser;
+
+/* Result of a non-executing analysis pass. Diagnostics live on the VM that
+   produced them; free the analysis before destroying that VM. */
+typedef struct {
+	const char* source;
+	const char* module;
+	lt_Tokenizer tokens;
+	lt_Parser parser;
+	uint8_t is_valid;
+} lt_Analysis;
 
 typedef struct {
 	lt_Value key, value;
@@ -554,6 +592,9 @@ typedef struct lt_Frame {
 typedef void* (*lt_AllocFn)(size_t);
 typedef void (*lt_FreeFn)(void*);
 typedef void (*lt_ErrorFn)(lt_VM* vm, const char*);
+/* Installs host libraries into a VM. Used for worker VMs spawned by tasks so
+   the core library does not have to link the standard library. */
+typedef void (*lt_VMInitFn)(lt_VM* vm);
 typedef void (*lt_NativeLibraryCloseFn)(void*);
 
 typedef struct lt_NativeLibrary {
@@ -616,6 +657,9 @@ struct lt_VM {
 	uint64_t rng_state;
 	uint64_t rng_inc;
 	uint8_t rng_seeded;
+	lt_VMInitFn worker_vm_init;
+	uint8_t collect_diagnostics;
+	lt_Buffer diagnostics;
 };
 
 lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error);
@@ -652,6 +696,17 @@ void lt_runtime_error(lt_VM* vm, const char* message);
 lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name);
 lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn);
 lt_Value lt_compile(lt_VM* vm, lt_Parser* p);
+
+/* Tokenizes and parses source without compiling or executing it. Any previous
+   diagnostics on the VM are discarded. */
+void lt_analysis_run(lt_VM* vm, lt_Analysis* analysis, const char* source, const char* module);
+void lt_analysis_free(lt_VM* vm, lt_Analysis* analysis);
+
+void lt_diagnostics_clear(lt_VM* vm);
+uint32_t lt_diagnostic_count(lt_VM* vm);
+const lt_Diagnostic* lt_diagnostic_get(lt_VM* vm, uint32_t index);
+
+void lt_set_worker_vm_init(lt_VM* vm, lt_VMInitFn init);
 
 void lt_free_parser(lt_VM* vm, lt_Parser* p);
 void lt_free_tokenizer(lt_VM* vm, lt_Tokenizer* tok);

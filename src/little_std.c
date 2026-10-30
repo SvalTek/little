@@ -394,6 +394,10 @@ static uint8_t _ltstd_import(lt_VM* vm, uint8_t argc)
 
 void ltstd_open_all(lt_VM* vm)
 {
+    /* Worker VMs spawned by tasks inherit the standard library when the host
+       installed it, without the core library depending on this module. */
+    lt_set_worker_vm_init(vm, ltstd_open_all);
+
     lt_table_set(vm, vm->global, lt_make_string(vm, "pcall"), lt_make_native(vm, _ltstd_pcall));
     lt_table_set(vm, vm->global, lt_make_string(vm, "unpack"), lt_make_native(vm, _ltstd_unpack));
     lt_table_set(vm, vm->global, lt_make_string(vm, "import"), lt_make_native(vm, _ltstd_import));
