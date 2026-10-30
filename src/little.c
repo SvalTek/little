@@ -2432,6 +2432,25 @@ expr_end:
 		PUSH_EXPR_FROM_OP(back, back_tok);
 	}
 
+	/* A malformed expression that starts with an operator (for example a lone
+	   `/`) produces a postfix stream with more operators than operands. Check
+	   that before folding, otherwise the value stack is read below its start. */
+	int32_t operands = 0;
+	for (uint32_t i = 0; i < result.length; i++)
+	{
+		lt_AstNode* node = *(lt_AstNode**)lt_buffer_at(&result, i);
+		if (node->type == LT_AST_NODE_BINARYOP)
+		{
+			if (operands < 2) _lt_parse_error(vm, p->tkn->module, start, "Malformed expression!");
+			operands -= 1;
+		}
+		else if (node->type == LT_AST_NODE_UNARYOP)
+		{
+			if (operands < 1) _lt_parse_error(vm, p->tkn->module, start, "Malformed expression!");
+		}
+		else operands += 1;
+	}
+
 	lt_Buffer value_stack = lt_buffer_new(sizeof(lt_AstNode*));
 
 	for (uint32_t i = 0; i < result.length; i++)
