@@ -2115,6 +2115,7 @@ void ltasync_open_timer(lt_VM* vm)
 	 *  @signature (callback, ms)
 	 *  @param callback function invoked once after the delay
 	 *  @param ms delay in milliseconds
+	 *  @return number
 	 */
 	lt_table_set(vm, vm->global, lt_make_string(vm, "setTimeout"), lt_make_native(vm, ltasync_native_set_timeout));
 	/** [LittleBinding] setInterval
@@ -2122,18 +2123,21 @@ void ltasync_open_timer(lt_VM* vm)
 	 *  @signature (callback, ms)
 	 *  @param callback function invoked on each tick
 	 *  @param ms interval in milliseconds
+	 *  @return number
 	 */
 	lt_table_set(vm, vm->global, lt_make_string(vm, "setInterval"), lt_make_native(vm, ltasync_native_set_interval));
 	/** [LittleBinding] clearTimeout
 	 *  cancels the timer with the given id.
 	 *  @signature (id)
 	 *  @param id timer id returned by setTimeout or setInterval
+	 *  @return null
 	 */
 	lt_table_set(vm, vm->global, lt_make_string(vm, "clearTimeout"), lt_make_native(vm, ltasync_native_clear_timer));
 	/** [LittleBinding] clearInterval
 	 *  cancels the timer with the given id.
 	 *  @signature (id)
 	 *  @param id timer id returned by setInterval or setTimeout
+	 *  @return null
 	 */
 	lt_table_set(vm, vm->global, lt_make_string(vm, "clearInterval"), lt_make_native(vm, ltasync_native_clear_timer));
 }
@@ -2157,16 +2161,19 @@ void ltasync_open_mainloop(lt_VM* vm)
 	/** [LittleBinding] mainloop.run
 	 *  drains pending async work until the VM is idle or mainloop.stop is called and returns the number of poll steps performed.
 	 *  @signature ()
+	 *  @return number
 	 */
 	lt_table_set(vm, mainloop, lt_make_string(vm, "run"), lt_make_native(vm, ltasync_native_mainloop_run));
 	/** [LittleBinding] mainloop.poll
 	 *  advances one async step and returns whether work was performed or remains pending.
 	 *  @signature ()
+	 *  @return bool
 	 */
 	lt_table_set(vm, mainloop, lt_make_string(vm, "poll"), lt_make_native(vm, ltasync_native_mainloop_poll));
 	/** [LittleBinding] mainloop.stop
 	 *  requests that the current script-managed mainloop stop.
 	 *  @signature ()
+	 *  @return null
 	 */
 	lt_table_set(vm, mainloop, lt_make_string(vm, "stop"), lt_make_native(vm, ltasync_native_mainloop_stop));
 	lt_table_set(vm, vm->global, lt_make_string(vm, "mainloop"), mainloop);

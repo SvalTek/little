@@ -138,6 +138,7 @@ void ltstd_open_bit(lt_VM* vm)
      *  @signature (a, b)
      *  @param a left operand
      *  @param b right operand
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "band"), lt_make_native(vm, _lt_bit_band));
     /** [LittleBinding] bit.bor
@@ -145,6 +146,7 @@ void ltstd_open_bit(lt_VM* vm)
      *  @signature (a, b)
      *  @param a left operand
      *  @param b right operand
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "bor"), lt_make_native(vm, _lt_bit_bor));
     /** [LittleBinding] bit.bxor
@@ -152,12 +154,14 @@ void ltstd_open_bit(lt_VM* vm)
      *  @signature (a, b)
      *  @param a left operand
      *  @param b right operand
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "bxor"), lt_make_native(vm, _lt_bit_bxor));
     /** [LittleBinding] bit.bnot
      *  returns the bitwise complement of a 32-bit integer as a signed 32-bit number.
      *  @signature (a)
      *  @param a value to complement
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "bnot"), lt_make_native(vm, _lt_bit_bnot));
     /** [LittleBinding] bit.shl
@@ -165,6 +169,7 @@ void ltstd_open_bit(lt_VM* vm)
      *  @signature (a, bits)
      *  @param a value to shift
      *  @param bits shift count from 0 to 31
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "shl"), lt_make_native(vm, _lt_bit_shl));
     /** [LittleBinding] bit.shr
@@ -172,6 +177,7 @@ void ltstd_open_bit(lt_VM* vm)
      *  @signature (a, bits)
      *  @param a value to shift
      *  @param bits shift count from 0 to 31
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "shr"), lt_make_native(vm, _lt_bit_shr));
 
@@ -180,6 +186,7 @@ void ltstd_open_bit(lt_VM* vm)
      *  @signature (a, index)
      *  @param a value to inspect
      *  @param index bit position from 0 to 31
+     *  @return bool
      */
     lt_table_set(vm, t, lt_make_string(vm, "test"), lt_make_native(vm, _lt_bit_test));
     /** [LittleBinding] bit.set
@@ -187,6 +194,7 @@ void ltstd_open_bit(lt_VM* vm)
      *  @signature (a, index)
      *  @param a value to modify
      *  @param index bit position from 0 to 31
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "set"), lt_make_native(vm, _lt_bit_set));
     /** [LittleBinding] bit.clear
@@ -194,6 +202,7 @@ void ltstd_open_bit(lt_VM* vm)
      *  @signature (a, index)
      *  @param a value to modify
      *  @param index bit position from 0 to 31
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "clear"), lt_make_native(vm, _lt_bit_clear));
     /** [LittleBinding] bit.toggle
@@ -201,12 +210,14 @@ void ltstd_open_bit(lt_VM* vm)
      *  @signature (a, index)
      *  @param a value to modify
      *  @param index bit position from 0 to 31
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "toggle"), lt_make_native(vm, _lt_bit_toggle));
     /** [LittleBinding] bit.count
      *  returns how many of the 32 bits of a are set.
      *  @signature (a)
      *  @param a value to count set bits of
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "count"), lt_make_native(vm, _lt_bit_count));
 

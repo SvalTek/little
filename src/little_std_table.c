@@ -109,6 +109,7 @@ void ltstd_open_table(lt_VM* vm)
      *  @signature (table, key)
      *  @param table table to inspect
      *  @param key key to look up
+     *  @return bool
      */
     lt_table_set(vm, t, lt_make_string(vm, "has"), lt_make_native(vm, _lt_table_has));
     /** [LittleBinding] table.fetch
@@ -122,21 +123,25 @@ void ltstd_open_table(lt_VM* vm)
     /** [LittleBinding] table.put
      *  stores a value under a key and returns nothing.
      *  @signature (table, key, value)
+     *  @return null
      */
     lt_table_set(vm, t, lt_make_string(vm, "put"), lt_make_native(vm, _lt_table_put));
     /** [LittleBinding] table.remove
      *  clears the entry for a key and returns nothing.
      *  @signature (table, key)
+     *  @return null
      */
     lt_table_set(vm, t, lt_make_string(vm, "remove"), lt_make_native(vm, _lt_table_remove));
     /** [LittleBinding] table.keys
      *  returns an array of the table's keys, skipping keys whose value is null.
      *  @signature (table)
+     *  @return array
      */
     lt_table_set(vm, t, lt_make_string(vm, "keys"), lt_make_native(vm, _lt_table_keys));
     /** [LittleBinding] table.values
      *  returns an array of the table's values, skipping null entries.
      *  @signature (table)
+     *  @return array
      */
     lt_table_set(vm, t, lt_make_string(vm, "values"), lt_make_native(vm, _lt_table_values));
 

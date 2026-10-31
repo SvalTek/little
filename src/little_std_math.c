@@ -199,163 +199,194 @@ void ltstd_open_math(lt_VM* vm)
      *  returns the sine of an angle in radians.
      *  @signature (x)
      *  @param x angle in radians
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "sin"), lt_make_native(vm, _lt_sin));
     /** [LittleBinding] math.cos
      *  returns the cosine of an angle in radians.
      *  @signature (x)
      *  @param x angle in radians
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "cos"), lt_make_native(vm, _lt_cos));
     /** [LittleBinding] math.tan
      *  returns the tangent of an angle in radians.
      *  @signature (x)
      *  @param x angle in radians
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "tan"), lt_make_native(vm, _lt_tan));
 
     /** [LittleBinding] math.asin
      *  returns the angle in radians whose sine is the given value.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "asin"), lt_make_native(vm, _lt_asin));
     /** [LittleBinding] math.acos
      *  returns the angle in radians whose cosine is the given value.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "acos"), lt_make_native(vm, _lt_acos));
     /** [LittleBinding] math.atan
      *  returns the angle in radians whose tangent is the given value.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "atan"), lt_make_native(vm, _lt_atan));
 
     /** [LittleBinding] math.sinh
      *  returns the hyperbolic sine of a number.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "sinh"), lt_make_native(vm, _lt_sinh));
     /** [LittleBinding] math.cosh
      *  returns the hyperbolic cosine of a number.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "cosh"), lt_make_native(vm, _lt_cosh));
     /** [LittleBinding] math.tanh
      *  returns the hyperbolic tangent of a number.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "tanh"), lt_make_native(vm, _lt_tanh));
 
     /** [LittleBinding] math.floor
      *  returns the largest whole number that is not greater than the value.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "floor"), lt_make_native(vm, _lt_floor));
     /** [LittleBinding] math.ceil
      *  returns the smallest whole number that is not less than the value.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "ceil"),  lt_make_native(vm, _lt_ceil));
     /** [LittleBinding] math.round
      *  returns the nearest whole number, rounding halves away from zero.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "round"), lt_make_native(vm, _lt_round));
 
     /** [LittleBinding] math.exp
      *  returns e raised to the given power.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "exp"),   lt_make_native(vm, _lt_exp));
     /** [LittleBinding] math.log
      *  returns the natural logarithm of a number.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "log"),   lt_make_native(vm, _lt_log));
     /** [LittleBinding] math.log10
      *  returns the base-10 logarithm of a number.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "log10"), lt_make_native(vm, _lt_log10));
     /** [LittleBinding] math.sqrt
      *  returns the square root of a number, which is NaN for negative values.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "sqrt"),  lt_make_native(vm, _lt_sqrt));
     /** [LittleBinding] math.abs
      *  returns the absolute value of a number.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "abs"),   lt_make_native(vm, _lt_fabs));
 
     /** [LittleBinding] math.min
      *  returns the smaller of two numbers.
      *  @signature (a, b)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "min"), lt_make_native(vm, _lt_fmin));
     /** [LittleBinding] math.max
      *  returns the larger of two numbers.
      *  @signature (a, b)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "max"), lt_make_native(vm, _lt_fmax));
     /** [LittleBinding] math.pow
      *  returns a raised to the power b.
      *  @signature (a, b)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "pow"), lt_make_native(vm, _lt_pow));
     /** [LittleBinding] math.mod
      *  returns the remainder of dividing a by b, taking the sign of a.
      *  @signature (a, b)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "mod"), lt_make_native(vm, _lt_fmod));
     /** [LittleBinding] math.clamp
      *  restricts x to the inclusive range between min and max.
      *  @signature (x, min, max)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "clamp"), lt_make_native(vm, _lt_clamp));
     /** [LittleBinding] math.lerp
      *  linearly interpolates from a to b, where t of 0 gives a and 1 gives b.
      *  @signature (a, b, t)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "lerp"), lt_make_native(vm, _lt_lerp));
     /** [LittleBinding] math.sign
      *  returns -1, 0 or 1 according to the sign of the value.
      *  @signature (x)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "sign"), lt_make_native(vm, _lt_sign));
     /** [LittleBinding] math.isnan
      *  returns true when the value is NaN.
      *  @signature (x)
+     *  @return bool
      */
     lt_table_set(vm, t, lt_make_string(vm, "isnan"), lt_make_native(vm, _lt_isnan));
     /** [LittleBinding] math.isfinite
      *  returns true when the value is neither infinite nor NaN.
      *  @signature (x)
+     *  @return bool
      */
     lt_table_set(vm, t, lt_make_string(vm, "isfinite"), lt_make_native(vm, _lt_isfinite));
     /** [LittleBinding] math.deg
      *  converts an angle from radians to degrees.
      *  @signature (radians)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "deg"), lt_make_native(vm, _lt_deg));
     /** [LittleBinding] math.rad
      *  converts an angle from degrees to radians.
      *  @signature (degrees)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "rad"), lt_make_native(vm, _lt_rad));
     /** [LittleBinding] math.random
      *  returns a uniformly distributed random number in the range [0, 1).
      *  @signature ()
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "random"), lt_make_native(vm, _lt_random));
     /** [LittleBinding] math.randomInt
      *  returns a uniformly distributed whole number between min and max, inclusive.
      *  @signature (min, max)
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "randomInt"), lt_make_native(vm, _lt_randomint));
     /** [LittleBinding] math.seed
      *  seeds the random generator from n so later values are reproducible, returning nothing.
      *  @signature (n)
+     *  @return null
      */
     lt_table_set(vm, t, lt_make_string(vm, "seed"), lt_make_native(vm, _lt_seed));
 

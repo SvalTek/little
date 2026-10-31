@@ -403,6 +403,7 @@ void ltstd_open_all(lt_VM* vm)
      *  @signature (fn [, args...])
      *  @param fn callable to invoke
      *  @param args... arguments passed to fn
+     *  @return table
      */
     lt_table_set(vm, vm->global, lt_make_string(vm, "pcall"), lt_make_native(vm, _ltstd_pcall));
     /** [LittleBinding] unpack
@@ -424,11 +425,13 @@ void ltstd_open_all(lt_VM* vm)
      *  appends one or more directory search paths used to resolve imported modules.
      *  @signature (path [, ...])
      *  @param path search path to append; further paths may follow
+     *  @return null
      */
     lt_table_set(vm, module, lt_make_string(vm, "addPath"), lt_make_native(vm, _ltstd_module_add_path));
     /** [LittleBinding] module.clearPaths
      *  removes every registered module search path.
      *  @signature ()
+     *  @return null
      */
     lt_table_set(vm, module, lt_make_string(vm, "clearPaths"), lt_make_native(vm, _ltstd_module_clear_paths));
     lt_table_set(vm, vm->global, lt_make_string(vm, "module"), module);

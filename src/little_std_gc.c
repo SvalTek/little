@@ -35,18 +35,21 @@ void ltstd_open_gc(lt_VM* vm)
     /** [LittleBinding] gc.collect
      *  runs a garbage collection sweep and returns the number of objects freed.
      *  @signature ()
+     *  @return number
      */
     lt_table_set(vm, t, lt_make_string(vm, "collect"), lt_make_native(vm, _lt_gc_collect));
     /** [LittleBinding] gc.addroot
      *  adds an object to the collector rootset, keeping it and everything it references alive.
      *  @signature (x)
      *  @param x object to keep from being collected
+     *  @return null
      */
     lt_table_set(vm, t, lt_make_string(vm, "addroot"), lt_make_native(vm, _lt_gc_addroot));
     /** [LittleBinding] gc.removeroot
      *  removes an object from the collector rootset so it may be collected again.
      *  @signature (x)
      *  @param x object to release
+     *  @return null
      */
     lt_table_set(vm, t, lt_make_string(vm, "removeroot"), lt_make_native(vm, _lt_gc_removeroot));
 

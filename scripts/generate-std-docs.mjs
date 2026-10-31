@@ -82,6 +82,7 @@ for (const file of sourceFiles(root)) {
         signature = line.slice("@signature ".length).trim();
         continue;
       }
+      if (line.startsWith("@return ")) continue;
       if (line.startsWith("@param ")) {
         const rest = line.slice("@param ".length).trim();
         const space = rest.indexOf(" ");

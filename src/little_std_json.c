@@ -244,6 +244,7 @@ void ltstd_open_json(lt_VM* vm)
      *  serializes a Little value as JSON text, returning null for values JSON cannot represent.
      *  @signature (value)
      *  @param value value to serialize
+     *  @return string|null
      */
     lt_table_set(vm, json, lt_make_string(vm, "stringify"), lt_make_native(vm, json_stringify_native));
     lt_table_set(vm, vm->global, lt_make_string(vm, "json"), json);
