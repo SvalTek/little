@@ -32,6 +32,12 @@ const MEMBER_FILES = new Map([
   ["task.run", "task"],
 ]);
 
+/* Generated files that have a hand-written conceptual guide. */
+const GUIDES = new Map([
+  ["task", { file: "tasks.md", label: "task execution model, shared state and limitations" }],
+  ["async", { file: "async.md", label: "promises, timers and the mainloop" }],
+]);
+
 function sourceFiles(dir) {
   const out = [];
   for (const name of readdirSync(dir)) {
@@ -97,6 +103,10 @@ mkdirSync(output, { recursive: true });
 
 for (const [target, entries] of documents) {
   const lines = [`# ${target}`, ""];
+  const guide = GUIDES.get(target);
+  if (guide) {
+    lines.push(`> See the [${guide.label}](../guides/${guide.file}) guide.`, "");
+  }
   for (const entry of entries) {
     lines.push(`\`${entry.qualified}${entry.signature}\`${entry.description ? ` ${entry.description}` : ""}`);
     lines.push("");

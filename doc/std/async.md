@@ -1,5 +1,7 @@
 # async
 
+> See the [promises, timers and the mainloop](../guides/async.md) guide.
+
 `Promise(executor)` creates a promise and calls executor immediately with resolve and reject callbacks.
 
 - `executor`: function called with resolve and reject callbacks
