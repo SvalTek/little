@@ -94,6 +94,7 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     (Join-Path $repo "src/little_bundle.c") `
     (Join-Path $repo "src/little_buffer.c") `
     (Join-Path $repo "src/little.c") `
+    (Join-Path $repo "src/little_analysis.c") `
     (Join-Path $repo "src/little_common.c") `
     (Join-Path $repo "src/little_std.c") `
     (Join-Path $repo "src/little_loadlib.c") `

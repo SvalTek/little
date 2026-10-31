@@ -1654,9 +1654,29 @@ void ltstd_open_ws(lt_VM* vm)
     ws_api->table_set(vm, vm->global, ws_api->make_string(vm, "__little_ws_classes"), registry);
 
     lt_Value ws = ws_api->make_table(vm);
+    /** [LittleBinding] ws.connect
+     *  opens a WebSocket connection to the URL and returns a promise resolving to a ws.WebSocket.
+     *  @signature (url [, init])
+     *  @param url ws or wss URL to connect to
+     *  @param init table with an optional headers table
+     */
     ws_api->table_set(vm, ws, ws_api->make_string(vm, "connect"), ws_api->make_native(vm, ws_connect));
+    /** [LittleBinding] ws.serve
+     *  starts a WebSocket server that passes each accepted connection to the handler and returns a ws.Server.
+     *  @signature (handler [, options])
+     *  @param handler callable receiving each accepted ws.WebSocket
+     *  @param options table with optional hostname, port, and tls fields, where tls holds cert and key paths
+     */
     ws_api->table_set(vm, ws, ws_api->make_string(vm, "serve"), ws_api->make_native(vm, ws_serve));
+    /** [LittleBinding] ws.WebSocket
+     *  represents a WebSocket connection exposing next(), send(), close(), url, and closed.
+     *  @signature ()
+     */
     ws_api->table_set(vm, ws, ws_api->make_string(vm, "WebSocket"), socket_class);
+    /** [LittleBinding] ws.Server
+     *  represents a running WebSocket server exposing close() and the bound port.
+     *  @signature ()
+     */
     ws_api->table_set(vm, ws, ws_api->make_string(vm, "Server"), server_class);
     ws_api->table_set(vm, vm->global, ws_api->make_string(vm, "ws"), ws);
 }

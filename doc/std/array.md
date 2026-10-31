@@ -1,31 +1,47 @@
 # array
 
-`array.each(x)` returns an iterator function that returns each element in order.
+`array.each(array)` returns an iterator function that yields each element of array in order.
 
-`array.range([start,] end [, step])` returns an iterator function that produces a sequence of numbers.
+`array.range([start,] end [, step])` returns an iterator producing numbers from start up to but excluding end, advancing by step.
 
-`array.len(x)` returns the length of an array.
+- `start`: first value, defaults to 0
+- `step`: increment between values, defaults to 1 and must be non-zero
 
-`array.first(x)` returns the first element of a non-empty array.
+`array.len(array)` returns the number of elements in array.
 
-`array.last(x)` returns the last element of a non-empty array.
+`array.first(array)` returns the first element of a non-empty array.
 
-`array.pop(x)` removes and returns the last element of an array.
+`array.last(array)` returns the last element of a non-empty array.
 
-`array.push(array, element)` adds `element` to the back of `array`.
+`array.pop(array)` removes and returns the last element of array.
 
-`array.clear(array)` removes all elements.
+`array.push(array, element)` appends element to the back of array.
 
-`array.insert(array, index, element)` inserts `element` at `index`.
+`array.clear(array)` removes every element from array.
 
-`array.remove(array, index)` cyclically removes the element at `index`. This does not preserve order.
+`array.insert(array, index, element)` inserts element at index, shifting later elements right; an index past the end appends.
 
-`array.contains(array, value)` returns whether `value` is present.
+- `index`: non-negative integer position to insert at
 
-`array.indexOf(array, value)` returns the first index of `value`, or `-1`.
+`array.remove(array, index)` removes the element at index, moving the last element into its place so order is not preserved.
 
-`array.join(array [, separator])` converts elements to strings and joins them.
+- `index`: integer position of the element to remove
 
-`array.reverse(array)` returns a new reversed array.
+`array.contains(array, value)` returns true when value is present in array.
 
-`array.slice(array, start [, count])` returns a new array containing a portion of the source.
+- `value`: value to search for
+
+`array.indexOf(array, value)` returns the index of the first occurrence of value in array, or -1 when absent.
+
+- `value`: value to search for
+
+`array.join(array [, separator])` returns the elements converted to strings and concatenated with separator between them.
+
+- `separator`: string inserted between elements, defaults to the empty string
+
+`array.reverse(array)` returns a new array holding the elements of array in reverse order.
+
+`array.slice(array, start [, count])` returns a new array of count elements from array starting at start, defaulting to the rest of the array.
+
+- `start`: index of the first element to copy
+- `count`: number of elements to copy

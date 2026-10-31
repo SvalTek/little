@@ -121,18 +121,67 @@ double lt_get_number(lt_Value v)
 	return (double)u.flt;
 }
 
-static void _lt_tokenize_error(lt_VM* vm, const char* module, uint16_t line, uint16_t col, const char* message)
+static void _lt_push_diagnostic(lt_VM* vm, lt_Span span, uint16_t line, uint16_t col, uint8_t severity, const char* message)
 {
+	if (!vm->collect_diagnostics) return;
+
+	lt_Diagnostic diagnostic;
+	diagnostic.span = span;
+	diagnostic.line = line;
+	diagnostic.col = col;
+	diagnostic.severity = severity;
+	diagnostic.code = 0;
+
+	size_t length = strlen(message);
+	diagnostic.message = vm->alloc(length + 1);
+	memcpy(diagnostic.message, message, length + 1);
+
+	lt_buffer_push(vm, &vm->diagnostics, &diagnostic);
+}
+
+static void _lt_syntax_error(lt_VM* vm, const char* module, lt_Span span, uint16_t line, uint16_t col, const char* message)
+{
+	vm->error_line = line;
+	vm->error_col = col;
+	_lt_push_diagnostic(vm, span, line, col, LT_DIAG_ERROR, message);
+
 	char sprint_buf[128];
 	sprintf_s(sprint_buf, 128, "%s|%d:%d: %s", module, line, col, message);
 	lt_error(vm, sprint_buf);
 }
 
+static void _lt_tokenize_error(lt_VM* vm, const char* module, uint16_t line, uint16_t col, lt_Span span, const char* message)
+{
+	_lt_syntax_error(vm, module, span, line, col, message);
+}
+
+/* A token that starts a new statement even though newlines are whitespace. */
+static uint8_t _lt_starts_statement(lt_TokenType type)
+{
+	switch (type)
+	{
+	case LT_TOKEN_IF:
+	case LT_TOKEN_FOR:
+	case LT_TOKEN_WHILE:
+	case LT_TOKEN_WITH:
+	case LT_TOKEN_VAR:
+	case LT_TOKEN_GLOBAL:
+	case LT_TOKEN_CLASS:
+	case LT_TOKEN_FN:
+	case LT_TOKEN_ASYNC:
+	case LT_TOKEN_RETURN:
+	case LT_TOKEN_BREAK:
+	case LT_TOKEN_IMPORT:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
 static void _lt_parse_error(lt_VM* vm, const char* module, lt_Token* t, const char* message)
 {
-	char sprint_buf[128];
-	sprintf_s(sprint_buf, 128, "%s|%d:%d: %s", module, t->line, t->col, message);
-	lt_error(vm, sprint_buf);
+	vm->error_at_token = 1;
+	_lt_syntax_error(vm, module, t->span, t->line, t->col, message);
 }
 
 static lt_DebugInfo* _lt_get_debuginfo(lt_Object* obj)
@@ -504,6 +553,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 	t.token_buffer = lt_buffer_new(sizeof(lt_Token));
 	t.identifier_buffer = lt_buffer_new(sizeof(lt_Identifier));
 	t.literal_buffer = lt_buffer_new(sizeof(lt_Literal));
+	t.comment_buffer = lt_buffer_new(sizeof(lt_Comment));
 
 	void* saved_error_buf = vm->error_buf;
 	jmp_buf error_buf;
@@ -514,20 +564,40 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 		const char* current = source;
 		uint16_t line = 1, col = 0;
 
-#define PUSH_TOKEN(new_type) { \
-	lt_Token _t; _t.type = new_type; _t.line = line; _t.col = col++; _t.idx = 0; \
-	lt_buffer_push(vm, &t.token_buffer, &_t); current++; found = 1;\
+#define PUSH_TOKEN_N(new_type, n) { \
+	lt_Token _t; _t.type = new_type; _t.line = line; _t.col = col; _t.idx = 0; _t.flags = 0; \
+	_t.span.start = (uint32_t)(token_start - source); _t.span.end = _t.span.start + (n); \
+	col += (n); \
+	lt_buffer_push(vm, &t.token_buffer, &_t); current += (n); found = 1;\
 };
+#define PUSH_TOKEN(type) PUSH_TOKEN_N(type, 1)
+#define TOKEN_SPAN(a, b) ((lt_Span){ (uint32_t)((a) - source), (uint32_t)((b) - source) })
 
 		while (*current)
 		{
+			const char* token_start = current;
 			uint8_t found = 0;
 			switch (*current)
 			{
 			case ' ': case '\t': { col++; current++; } found = 1; break;
 			case '\n': { col = 0; line++; current++; } found = 1; break;
 			case '\r': { current++; } found = 1; break;
-			case ';': { while (*current++ != '\n'); col = 1; line++; found = 1; } break;
+			/* A comment ends at the newline or at the end of input. The old
+			   loop scanned past the terminator when the comment was last. */
+			case ';': {
+				const char* comment_start = current;
+				while (*current && *current != '\n') current++;
+
+				lt_Comment comment;
+				comment.line = line;
+				comment.col = col;
+				comment.span.start = (uint32_t)(comment_start - source);
+				comment.span.end = (uint32_t)(current - source);
+				lt_buffer_push(vm, &t.comment_buffer, &comment);
+
+				if (*current == '\n') { current++; col = 0; line++; }
+				found = 1;
+			} break;
 			case '.': PUSH_TOKEN(LT_TOKEN_PERIOD)		   break;
 			case ',': PUSH_TOKEN(LT_TOKEN_COMMA)		   break;
 			case ':': PUSH_TOKEN(LT_TOKEN_COLON)		   break;
@@ -549,25 +619,21 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 			{
 				if (*current == '>')
 				{
-					if (*(current + 1) == '=')
-					{
-						current++;
-						PUSH_TOKEN(LT_TOKEN_GTE);
-					}
-					else PUSH_TOKEN(LT_TOKEN_GT);
+					if (*(current + 1) == '=') { PUSH_TOKEN_N(LT_TOKEN_GTE, 2) }
+					else { PUSH_TOKEN(LT_TOKEN_GT) }
 				}
 				else if (*current == '<')
 				{
-					if (*(current + 1) == '=')
-					{
-						current++;
-						PUSH_TOKEN(LT_TOKEN_LTE);
-					}
-					else PUSH_TOKEN(LT_TOKEN_LT);
+					if (*(current + 1) == '=') { PUSH_TOKEN_N(LT_TOKEN_LTE, 2) }
+					else { PUSH_TOKEN(LT_TOKEN_LT) }
 				}
 				else if (*current == '"')
 				{
-					const char* start = ++current;
+					uint16_t start_line = line;
+					uint16_t start_col = col;
+					current++;
+					col++;
+					const char* start = current;
 					uint32_t raw_length = 0;
 					while (*current != '"')
 					{
@@ -576,15 +642,17 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						{
 							current += 2;
 							raw_length += 2;
+							col += 2;
 							continue;
 						}
 						if (*current == '\n') { col = 0; line++; }
+						else col++;
 						current++;
 						raw_length++;
 					}
 
 					const char* end = current;
-					if (*current == '"') current++;
+					if (*current == '"') { current++; col++; }
 
 					lt_Literal newlit;
 					newlit.type = LT_TOKEN_STRING_LITERAL;
@@ -617,9 +685,12 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 
 					lt_Token tok;
 					tok.type = LT_TOKEN_STRING_LITERAL;
-					tok.line = line;
-					tok.col = col; col += raw_length;
+					tok.line = start_line;
+					tok.col = start_col;
 					tok.idx = t.literal_buffer.length - 1;
+					tok.flags = 0;
+					tok.span.start = (uint32_t)(token_start - source);
+					tok.span.end = (uint32_t)(current - source);
 					lt_buffer_push(vm, &t.token_buffer, &tok);
 				}
 				else if (isalnum(*current) && !isalpha(*current))
@@ -634,29 +705,29 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 					{
 						current += 2;
 						uint8_t has_digits = isxdigit(*current) != 0;
-						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, "Expected hex digits after 0x!");
+						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Expected hex digits after 0x!");
 						while (isxdigit(*current)) current++;
 						if (*current == '.' || isalnum(*current) || *current == '_')
 						{
-							_lt_tokenize_error(vm, t.module, line, col, "Invalid character in hex number literal!");
+							_lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Invalid character in hex number literal!");
 							while (*current == '.' || isalnum(*current) || *current == '_') current++;
 						}
 
 						length = (uint32_t)(current - start);
 						char* end = 0;
 						unsigned long long parsed = strtoull(start + 2, &end, 16);
-						if (has_digits && end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse hex number!");
+						if (has_digits && end != current) _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Failed to parse hex number!");
 						number = has_digits ? (double)parsed : 0;
 					}
 					else if (*current == '0' && (*(current + 1) == 'b' || *(current + 1) == 'B'))
 					{
 						current += 2;
 						uint8_t has_digits = (*current == '0' || *current == '1');
-						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, "Expected binary digits after 0b!");
+						if (!has_digits) _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Expected binary digits after 0b!");
 						while (*current == '0' || *current == '1') current++;
 						if (*current == '.' || isalnum(*current) || *current == '_')
 						{
-							_lt_tokenize_error(vm, t.module, line, col, "Invalid character in binary number literal!");
+							_lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Invalid character in binary number literal!");
 							while (*current == '.' || isalnum(*current) || *current == '_') current++;
 						}
 
@@ -677,7 +748,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						{
 							if (*current == '.')
 							{
-								if (has_decimal) _lt_tokenize_error(vm, t.module, line, col, "Can't have multiple decimals in number literal!");
+								if (has_decimal) _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Can't have multiple decimals in number literal!");
 								has_decimal = 1;
 							}
 							if (*current == 'e' || *current == 'E') has_exponent = 1;
@@ -689,13 +760,13 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						char* end = 0;
 						number = strtod(start, &end);
 
-						if (end != current) _lt_tokenize_error(vm, t.module, line, col, "Failed to parse number!");
+						if (end != current) _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Failed to parse number!");
 						/* A second exponent stops the scan without leaving the
 						   token short, so it has to be rejected here or the
 						   literal silently splits into a number and an
 						   identifier. */
 						if ((*current == 'e' || *current == 'E') && has_exponent)
-							_lt_tokenize_error(vm, t.module, line, col, "Can't have multiple exponents in number literal!");
+							_lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(start, current), "Can't have multiple exponents in number literal!");
 					}
 
 					lt_Literal newlit;
@@ -709,6 +780,9 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 					tok.line = line;
 					tok.col = start_col; col += length;
 					tok.idx = t.literal_buffer.length - 1;
+					tok.flags = 0;
+					tok.span.start = (uint32_t)(start - source);
+					tok.span.end = (uint32_t)(current - source);
 					lt_buffer_push(vm, &t.token_buffer, &tok);
 				}
 				else if (isalpha(*current) || *current == '_')
@@ -729,6 +803,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 #define PUSH_STR_TOKEN(name, new_type) \
 	if(faststrcmp(name, sizeof(name) - 1, start, length)) { \
 		lt_Token _t; _t.type = new_type; _t.line = line; _t.col = col; col += length; _t.idx = _lt_register_identifier_name(vm, &t, start, length); \
+		_t.flags = 0; _t.span.start = (uint32_t)(start - source); _t.span.end = _t.span.start + length; \
 		lt_buffer_push(vm, &t.token_buffer, &_t); found = 1; }
 
 				PUSH_STR_TOKEN("fn", LT_TOKEN_FN)
@@ -781,6 +856,9 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 							tok.line = line;
 							tok.col = col; col += length;
 							tok.idx = i;
+							tok.flags = 0;
+							tok.span.start = (uint32_t)(start - source);
+							tok.span.end = tok.span.start + length;
 							lt_buffer_push(vm, &t.token_buffer, &tok);
 							break;
 						}
@@ -801,11 +879,14 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 						tok.line = line;
 						tok.col = col; col += length;
 						tok.idx = t.identifier_buffer.length - 1;
+						tok.flags = 0;
+						tok.span.start = (uint32_t)(start - source);
+						tok.span.end = tok.span.start + length;
 						lt_buffer_push(vm, &t.token_buffer, &tok);
 					}
 				}
 				}
-				else _lt_tokenize_error(vm, t.module, line, col, "Unrecognized token!");
+				else _lt_tokenize_error(vm, t.module, line, col, TOKEN_SPAN(current, current + 1), "Unrecognized token!");
 			}
 		}
 
@@ -813,6 +894,10 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 		tok.type = LT_TOKEN_END;
 		tok.line = line;
 		tok.col = col;
+		tok.idx = 0;
+		tok.flags = 0;
+		tok.span.start = (uint32_t)(current - source);
+		tok.span.end = tok.span.start;
 		lt_buffer_push(vm, &t.token_buffer, &tok);
 
 		t.is_valid = 1;
@@ -829,6 +914,7 @@ lt_AstNode* _lt_get_node_of_type(lt_VM* vm, lt_Token* current, lt_Parser* p, lt_
 	new_node->type = type;
 	new_node->loc.line = current->line;
 	new_node->loc.col = current->col;
+	new_node->span = current->span;
 
 	lt_buffer_push(vm, &p->ast_nodes, &new_node);
 	return *(void**)lt_buffer_last(&p->ast_nodes);
@@ -964,6 +1050,8 @@ static lt_Token* _lt_make_identifier_token(lt_VM* vm, lt_Parser* p, const char* 
 	tok->line = loc->line;
 	tok->col = loc->col;
 	tok->idx = idx;
+	tok->flags = LT_TOKEN_SYNTHETIC;
+	tok->span = loc->span;
 	lt_buffer_push(vm, &p->generated_tokens, &tok);
 	return tok;
 }
@@ -980,6 +1068,8 @@ static lt_Token* _lt_make_number_token(lt_VM* vm, lt_Parser* p, double number, l
 	tok->line = loc->line;
 	tok->col = loc->col;
 	tok->idx = p->tkn->literal_buffer.length - 1;
+	tok->flags = LT_TOKEN_SYNTHETIC;
+	tok->span = loc->span;
 	lt_buffer_push(vm, &p->generated_tokens, &tok);
 	return tok;
 }
@@ -1040,6 +1130,8 @@ static lt_AstNode* _lt_make_self_assignment_node(lt_VM* vm, lt_Parser* p, lt_Tok
 
 static void _lt_parse_soft_error(lt_VM* vm, lt_Parser* p, lt_Token* t, const char* message)
 {
+	_lt_push_diagnostic(vm, t->span, t->line, t->col, LT_DIAG_ERROR, message);
+
 	char sprint_buf[128];
 	sprintf_s(sprint_buf, 128, "%s|%d:%d: %s", p->tkn->module, t->line, t->col, message);
 	if (vm->error) vm->error(vm, sprint_buf);
@@ -1125,6 +1217,7 @@ static lt_AstNode* _lt_make_field_initializer_fn(lt_VM* vm, lt_Parser* p, lt_Tok
 	fn_scope->frame_slots = lt_buffer_new(sizeof(lt_Token*));
 	fn_scope->upvals = lt_buffer_new(sizeof(lt_Token));
 	fn_scope->captured = lt_buffer_new(sizeof(uint16_t));
+	lt_buffer_push(vm, &p->scopes, &fn_scope);
 	_lt_make_local(vm, fn_scope, fn->fn.args[0]);
 	fn->fn.scope = fn_scope;
 	return fn;
@@ -1326,11 +1419,13 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 		new_scope->frame_slots = lt_buffer_new(sizeof(lt_Token*));
 		new_scope->upvals = lt_buffer_new(sizeof(lt_Token));
 		new_scope->captured = lt_buffer_new(sizeof(uint16_t));
+		lt_buffer_push(vm, &p->scopes, &new_scope);
 
 		if (argnames) while (*argnames) _lt_make_local(vm, p->current, *argnames++);
 	}
 
 	lt_Token* current = start;
+	void* block_error_buf = vm->error_buf;
 
 #define PEEK() (current + 1)
 #define NEXT() (last = current, current++)
@@ -1340,6 +1435,60 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 
 	while (current->type != LT_TOKEN_END)
 	{
+		/* A broken statement must not abort the rest of the file. Trap the
+		   parser error, restore the statement's state, skip past the broken
+		   statement and continue with the next one. */
+		lt_Token* statement_start = current;
+		lt_Scope* statement_scope = p->current;
+		uint8_t statement_async = p->in_async;
+		uint8_t statement_constructor = p->in_constructor;
+		uint8_t statement_table_call = p->allow_table_call;
+		lt_Token* statement_self = p->self_token;
+
+		void* saved_error_buf = vm->error_buf;
+		jmp_buf recovery;
+		vm->error_buf = &recovery;
+
+		if (setjmp(recovery))
+		{
+			vm->error_buf = saved_error_buf;
+			p->had_error = 1;
+			p->current = statement_scope;
+			p->in_async = statement_async;
+			p->in_constructor = statement_constructor;
+			p->allow_table_call = statement_table_call;
+			p->self_token = statement_self;
+
+			uint16_t error_line = vm->error_line ? vm->error_line : statement_start->line;
+			uint16_t error_col = vm->error_col;
+
+			/* Errors are often discovered by looking at the first token of the
+			   next statement. Do not consume that line: it may still be valid.
+			   Resync at the end of the statement that failed instead. */
+			if (vm->error_at_token && error_line > statement_start->line)
+			{
+				uint16_t first_col = 0;
+				uint8_t first_found = 0;
+				for (lt_Token* scan = statement_start; scan->type != LT_TOKEN_END; scan++)
+				{
+					if (scan->line != error_line) continue;
+					first_col = scan->col;
+					first_found = 1;
+					break;
+				}
+				if (first_found && first_col == error_col) error_line = statement_start->line;
+			}
+
+			current = statement_start;
+			while (current->type != LT_TOKEN_END && current->type != LT_TOKEN_CLOSEBRACE &&
+				current->line <= error_line) current++;
+			if (current == statement_start) current++;
+			continue;
+		}
+
+		vm->error_line = 0;
+		vm->error_at_token = 0;
+
 		switch (current->type)
 		{
 		case LT_TOKEN_CLOSEBRACE:
@@ -1444,6 +1593,8 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			tok.line = ident->line;
 			tok.col = ident->col;
 			tok.idx = p->tkn->identifier_buffer.length - 1;
+			tok.flags = LT_TOKEN_SYNTHETIC;
+			tok.span = ident->span;
 
 			for_expr->loop.closureidx = _lt_make_local(vm, p->current, &tok);
 			for_expr->loop.iterator = iter_expr;
@@ -1664,6 +1815,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			}
 
 			current++; // eat closing brace
+			klass->end_token = current - 1;
 			lt_buffer_push(vm, dst, &klass);
 			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
@@ -1723,8 +1875,14 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 		} break;
 		default: {
 parse_expression_statement:
+			lt_Token* expression_start = current;
 			lt_AstNode* result = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
 			current = _lt_parse_expression(vm, p, current, result);
+
+			/* A token that cannot start an expression is consumed by nothing;
+			   without this check the block would loop forever. */
+			if (current == expression_start)
+				_lt_parse_error(vm, p->tkn->module, current, "Unexpected token!");
 
 			if (current->type == LT_TOKEN_ASSIGN)
 			{
@@ -1743,9 +1901,14 @@ parse_expression_statement:
 			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 		}
+
+		vm->error_buf = saved_error_buf;
 	}
 	
 end_block:
+	/* A `goto end_block` skips the per-statement restore, and the trap's
+	   jmp_buf lives in this frame, so it must be reset before returning. */
+	vm->error_buf = block_error_buf;
 	p->current->end = current;
 	lt_Scope* new_scope = p->current;
 
@@ -1756,13 +1919,16 @@ end_block:
 
 static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* fn, uint8_t add_this, uint8_t allow_auto_assign, uint8_t is_constructor)
 {
+	lt_Token* paren = current;
 	if (current->type != LT_TOKEN_OPENPAREN) _lt_parse_error(vm, p->tkn->module, current, "Expected open parenthesis to follow method name!");
 	current++;
 
 	uint8_t nargs = 0;
 	uint8_t auto_assign[LT_MAX_FUNCTION_PARAMS + 1];
 	memset(auto_assign, 0, sizeof(auto_assign));
-	if (add_this) fn->fn.args[nargs++] = _lt_make_identifier_token(vm, p, "this", current);
+	/* Anchor the implicit receiver on the parameter list, not on the first
+	   parameter, so it does not share that parameter's span. */
+	if (add_this) fn->fn.args[nargs++] = _lt_make_identifier_token(vm, p, "this", paren);
 	while (current->type == LT_TOKEN_IDENTIFIER || (allow_auto_assign && current->type == LT_TOKEN_AT))
 	{
 		uint8_t should_auto_assign = 0;
@@ -2058,15 +2224,31 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 			if (!allowed) goto expr_end;
 
+			lt_Token* period = current;
 			NEXT(); // eat period
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
+			if (current->line != period->line && _lt_starts_statement(current->type))
+			{
+				_lt_parse_soft_error(vm, p, period, "Expected identifier to follow '.' operator!");
+				goto expr_end;
+			}
 			if (_lt_token_is_keyword(current))
 			{
 				idx_expr->literal.token = _lt_keyword_as_identifier(vm, p, current);
 				last = idx_expr->literal.token;
 				current++;
 			}
-			else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow '.' operator!");
+			else if (current->type != LT_TOKEN_IDENTIFIER)
+			{
+				/* A dangling `obj.` ends the line; do not consume the next
+				   statement's first token as the missing member. */
+				if (current->line != period->line)
+				{
+					_lt_parse_soft_error(vm, p, period, "Expected identifier to follow '.' operator!");
+					goto expr_end;
+				}
+				_lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow '.' operator!");
+			}
 			else idx_expr->literal.token = NEXT();
 
 			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
@@ -2089,15 +2271,29 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 			if (!allowed) goto expr_end;
 
+			lt_Token* colon = current;
 			NEXT(); // eat colon
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
+			if (current->line != colon->line && _lt_starts_statement(current->type))
+			{
+				_lt_parse_soft_error(vm, p, colon, "Expected identifier to follow ':' operator!");
+				goto expr_end;
+			}
 			if (_lt_token_is_keyword(current))
 			{
 				idx_expr->literal.token = _lt_keyword_as_identifier(vm, p, current);
 				last = idx_expr->literal.token;
 				current++;
 			}
-			else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
+			else if (current->type != LT_TOKEN_IDENTIFIER)
+			{
+				if (current->line != colon->line)
+				{
+					_lt_parse_soft_error(vm, p, colon, "Expected identifier to follow ':' operator!");
+					goto expr_end;
+				}
+				_lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
+			}
 			else idx_expr->literal.token = NEXT();
 
 			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
@@ -2374,6 +2570,25 @@ expr_end:
 		PUSH_EXPR_FROM_OP(back, back_tok);
 	}
 
+	/* A malformed expression that starts with an operator (for example a lone
+	   `/`) produces a postfix stream with more operators than operands. Check
+	   that before folding, otherwise the value stack is read below its start. */
+	int32_t operands = 0;
+	for (uint32_t i = 0; i < result.length; i++)
+	{
+		lt_AstNode* node = *(lt_AstNode**)lt_buffer_at(&result, i);
+		if (node->type == LT_AST_NODE_BINARYOP)
+		{
+			if (operands < 2) _lt_syntax_error(vm, p->tkn->module, node->span, node->loc.line, node->loc.col, "Malformed expression!");
+			operands -= 1;
+		}
+		else if (node->type == LT_AST_NODE_UNARYOP)
+		{
+			if (operands < 1) _lt_syntax_error(vm, p->tkn->module, node->span, node->loc.line, node->loc.col, "Malformed expression!");
+		}
+		else operands += 1;
+	}
+
 	lt_Buffer value_stack = lt_buffer_new(sizeof(lt_AstNode*));
 
 	for (uint32_t i = 0; i < result.length; i++)
@@ -2422,6 +2637,139 @@ expr_end:
 	return current;
 }
 
+static uint32_t _lt_token_span_end(lt_Token* token)
+{
+	return token ? token->span.end : 0;
+}
+
+/* A block's scope ends on the token after its closing brace, so the brace
+   itself is the previous token. */
+static uint32_t _lt_scope_span_end(lt_Parser* p, lt_Scope* scope)
+{
+	if (!scope || !scope->end) return 0;
+
+	lt_Token* tokens = (lt_Token*)p->tkn->token_buffer.data;
+	if (scope->end <= tokens) return 0;
+	return (scope->end - 1)->span.end;
+}
+
+static void _lt_raise(uint32_t* end, uint32_t candidate)
+{
+	if (candidate > *end) *end = candidate;
+}
+
+static uint32_t _lt_compute_node_end(lt_VM* vm, lt_Parser* p, lt_AstNode* node);
+
+static uint32_t _lt_compute_body_end(lt_VM* vm, lt_Parser* p, lt_Buffer* body)
+{
+	uint32_t end = 0;
+	for (uint32_t i = 0; i < body->length; i++)
+		_lt_raise(&end, _lt_compute_node_end(vm, p, *(lt_AstNode**)lt_buffer_at(body, i)));
+	return end;
+}
+
+/* Extends each node's span to cover everything it contains, so tooling gets a
+   declaration range rather than just the token that introduced it. */
+static uint32_t _lt_compute_node_end(lt_VM* vm, lt_Parser* p, lt_AstNode* node)
+{
+	if (!node) return 0;
+
+	uint32_t end = node->span.end;
+	_lt_raise(&end, _lt_token_span_end(node->end_token));
+
+	switch (node->type)
+	{
+	case LT_AST_NODE_CHUNK:
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->chunk.body));
+		_lt_raise(&end, _lt_scope_span_end(p, node->chunk.scope));
+		break;
+	case LT_AST_NODE_TABLE:
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->table.keys));
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->table.values));
+		break;
+	case LT_AST_NODE_ARRAY:
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->array.values));
+		break;
+	case LT_AST_NODE_INDEX:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->index.source));
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->index.idx));
+		break;
+	case LT_AST_NODE_BINARYOP:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->binary_op.left));
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->binary_op.right));
+		break;
+	case LT_AST_NODE_UNARYOP:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->unary_op.expr));
+		break;
+	case LT_AST_NODE_DECLARE:
+		_lt_raise(&end, _lt_token_span_end(node->declare.identifier));
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->declare.expr));
+		for (uint32_t i = 0; i < node->declare.entries.length; i++)
+		{
+			lt_DestructureEntry* entry = lt_buffer_at(&node->declare.entries, i);
+			_lt_raise(&end, _lt_token_span_end(entry->key));
+			_lt_raise(&end, _lt_token_span_end(entry->local));
+		}
+		break;
+	case LT_AST_NODE_CLASS:
+		_lt_raise(&end, _lt_token_span_end(node->class_decl.identifier));
+		_lt_raise(&end, _lt_token_span_end(node->class_decl.superclass));
+		for (uint32_t i = 0; i < node->class_decl.members.length; i++)
+		{
+			lt_ClassMember* member = lt_buffer_at(&node->class_decl.members, i);
+			_lt_raise(&end, _lt_token_span_end(member->name));
+			_lt_raise(&end, _lt_compute_node_end(vm, p, member->value));
+		}
+		break;
+	case LT_AST_NODE_ASSIGN:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->assign.left));
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->assign.right));
+		break;
+	case LT_AST_NODE_FN:
+		for (uint8_t i = 0; i <= LT_MAX_FUNCTION_PARAMS; i++)
+			_lt_raise(&end, _lt_token_span_end(node->fn.args[i]));
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->fn.body));
+		_lt_raise(&end, _lt_scope_span_end(p, node->fn.scope));
+		break;
+	case LT_AST_NODE_CALL:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->call.callee));
+		for (uint8_t i = 0; i <= LT_MAX_CALL_ARGS + 1; i++)
+			_lt_raise(&end, _lt_compute_node_end(vm, p, node->call.args[i]));
+		break;
+	case LT_AST_NODE_AWAIT:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->await.expr));
+		break;
+	case LT_AST_NODE_RETURN:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->ret.expr));
+		break;
+	case LT_AST_NODE_IF:
+	case LT_AST_NODE_ELSEIF:
+	case LT_AST_NODE_ELSE:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->branch.expr));
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->branch.body));
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->branch.next));
+		break;
+	case LT_AST_NODE_FOR:
+	case LT_AST_NODE_WHILE:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->loop.iterator));
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->loop.body));
+		break;
+	case LT_AST_NODE_WITH:
+		_lt_raise(&end, _lt_compute_node_end(vm, p, node->with_stmt.expr));
+		_lt_raise(&end, _lt_compute_body_end(vm, p, &node->with_stmt.body));
+		_lt_raise(&end, _lt_scope_span_end(p, node->with_stmt.scope));
+		break;
+	case LT_AST_NODE_SUPER:
+		_lt_raise(&end, _lt_token_span_end(node->super_expr.method));
+		break;
+	default:
+		break;
+	}
+
+	node->span.end = end;
+	return end;
+}
+
 lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 {
 	lt_Parser p;
@@ -2430,6 +2778,7 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 	p.tkn = tkn;
 	p.ast_nodes = lt_buffer_new(sizeof(lt_AstNode*));
 	p.generated_tokens = lt_buffer_new(sizeof(lt_Token*));
+	p.scopes = lt_buffer_new(sizeof(lt_Scope*));
 
 	void* saved_error_buf = vm->error_buf;
 	jmp_buf error_buf;
@@ -2441,12 +2790,14 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 		p.in_async = 0;
 		p.allow_table_call = 1;
 		p.had_error = 0;
+		vm->error_line = 0;
 		p.root = _lt_get_node_of_type(vm, (lt_Token*)tkn->token_buffer.data, &p, LT_AST_NODE_CHUNK);
 		p.root->chunk.body = lt_buffer_new(sizeof(lt_AstNode*));
 
 		lt_Scope* file_scope = _lt_parse_block(vm, &p, tkn->token_buffer.data, &p.root->chunk.body, 0, 1, 0);
 
 		p.root->chunk.scope = file_scope;
+		_lt_compute_node_end(vm, &p, p.root);
 		p.is_valid = !p.had_error;
 	}
 
@@ -2470,6 +2821,7 @@ lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error)
 	vm->native_roots = lt_buffer_new(sizeof(lt_Value));
 	vm->native_libraries = lt_buffer_new(sizeof(lt_NativeLibrary));
 	vm->module_loaders = lt_buffer_new(sizeof(lt_ModuleLoader));
+	vm->diagnostics = lt_buffer_new(sizeof(lt_Diagnostic));
 	ltasync_init_state(vm);
 
 	vm->generate_debug = 1;
@@ -2499,8 +2851,33 @@ void lt_destroy(lt_VM* vm)
 	lt_buffer_destroy(vm, &vm->keepalive);
 	lt_buffer_destroy(vm, &vm->temporary_roots);
 	lt_buffer_destroy(vm, &vm->native_roots);
+	lt_diagnostics_clear(vm);
+	lt_buffer_destroy(vm, &vm->diagnostics);
 	if (vm->error_trap) vm->free(vm->error_trap);
 	vm->free(vm);
+}
+
+void lt_diagnostics_clear(lt_VM* vm)
+{
+	for (uint32_t i = 0; i < vm->diagnostics.length; i++)
+		vm->free(((lt_Diagnostic*)lt_buffer_at(&vm->diagnostics, i))->message);
+	vm->diagnostics.length = 0;
+}
+
+uint32_t lt_diagnostic_count(lt_VM* vm)
+{
+	return vm->diagnostics.length;
+}
+
+const lt_Diagnostic* lt_diagnostic_get(lt_VM* vm, uint32_t index)
+{
+	if (index >= vm->diagnostics.length) return 0;
+	return (const lt_Diagnostic*)lt_buffer_at(&vm->diagnostics, index);
+}
+
+void lt_set_worker_vm_init(lt_VM* vm, lt_VMInitFn init)
+{
+	vm->worker_vm_init = init;
 }
 
 void lt_add_module_loader(lt_VM* vm, lt_ModuleLoaderFn loader, void* userdata)
@@ -4478,7 +4855,6 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 		{
 		case LT_AST_NODE_CHUNK:
 			lt_buffer_destroy(vm, &entry->chunk.body);
-			if (entry->chunk.scope) lt_free_scope(vm, entry->chunk.scope);
 			break;
 		case LT_AST_NODE_CLASS:
 			lt_buffer_destroy(vm, &entry->class_decl.members);
@@ -4488,22 +4864,28 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 			break;
 		case LT_AST_NODE_TABLE: lt_buffer_destroy(vm, &entry->table.keys); lt_buffer_destroy(vm, &entry->table.values); break;
 		case LT_AST_NODE_ARRAY: lt_buffer_destroy(vm, &entry->array.values); break;
-		case LT_AST_NODE_FN:
-			if (entry->fn.scope) lt_free_scope(vm, entry->fn.scope);
-			break;
 		case LT_AST_NODE_IF: case LT_AST_NODE_ELSEIF: case LT_AST_NODE_ELSE: lt_buffer_destroy(vm, &entry->branch.body); break;
 		case LT_AST_NODE_WITH:
 			lt_buffer_destroy(vm, &entry->with_stmt.body);
-			if (entry->with_stmt.scope) lt_free_scope(vm, entry->with_stmt.scope);
 			break;
 		}
 
 		vm->free(entry);
 	}
 
+	/* Scopes are owned by the parser, not by the nodes that reference them, so
+	   partially parsed and abandoned scopes are released too. */
+	for (uint32_t i = 0; i < p->scopes.length; i++)
+	{
+		lt_Scope* scope = *(lt_Scope**)lt_buffer_at(&p->scopes, i);
+		lt_free_scope(vm, scope);
+		vm->free(scope);
+	}
+
 	for (uint32_t i = 0; i < p->generated_tokens.length; i++)
 		vm->free(*(lt_Token**)lt_buffer_at(&p->generated_tokens, i));
 	lt_buffer_destroy(vm, &p->generated_tokens);
+	lt_buffer_destroy(vm, &p->scopes);
 	lt_buffer_destroy(vm, &p->ast_nodes);
 }
 
@@ -4525,6 +4907,7 @@ void lt_free_tokenizer(lt_VM* vm, lt_Tokenizer* tok)
 		}
 	}
 	lt_buffer_destroy(vm, &tok->literal_buffer);
+	lt_buffer_destroy(vm, &tok->comment_buffer);
 }
 
 lt_Value lt_loadstring(lt_VM* vm, const char* source, const char* mod_name)

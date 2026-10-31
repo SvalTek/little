@@ -1,19 +1,20 @@
 # table
 
-Tables can be indexed directly with `t.key` or `t[key]`. The `table` module provides utility functions for dynamic access and inspection.
+`table.has(table, key)` reports whether a table holds a non-null value for the given key.
 
-`table.has(table, key)` returns whether `key` maps to a non-null value.
+- `table`: table to inspect
+- `key`: key to look up
 
-`table.fetch(table, key [, default])` returns the value for `key`, or `default`/`null` when absent.
+`table.fetch(table, key [, fallback])` returns the value stored under a key, or the fallback when the key is absent.
 
-`table.put(table, key, value)` writes a value.
+- `table`: table to read
+- `key`: key to look up
+- `fallback`: value returned when the key is missing; null if omitted
 
-`table.remove(table, key)` removes a value by storing `null`.
+`table.put(table, key, value)` stores a value under a key and returns nothing.
 
-`table.keys(table)` returns an array of non-null keys. Its order is unspecified
-and must not be treated as insertion or sorted order.
+`table.remove(table, key)` clears the entry for a key and returns nothing.
 
-`table.values(table)` returns an array of non-null values in the corresponding
-unspecified key order.
+`table.keys(table)` returns an array of the table's keys, skipping keys whose value is null.
 
-Note: `get` and `set` are reserved class-accessor words, so this module uses `fetch` and `put` for dot-call ergonomics.
+`table.values(table)` returns an array of the table's values, skipping null entries.

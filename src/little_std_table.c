@@ -104,11 +104,45 @@ static uint8_t _lt_table_values(lt_VM* vm, uint8_t argc)
 void ltstd_open_table(lt_VM* vm)
 {
     lt_Value t = lt_make_table(vm);
+    /** [LittleBinding] table.has
+     *  reports whether a table holds a non-null value for the given key.
+     *  @signature (table, key)
+     *  @param table table to inspect
+     *  @param key key to look up
+     *  @return bool
+     */
     lt_table_set(vm, t, lt_make_string(vm, "has"), lt_make_native(vm, _lt_table_has));
+    /** [LittleBinding] table.fetch
+     *  returns the value stored under a key, or the fallback when the key is absent.
+     *  @signature (table, key [, fallback])
+     *  @param table table to read
+     *  @param key key to look up
+     *  @param fallback value returned when the key is missing; null if omitted
+     */
     lt_table_set(vm, t, lt_make_string(vm, "fetch"), lt_make_native(vm, _lt_table_fetch));
+    /** [LittleBinding] table.put
+     *  stores a value under a key and returns nothing.
+     *  @signature (table, key, value)
+     *  @return null
+     */
     lt_table_set(vm, t, lt_make_string(vm, "put"), lt_make_native(vm, _lt_table_put));
+    /** [LittleBinding] table.remove
+     *  clears the entry for a key and returns nothing.
+     *  @signature (table, key)
+     *  @return null
+     */
     lt_table_set(vm, t, lt_make_string(vm, "remove"), lt_make_native(vm, _lt_table_remove));
+    /** [LittleBinding] table.keys
+     *  returns an array of the table's keys, skipping keys whose value is null.
+     *  @signature (table)
+     *  @return array
+     */
     lt_table_set(vm, t, lt_make_string(vm, "keys"), lt_make_native(vm, _lt_table_keys));
+    /** [LittleBinding] table.values
+     *  returns an array of the table's values, skipping null entries.
+     *  @signature (table)
+     *  @return array
+     */
     lt_table_set(vm, t, lt_make_string(vm, "values"), lt_make_native(vm, _lt_table_values));
 
     lt_table_set(vm, vm->global, lt_make_string(vm, "table"), t);

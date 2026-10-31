@@ -201,14 +201,69 @@ static uint8_t _lt_appendline(lt_VM* vm, uint8_t argc)
 void ltstd_open_io(lt_VM* vm)
 {
     lt_Value t = lt_make_table(vm);
+    /** [LittleBinding] io.print
+     *  writes each argument separated by spaces, followed by a newline.
+     *  @signature (...)
+     *  @param ... values to write
+     *  @return null
+     */
     lt_table_set(vm, t, lt_make_string(vm, "print"), lt_make_native(vm, _lt_print));
+    /** [LittleBinding] io.write
+     *  writes each argument separated by spaces, without appending a newline.
+     *  @signature (...)
+     *  @param ... values to write
+     *  @return null
+     */
     lt_table_set(vm, t, lt_make_string(vm, "write"), lt_make_native(vm, _lt_write));
+    /** [LittleBinding] io.writeLine
+     *  writes each argument separated by spaces, followed by a newline.
+     *  @signature (...)
+     *  @param ... values to write
+     *  @return null
+     */
     lt_table_set(vm, t, lt_make_string(vm, "writeLine"), lt_make_native(vm, _lt_writeline));
+    /** [LittleBinding] io.clock
+     *  returns the processor time consumed by the program so far, in seconds.
+     *  @signature ()
+     *  @return number
+     */
     lt_table_set(vm, t, lt_make_string(vm, "clock"), lt_make_native(vm, _lt_clock));
+    /** [LittleBinding] io.readLine
+     *  reads one line from standard input without its trailing newline, returning null at end of input.
+     *  @signature ()
+     *  @return string|null
+     */
     lt_table_set(vm, t, lt_make_string(vm, "readLine"), lt_make_native(vm, _lt_readline));
+    /** [LittleBinding] io.readFile
+     *  reads the entire file at path and returns its contents as a string.
+     *  @signature (path)
+     *  @param path filesystem path of the file to read
+     *  @return string
+     */
     lt_table_set(vm, t, lt_make_string(vm, "readFile"), lt_make_native(vm, _lt_readfile));
+    /** [LittleBinding] io.writeFile
+     *  writes contents to the file at path, replacing any existing contents, and returns true when every byte was written.
+     *  @signature (path, contents)
+     *  @param path filesystem path of the file to write
+     *  @param contents text to write
+     *  @return bool
+     */
     lt_table_set(vm, t, lt_make_string(vm, "writeFile"), lt_make_native(vm, _lt_writefile));
+    /** [LittleBinding] io.appendFile
+     *  appends contents to the file at path, creating it if absent, and returns true when every byte was written.
+     *  @signature (path, contents)
+     *  @param path filesystem path of the file to append to
+     *  @param contents text to append
+     *  @return bool
+     */
     lt_table_set(vm, t, lt_make_string(vm, "appendFile"), lt_make_native(vm, _lt_appendfile));
+    /** [LittleBinding] io.appendLine
+     *  appends contents followed by a newline to the file at path and returns true when every byte was written.
+     *  @signature (path, contents)
+     *  @param path filesystem path of the file to append to
+     *  @param contents text to append before the newline
+     *  @return bool
+     */
     lt_table_set(vm, t, lt_make_string(vm, "appendLine"), lt_make_native(vm, _lt_appendline));
 
     lt_table_set(vm, vm->global, lt_make_string(vm, "io"), t);

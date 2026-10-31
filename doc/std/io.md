@@ -2,21 +2,35 @@
 
 `io.print(...)` writes each argument separated by spaces, followed by a newline.
 
-`io.write(...)` writes each argument separated by spaces, without adding a newline.
+- `...`: values to write
+
+`io.write(...)` writes each argument separated by spaces, without appending a newline.
+
+- `...`: values to write
 
 `io.writeLine(...)` writes each argument separated by spaces, followed by a newline.
 
-`io.clock()` returns the current execution time of the program in seconds.
+- `...`: values to write
 
-`io.readLine()` reads one line from standard input and returns it without the trailing newline, or `null` at end of input. Lines are read into a 1024-byte host buffer; longer input is returned in successive reads.
+`io.clock()` returns the processor time consumed by the program so far, in seconds.
 
-`io.readFile(path)` reads a whole file as a string. It raises a runtime error if
-the file cannot be opened, sized, or allocated. Little strings are
-NUL-terminated, so this is a text API rather than a way to preserve embedded
-NUL bytes.
+`io.readLine()` reads one line from standard input without its trailing newline, returning null at end of input.
 
-`io.writeFile(path, contents)` writes a whole file and returns `true` when all bytes were written. It raises a runtime error if the path cannot be opened.
+`io.readFile(path)` reads the entire file at path and returns its contents as a string.
 
-`io.appendFile(path, contents)` appends to a file and returns `true` when all bytes were written. It raises a runtime error if the path cannot be opened.
+- `path`: filesystem path of the file to read
 
-`io.appendLine(path, contents)` appends `contents` followed by a `\n` newline and returns `true` when all bytes were written. It raises a runtime error if the path cannot be opened.
+`io.writeFile(path, contents)` writes contents to the file at path, replacing any existing contents, and returns true when every byte was written.
+
+- `path`: filesystem path of the file to write
+- `contents`: text to write
+
+`io.appendFile(path, contents)` appends contents to the file at path, creating it if absent, and returns true when every byte was written.
+
+- `path`: filesystem path of the file to append to
+- `contents`: text to append
+
+`io.appendLine(path, contents)` appends contents followed by a newline to the file at path and returns true when every byte was written.
+
+- `path`: filesystem path of the file to append to
+- `contents`: text to append before the newline

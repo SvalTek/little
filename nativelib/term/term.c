@@ -876,10 +876,79 @@ LT_NATIVE_EXPORT lt_Value ltopen(lt_VM* vm, const lt_Api* api)
     }
     term_modules[module_index].module = term;
 #define TERM_FN(name, function) lt->table_set(vm, term, lt->make_string(vm, name), lt->make_native(vm, function))
+    /** [LittleBinding] term.open
+     *  opens the terminal for the calling VM.
+     *  @signature ()
+     */
+    /** [LittleBinding] term.close
+     *  closes and releases the terminal owned by the calling VM.
+     *  @signature ()
+     */
+    /** [LittleBinding] term.isOpen
+     *  returns true when the calling VM owns the active terminal.
+     *  @signature ()
+     */
     TERM_FN("open", term_open); TERM_FN("close", term_close); TERM_FN("isOpen", term_is_open);
+    /** [LittleBinding] term.size
+     *  returns a table with the terminal's width and height in cells.
+     *  @signature ()
+     */
+    /** [LittleBinding] term.clear
+     *  clears the screen and resets the output position to the origin.
+     *  @signature ()
+     */
+    /** [LittleBinding] term.clearLine
+     *  clears the terminal row at the given screen row.
+     *  @signature (y)
+     *  @param y zero-based screen row to clear
+     */
     TERM_FN("size", term_size); TERM_FN("clear", term_clear); TERM_FN("clearLine", term_clear_line);
+    /** [LittleBinding] term.present
+     *  flushes pending output to the terminal display.
+     *  @signature ()
+     */
+    /** [LittleBinding] term.move
+     *  moves the cursor to the given column and row.
+     *  @signature (x, y)
+     *  @param x zero-based column
+     *  @param y zero-based row
+     */
+    /** [LittleBinding] term.cursor
+     *  shows or hides the terminal cursor.
+     *  @signature (visible)
+     *  @param visible true to show the cursor, false to hide it
+     */
     TERM_FN("present", term_present); TERM_FN("move", term_move); TERM_FN("cursor", term_cursor);
+    /** [LittleBinding] term.write
+     *  writes text at the given column and row.
+     *  @signature (x, y, text)
+     *  @param x zero-based column
+     *  @param y zero-based row
+     *  @param text string to display
+     */
+    /** [LittleBinding] term.bell
+     *  emits the terminal alert sound.
+     *  @signature ()
+     */
+    /** [LittleBinding] term.poll
+     *  returns the next available input event, or null when no key is pending.
+     *  @signature ()
+     */
     TERM_FN("write", term_write); TERM_FN("bell", term_bell); TERM_FN("poll", term_poll);
+    /** [LittleBinding] term.update
+     *  processes one pending terminal event and returns true when work was performed.
+     *  @signature ()
+     */
+    /** [LittleBinding] term.onEvent
+     *  registers a callable invoked with each terminal event, replacing any previous callback, and returns it.
+     *  @signature (callback)
+     *  @param callback function receiving an event table with type, code, and key or text
+     */
+    /** [LittleBinding] term.readLine
+     *  reads an editable line of input after the prompt, returning null when input is cancelled.
+     *  @signature (prompt)
+     *  @param prompt text displayed before the input line
+     */
     TERM_FN("update", term_update_native); TERM_FN("onEvent", term_on_event); TERM_FN("readLine", term_read_line);
 #undef TERM_FN
     return term;

@@ -1351,10 +1351,36 @@ void ltstd_open_web(lt_VM* vm)
     web_api->table_set(vm, registry, web_api->make_string(vm, "Server"), server_class);
     web_api->table_set(vm, vm->global, web_api->make_string(vm, "__little_web_classes"), registry);
     lt_Value web = web_api->make_table(vm);
+    /** [LittleBinding] web.fetch
+     *  requests a URL and returns a promise resolving to a web.Response.
+     *  @signature (url [, init])
+     *  @param url absolute http or https URL to request
+     *  @param init table with optional method, body, headers, redirects, proxy, and decompress fields
+     */
     web_api->table_set(vm, web, web_api->make_string(vm, "fetch"), web_api->make_native(vm, web_fetch));
+    /** [LittleBinding] web.serve
+     *  starts an HTTP server that passes each request to the handler and returns a web.Server.
+     *  @signature (handler [, options])
+     *  @param handler callable receiving a web.Request and returning a web.Response or a promise of one
+     *  @param options table with optional port and hostname fields
+     */
     web_api->table_set(vm, web, web_api->make_string(vm, "serve"), web_api->make_native(vm, web_serve));
+    /** [LittleBinding] web.Request
+     *  represents an incoming server request exposing url, method, body, and headers.
+     *  @signature ()
+     */
     web_api->table_set(vm, web, web_api->make_string(vm, "Request"), request_class);
+    /** [LittleBinding] web.Response
+     *  represents an HTTP response with a status, headers, and body.
+     *  @signature ([body [, options]])
+     *  @param body response body string
+     *  @param options table with optional status, statusText, and headers fields
+     */
     web_api->table_set(vm, web, web_api->make_string(vm, "Response"), response_class);
+    /** [LittleBinding] web.Server
+     *  represents a running HTTP server exposing close() and the bound port.
+     *  @signature ()
+     */
     web_api->table_set(vm, web, web_api->make_string(vm, "Server"), server_class);
 
     web_api->table_set(vm, vm->global, web_api->make_string(vm, "web"), web);
