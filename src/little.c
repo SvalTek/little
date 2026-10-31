@@ -528,6 +528,7 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 	t.token_buffer = lt_buffer_new(sizeof(lt_Token));
 	t.identifier_buffer = lt_buffer_new(sizeof(lt_Identifier));
 	t.literal_buffer = lt_buffer_new(sizeof(lt_Literal));
+	t.comment_buffer = lt_buffer_new(sizeof(lt_Comment));
 
 	void* saved_error_buf = vm->error_buf;
 	jmp_buf error_buf;
@@ -559,7 +560,16 @@ lt_Tokenizer lt_tokenize(lt_VM* vm, const char* source, const char* mod_name)
 			/* A comment ends at the newline or at the end of input. The old
 			   loop scanned past the terminator when the comment was last. */
 			case ';': {
+				const char* comment_start = current;
 				while (*current && *current != '\n') current++;
+
+				lt_Comment comment;
+				comment.line = line;
+				comment.col = col;
+				comment.span.start = (uint32_t)(comment_start - source);
+				comment.span.end = (uint32_t)(current - source);
+				lt_buffer_push(vm, &t.comment_buffer, &comment);
+
 				if (*current == '\n') { current++; col = 0; line++; }
 				found = 1;
 			} break;
@@ -4819,6 +4829,7 @@ void lt_free_tokenizer(lt_VM* vm, lt_Tokenizer* tok)
 		}
 	}
 	lt_buffer_destroy(vm, &tok->literal_buffer);
+	lt_buffer_destroy(vm, &tok->comment_buffer);
 }
 
 lt_Value lt_loadstring(lt_VM* vm, const char* source, const char* mod_name)

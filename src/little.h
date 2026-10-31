@@ -203,9 +203,15 @@ typedef struct {
 } lt_Identifier;
 
 typedef struct {
+	lt_Span span;
+	uint16_t line, col;
+} lt_Comment;
+
+typedef struct {
 	lt_Buffer token_buffer;
 	lt_Buffer literal_buffer;
 	lt_Buffer identifier_buffer;
+	lt_Buffer comment_buffer;
 
 	const char* source;
 	const char* module;
