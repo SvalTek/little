@@ -288,8 +288,8 @@ jobs:
             $prerelease = 'false'
           }
           else {
-            $tag = 'develop'
-            $title = 'Develop build'
+            $tag = 'testing'
+            $title = 'Testing build'
             $prerelease = 'true'
           }
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
@@ -309,7 +309,7 @@ jobs:
             gh release upload $env:TAG $files --repo $env:GITHUB_REPOSITORY --clobber
           }
           elseif ($env:PRERELEASE -eq 'true') {
-            gh release create $env:TAG $files --repo $env:GITHUB_REPOSITORY --title $env:TITLE --notes 'Automated development build.' --prerelease
+            gh release create $env:TAG $files --repo $env:GITHUB_REPOSITORY --title $env:TITLE --notes 'Automated testing build.' --prerelease
           }
           else {
             gh release create $env:TAG $files --repo $env:GITHUB_REPOSITORY --title $env:TITLE --notes 'Automated main build.'
