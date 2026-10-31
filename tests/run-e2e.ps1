@@ -6,6 +6,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Expected files and native output are UTF-8; Windows PowerShell defaults to ANSI.
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
+
 $repo = Split-Path -Parent $PSScriptRoot
 $toolchainBin = if ($env:GCC_PATH) { Join-Path $env:GCC_PATH "bin" } else { "" }
 if ($toolchainBin -and (Test-Path $toolchainBin)) {
@@ -265,7 +270,7 @@ foreach ($test in $tests) {
     $containsPath = "$($test.FullName).contains"
 
     if (Test-Path $expectedPath) {
-        $expected = Normalize((Get-Content -Raw $expectedPath))
+        $expected = Normalize((Get-Content -Raw -Encoding UTF8 $expectedPath))
         if ($output -ne $expected) {
             Write-Host "FAIL $($test.Name)"
             Write-Host "Expected:"
@@ -278,7 +283,7 @@ foreach ($test in $tests) {
         }
     }
     elseif (Test-Path $containsPath) {
-        $needles = Get-Content $containsPath | Where-Object { $_.Trim().Length -gt 0 }
+        $needles = Get-Content -Encoding UTF8 $containsPath | Where-Object { $_.Trim().Length -gt 0 }
         foreach ($needle in $needles) {
             if (!$output.Contains($needle)) {
                 Write-Host "FAIL $($test.Name)"
