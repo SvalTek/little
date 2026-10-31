@@ -633,7 +633,7 @@ void ltstd_open_string(lt_VM* vm)
     /** [LittleBinding] string.split
      *  splits a string on every occurrence of a separator and returns the parts as an array, splitting into single characters when the separator is empty.
      *  @signature (str, separator)
-     *  @return array
+     *  @return string[]
      */
     lt_table_set(vm, t, lt_make_string(vm, "split"), lt_make_native(vm, _lt_string_split));
     /** [LittleBinding] string.trim
