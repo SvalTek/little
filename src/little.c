@@ -142,6 +142,7 @@ static void _lt_push_diagnostic(lt_VM* vm, lt_Span span, uint16_t line, uint16_t
 static void _lt_syntax_error(lt_VM* vm, const char* module, lt_Span span, uint16_t line, uint16_t col, const char* message)
 {
 	vm->error_line = line;
+	vm->error_col = col;
 	_lt_push_diagnostic(vm, span, line, col, LT_DIAG_ERROR, message);
 
 	char sprint_buf[128];
@@ -156,6 +157,7 @@ static void _lt_tokenize_error(lt_VM* vm, const char* module, uint16_t line, uin
 
 static void _lt_parse_error(lt_VM* vm, const char* module, lt_Token* t, const char* message)
 {
+	vm->error_at_token = 1;
 	_lt_syntax_error(vm, module, t->span, t->line, t->col, message);
 }
 
@@ -1435,6 +1437,25 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 			p->self_token = statement_self;
 
 			uint16_t error_line = vm->error_line ? vm->error_line : statement_start->line;
+			uint16_t error_col = vm->error_col;
+
+			/* Errors are often discovered by looking at the first token of the
+			   next statement. Do not consume that line: it may still be valid.
+			   Resync at the end of the statement that failed instead. */
+			if (vm->error_at_token && error_line > statement_start->line)
+			{
+				uint16_t first_col = 0;
+				uint8_t first_found = 0;
+				for (lt_Token* scan = statement_start; scan->type != LT_TOKEN_END; scan++)
+				{
+					if (scan->line != error_line) continue;
+					first_col = scan->col;
+					first_found = 1;
+					break;
+				}
+				if (first_found && first_col == error_col) error_line = statement_start->line;
+			}
+
 			current = statement_start;
 			while (current->type != LT_TOKEN_END && current->type != LT_TOKEN_CLOSEBRACE &&
 				current->line <= error_line) current++;
@@ -1443,6 +1464,7 @@ lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* d
 		}
 
 		vm->error_line = 0;
+		vm->error_at_token = 0;
 
 		switch (current->type)
 		{
@@ -1874,13 +1896,16 @@ end_block:
 
 static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_AstNode* fn, uint8_t add_this, uint8_t allow_auto_assign, uint8_t is_constructor)
 {
+	lt_Token* paren = current;
 	if (current->type != LT_TOKEN_OPENPAREN) _lt_parse_error(vm, p->tkn->module, current, "Expected open parenthesis to follow method name!");
 	current++;
 
 	uint8_t nargs = 0;
 	uint8_t auto_assign[LT_MAX_FUNCTION_PARAMS + 1];
 	memset(auto_assign, 0, sizeof(auto_assign));
-	if (add_this) fn->fn.args[nargs++] = _lt_make_identifier_token(vm, p, "this", current);
+	/* Anchor the implicit receiver on the parameter list, not on the first
+	   parameter, so it does not share that parameter's span. */
+	if (add_this) fn->fn.args[nargs++] = _lt_make_identifier_token(vm, p, "this", paren);
 	while (current->type == LT_TOKEN_IDENTIFIER || (allow_auto_assign && current->type == LT_TOKEN_AT))
 	{
 		uint8_t should_auto_assign = 0;
@@ -2176,6 +2201,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 			if (!allowed) goto expr_end;
 
+			lt_Token* period = current;
 			NEXT(); // eat period
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
 			if (_lt_token_is_keyword(current))
@@ -2184,7 +2210,17 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 				last = idx_expr->literal.token;
 				current++;
 			}
-			else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow '.' operator!");
+			else if (current->type != LT_TOKEN_IDENTIFIER)
+			{
+				/* A dangling `obj.` ends the line; do not consume the next
+				   statement's first token as the missing member. */
+				if (current->line != period->line)
+				{
+					_lt_parse_soft_error(vm, p, period, "Expected identifier to follow '.' operator!");
+					goto expr_end;
+				}
+				_lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow '.' operator!");
+			}
 			else idx_expr->literal.token = NEXT();
 
 			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);
@@ -2207,6 +2243,7 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 
 			if (!allowed) goto expr_end;
 
+			lt_Token* colon = current;
 			NEXT(); // eat colon
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
 			if (_lt_token_is_keyword(current))
@@ -2215,7 +2252,15 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 				last = idx_expr->literal.token;
 				current++;
 			}
-			else if (current->type != LT_TOKEN_IDENTIFIER) _lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
+			else if (current->type != LT_TOKEN_IDENTIFIER)
+			{
+				if (current->line != colon->line)
+				{
+					_lt_parse_soft_error(vm, p, colon, "Expected identifier to follow ':' operator!");
+					goto expr_end;
+				}
+				_lt_parse_error(vm, p->tkn->module, current, "Expected identifier to follow ':' operator!");
+			}
 			else idx_expr->literal.token = NEXT();
 
 			lt_AstNode* source = *(void**)lt_buffer_last(&result); lt_buffer_pop(&result);

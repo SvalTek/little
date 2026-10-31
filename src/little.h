@@ -669,6 +669,8 @@ struct lt_VM {
 	uint8_t collect_diagnostics;
 	uint16_t error_line;
 	lt_Buffer diagnostics;
+	uint16_t error_col;
+	uint8_t error_at_token;
 };
 
 lt_VM* lt_open(lt_AllocFn alloc, lt_FreeFn free, lt_ErrorFn error);
