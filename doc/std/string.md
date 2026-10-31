@@ -1,40 +1,64 @@
 # string
 
-String literals support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
+`string.from(value)` converts any value to its string representation.
 
-`string.from(x)` converts an argument into a string representation.
+`string.concat(str1, str2, ...)` joins two or more strings into one, in argument order.
 
-`string.concat(...)` concatenates string arguments in order.
+- `str1`: first string to join
+- `str2`: second string to join
 
-`string.len(x)` returns the byte length of `x`.
+`string.len(str)` returns the number of bytes in a string.
 
-`string.sub(str, start [, length])` creates a substring. If `length` is omitted, the rest of the string is returned.
+- `str`: string to measure
 
-`string.byte(str, index)` returns the byte at `index` as a number, or `null`
-when a whole index is outside the string. Indexes are 0-based, like
-`string.sub`, and count bytes rather than characters. A fractional index
-raises an error.
+`string.sub(str, start [, length])` returns the substring starting at a zero-based offset, running to the end of the string or for a given length.
 
-`string.char(code)` returns a one-byte string for a whole `code` between 1 and
-255. Byte 0 is rejected, because Little strings are NUL-terminated: storing one
-would silently truncate the result instead of producing the byte asked for.
+- `str`: string to slice
+- `start`: zero-based offset of the first byte
+- `length`: number of bytes to copy; the rest of the string if omitted
 
-`string.format(format, ...)` takes a printf-style format string and a list of arguments to insert.
+`string.byte(str, index)` returns the numeric value of the byte at a zero-based index, or null when the index is outside the string.
 
-`string.contains(str, needle)` returns whether `needle` exists in `str`.
+- `index`: zero-based byte offset, as a whole number
 
-`string.startsWith(str, prefix)` and `string.endsWith(str, suffix)` test string boundaries.
+`string.char(code)` returns a one-byte string holding the character for a numeric code between 1 and 255.
 
-`string.indexOf(str, needle [, start])` returns the first matching index, or `-1`.
+- `code`: whole number code between 1 and 255
 
-`string.replace(str, needle, replacement)` replaces all occurrences of `needle`.
+`string.format(template, ...)` builds a string from a printf-style template, converting %d, %i, %o, %u, %x, %X, %e, %E, %f, %g, %G and %s specifiers, with %% producing a literal percent sign and output capped at 1023 bytes.
 
-`string.split(str, separator)` returns an array of parts.
+- `template`: format string with conversion specifiers
+- `...`: one value per conversion specifier, of the matching type
 
-`string.trim(str)`, `string.ltrim(str)`, and `string.rtrim(str)` remove whitespace.
+`string.contains(str, needle)` reports whether a string occurs anywhere inside another.
 
-`string.lower(str)` and `string.upper(str)` change ASCII case.
+`string.startsWith(str, prefix)` reports whether a string begins with the given prefix.
 
-`string.repeat(str, count)` repeats a string.
+`string.endsWith(str, suffix)` reports whether a string ends with the given suffix.
 
-`string.expand(str, values)` replaces placeholders using a table or array. `{{name}}` and `$name` look up string keys in a table. `$1`, `$2`, and so on look up one-based positions in an array.
+`string.indexOf(str, needle [, start])` returns the zero-based position of the first occurrence of a needle at or after an offset, or -1 when it is not found.
+
+- `start`: zero-based offset to begin searching from; defaults to 0
+
+`string.replace(str, needle, replacement)` returns a copy of a string with every occurrence of a needle replaced; an empty needle leaves the string unchanged.
+
+`string.split(str, separator)` splits a string on every occurrence of a separator and returns the parts as an array, splitting into single characters when the separator is empty.
+
+`string.trim(str)` returns a copy of a string with whitespace removed from both ends.
+
+`string.ltrim(str)` returns a copy of a string with leading whitespace removed.
+
+`string.rtrim(str)` returns a copy of a string with trailing whitespace removed.
+
+`string.lower(str)` returns a copy of a string with every ASCII letter converted to lower case.
+
+`string.upper(str)` returns a copy of a string with every ASCII letter converted to upper case.
+
+`string.repeat(str, count)` returns a string consisting of the source repeated a non-negative whole number of times.
+
+- `count`: number of repetitions
+
+`string.expand(template, values)` substitutes {{key}} and $name placeholders in a template with values looked up in a table by key or in an array by one-based index, rendering unknown keys as the text null.
+
+- `template`: text containing placeholders
+- `values`: table keyed by placeholder name, or array indexed from 1

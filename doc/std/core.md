@@ -1,131 +1,16 @@
 # core
 
-## pcall
+`pcall(fn [, args...])` calls a callable with the remaining arguments and returns { ok: true value: ... } or { ok: false error: ... } instead of letting runtime errors escape.
 
-`pcall(fn [, args...])` calls `fn` with optional arguments and returns a result table instead of letting runtime errors escape.
+- `fn`: callable to invoke
+- `args...`: arguments passed to fn
 
-On success:
+`unpack(array [, start [, end]])` returns the elements of an array from start through end as positional return values.
 
-```js
-{ ok: true value: result }
-```
+- `array`: array to read elements from
+- `start`: first index to read, defaults to 0
+- `end`: last index to read, inclusive, defaults to the last index
 
-On failure:
+`import(path)` loads the module at path from the module cache or from disk and returns its exported value.
 
-```js
-{ ok: false error: "message" }
-```
-
-Trapped errors are not sent to the host error callback.
-
-## unpack
-
-`unpack(array [, start [, end]])` returns array elements as positional return values.
-
-Indexes are 0-based, and `end` is inclusive:
-
-```js
-unpack([ 10, 20, 30 ])       ; 10, 20, 30
-unpack([ 10, 20, 30 ], 1)    ; 20, 30
-unpack([ 10, 20, 30 ], 1, 1) ; 20
-```
-
-`start` defaults to `0`. `end` defaults to the last array index. Bounds must be numbers, and the first argument must be an array.
-
-`unpack` expands in `return unpack(values)` and when it is the final call argument:
-
-```js
-return unpack(values)
-fn("prefix", unpack(values))
-```
-
-In scalar contexts, only the first returned value is used.
-
-## import
-
-`import "path"` loads a Little module and returns its exported value.
-
-```js
-var greeter = import "tests/fixtures/greeter"
-io.print(greeter.greet("Ada"))
-```
-
-Named import syntax destructures that returned module value into locals:
-
-```js
-import { greet, shout } from "tests/fixtures/greeter"
-```
-
-Module search paths can be registered with `module.addPath(...)`:
-
-```js
-module.addPath("lib")
-var common = import "utils/common"
-```
-
-For each direct path or search-path candidate, Little tries `path.little`, then `path/init.little`. The `.little` suffix is recognized case-insensitively, so an explicit import such as `import "path/module.LITTLE"` is not given a second suffix. Extensionless files are not loaded. Use `module.clearPaths()` to remove registered search paths.
-
-When a search path contains `?`, it receives the first import path segment and any remaining subpath is appended after the template.
-
-See [../modules.md](../modules.md) for module loading, exporting, path, and cache behavior.
-
-## loadLibrary
-
-`loadLibrary("path")` loads a native shared library and returns the value
-exported by that library's `ltopen(lt_VM* vm, const lt_Api* lt)` function.
-It is not installed by `ltstd_open_all(vm)`; embedders must explicitly call
-`ltstd_open_loadlib(vm)` to expose it.
-
-```js
-var nativeMath = loadLibrary("native/math")
-io.print(nativeMath.add(2, 3))
-```
-
-Native libraries are separate from source modules: use `import` for `.little`
-files and `loadLibrary` for compiled native code. The loader uses registered
-native-library paths first, then module paths for embedded-host compatibility,
-and tries the platform native-library extension instead of `.little`: `.dll`
-on Windows, `.so` on Linux, and `.dylib` on macOS. For each direct path or
-search-path candidate, Little tries `path` with the platform extension, then
-`path/init`, then `path/path-name` for packaged libraries.
-
-The CLI adds `-L DIRECTORY` / `--library-path DIRECTORY` and accepts
-`library_path = DIRECTORY` in its configuration file. Installed CLIs also
-search `lib/little` beside their `bin` directory, while portable layouts may
-place libraries below `libs` beside the executable.
-
-Loaded native library handles stay alive until the VM is destroyed.
-Native libraries use the passed `lt_Api` function table to create and inspect
-Little values, so they can be built from `little.h` without linking against the
-host executable. That table is the ABI boundary: native libraries should reject
-the load unless `ltopen` receives a non-null API pointer with the expected
-`LT_API_VERSION` and at least `sizeof(lt_Api)` bytes.
-
-### Rooting values
-
-A `lt_Value` held only in a C local is **not** a GC root. A native function
-that must keep a value across a re-entrant VM call (`lt->exec`, `lt->poll`, or
-`lt->poll_now`) can call `lt->root(vm, value)`. This works for strings and heap
-objects. Roots added by a native function or poll hook are released
-automatically when that callback returns, including when a runtime error
-unwinds it. `lt->unroot(vm, value)` removes one matching root from that
-callback's scope earlier. A nested callback has an independent root scope.
-The `equals` member exposes Little value equality to native libraries that
-cannot link against the host executable.
-
-```c
-lt_Value kept = lt->make_table(vm);
-lt->root(vm, kept);
-
-/* lt->exec, lt->poll, and lt->poll_now can trigger a collection */
-
-lt->unroot(vm, kept); /* optional; callback return releases it */
-```
-
-The repository's `nativelib/native_math` directory is an example of a native
-library that returns a function:
-
-```js
-var add = loadLibrary("nativelib/native_math/build/native_math")
-io.print(add(2, 3))
-```
+- `path`: module path to load

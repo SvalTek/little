@@ -1,17 +1,29 @@
 # async
 
-`Promise(fn(resolve, reject) { ... })` creates a promise. Promise methods are `next(fn(value) { ... })`, `catch(fn(reason) { ... })`, and `finally(fn() { ... })`.
+`Promise(executor)` creates a promise and calls executor immediately with resolve and reject callbacks.
 
-`setTimeout(callback, ms)` runs `callback` once after `ms` milliseconds and returns a timer id.
+- `executor`: function called with resolve and reject callbacks
 
-`setInterval(callback, ms)` runs `callback` repeatedly until cleared.
+`setTimeout(callback, ms)` runs callback once after ms milliseconds and returns a timer id.
 
-`clearTimeout(id)` and `clearInterval(id)` cancel timers.
+- `callback`: function invoked once after the delay
+- `ms`: delay in milliseconds
 
-`mainloop.run()` drains pending async work from inside a Little script until the VM becomes idle or `mainloop.stop()` is called. It returns the number of poll steps performed.
+`setInterval(callback, ms)` runs callback every ms milliseconds until the timer is cancelled and returns a timer id.
+
+- `callback`: function invoked on each tick
+- `ms`: interval in milliseconds
+
+`clearTimeout(id)` cancels the timer with the given id.
+
+- `id`: timer id returned by setTimeout or setInterval
+
+`clearInterval(id)` cancels the timer with the given id.
+
+- `id`: timer id returned by setInterval or setTimeout
+
+`mainloop.run()` drains pending async work until the VM is idle or mainloop.stop is called and returns the number of poll steps performed.
 
 `mainloop.poll()` advances one async step and returns whether work was performed or remains pending.
 
-`mainloop.stop()` requests that the current script-managed mainloop stop. This is useful for interval-driven scripts that intentionally keep work scheduled until a callback decides they are done.
-
-`task.run(callable, state)` runs a Little function on a host thread with explicit shared task state, returning a promise that resolves to the task return value or rejects with an error string. See [task](task.md) for boundary rules and limitations.
+`mainloop.stop()` requests that the current script-managed mainloop stop.

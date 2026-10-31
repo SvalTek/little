@@ -142,6 +142,11 @@ tasks:
     cmds:
       - pwsh -ExecutionPolicy Bypass -File ./scripts/run.ps1
 
+  docs:std:
+    desc: Regenerate doc/std reference from [LittleBinding] comments
+    cmds:
+      - node scripts/generate-std-docs.mjs
+
   package:
     desc: Package the built CLI and native libraries for one platform target
     deps: [build, build:nativelibs]
