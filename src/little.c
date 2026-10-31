@@ -155,6 +155,29 @@ static void _lt_tokenize_error(lt_VM* vm, const char* module, uint16_t line, uin
 	_lt_syntax_error(vm, module, span, line, col, message);
 }
 
+/* A token that starts a new statement even though newlines are whitespace. */
+static uint8_t _lt_starts_statement(lt_TokenType type)
+{
+	switch (type)
+	{
+	case LT_TOKEN_IF:
+	case LT_TOKEN_FOR:
+	case LT_TOKEN_WHILE:
+	case LT_TOKEN_WITH:
+	case LT_TOKEN_VAR:
+	case LT_TOKEN_GLOBAL:
+	case LT_TOKEN_CLASS:
+	case LT_TOKEN_FN:
+	case LT_TOKEN_ASYNC:
+	case LT_TOKEN_RETURN:
+	case LT_TOKEN_BREAK:
+	case LT_TOKEN_IMPORT:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
 static void _lt_parse_error(lt_VM* vm, const char* module, lt_Token* t, const char* message)
 {
 	vm->error_at_token = 1;
@@ -2204,6 +2227,11 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			lt_Token* period = current;
 			NEXT(); // eat period
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
+			if (current->line != period->line && _lt_starts_statement(current->type))
+			{
+				_lt_parse_soft_error(vm, p, period, "Expected identifier to follow '.' operator!");
+				goto expr_end;
+			}
 			if (_lt_token_is_keyword(current))
 			{
 				idx_expr->literal.token = _lt_keyword_as_identifier(vm, p, current);
@@ -2246,6 +2274,11 @@ lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_AstN
 			lt_Token* colon = current;
 			NEXT(); // eat colon
 			lt_AstNode* idx_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_LITERAL);
+			if (current->line != colon->line && _lt_starts_statement(current->type))
+			{
+				_lt_parse_soft_error(vm, p, colon, "Expected identifier to follow ':' operator!");
+				goto expr_end;
+			}
 			if (_lt_token_is_keyword(current))
 			{
 				idx_expr->literal.token = _lt_keyword_as_identifier(vm, p, current);
