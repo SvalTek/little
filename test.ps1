@@ -26,7 +26,10 @@ if ($node) {
         if (!(Test-Path $committed)) {
             throw "doc/std/$($file.Name) is missing; run scripts/generate-std-docs.mjs"
         }
-        if ((Get-Content -Raw $committed) -ne (Get-Content -Raw $file.FullName)) {
+        # Compare content, not checkout line endings (autocrlf vs generated LF).
+        $expected = (Get-Content -Raw $committed) -replace "`r`n", "`n"
+        $actual = (Get-Content -Raw $file.FullName) -replace "`r`n", "`n"
+        if ($expected -ne $actual) {
             throw "doc/std/$($file.Name) is stale; run scripts/generate-std-docs.mjs"
         }
     }
