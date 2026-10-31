@@ -547,25 +547,119 @@ void ltstd_open_string(lt_VM* vm)
 {
     lt_Value t = lt_make_table(vm);
 
+    /** [LittleBinding] string.from
+     *  converts any value to its string representation.
+     *  @signature (value)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "from"), lt_make_native(vm, _lt_string_from));
+    /** [LittleBinding] string.concat
+     *  joins two or more strings into one, in argument order.
+     *  @signature (str1, str2, ...)
+     *  @param str1 first string to join
+     *  @param str2 second string to join
+     */
     lt_table_set(vm, t, lt_make_string(vm, "concat"), lt_make_native(vm, _lt_string_concat));
+    /** [LittleBinding] string.len
+     *  returns the number of bytes in a string.
+     *  @signature (str)
+     *  @param str string to measure
+     */
     lt_table_set(vm, t, lt_make_string(vm, "len"), lt_make_native(vm, _lt_string_len));
+    /** [LittleBinding] string.sub
+     *  returns the substring starting at a zero-based offset, running to the end of the string or for a given length.
+     *  @signature (str, start [, length])
+     *  @param str string to slice
+     *  @param start zero-based offset of the first byte
+     *  @param length number of bytes to copy; the rest of the string if omitted
+     */
     lt_table_set(vm, t, lt_make_string(vm, "sub"), lt_make_native(vm, _lt_string_sub));
+    /** [LittleBinding] string.byte
+     *  returns the numeric value of the byte at a zero-based index, or null when the index is outside the string.
+     *  @signature (str, index)
+     *  @param index zero-based byte offset, as a whole number
+     */
     lt_table_set(vm, t, lt_make_string(vm, "byte"), lt_make_native(vm, _lt_string_byte));
+    /** [LittleBinding] string.char
+     *  returns a one-byte string holding the character for a numeric code between 1 and 255.
+     *  @signature (code)
+     *  @param code whole number code between 1 and 255
+     */
     lt_table_set(vm, t, lt_make_string(vm, "char"), lt_make_native(vm, _lt_string_char));
+    /** [LittleBinding] string.format
+     *  builds a string from a printf-style template, converting %d, %i, %o, %u, %x, %X, %e, %E, %f, %g, %G and %s specifiers, with %% producing a literal percent sign and output capped at 1023 bytes.
+     *  @signature (template, ...)
+     *  @param template format string with conversion specifiers
+     *  @param ... one value per conversion specifier, of the matching type
+     */
     lt_table_set(vm, t, lt_make_string(vm, "format"), lt_make_native(vm, _lt_string_format));
+    /** [LittleBinding] string.contains
+     *  reports whether a string occurs anywhere inside another.
+     *  @signature (str, needle)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "contains"), lt_make_native(vm, _lt_string_contains));
+    /** [LittleBinding] string.startsWith
+     *  reports whether a string begins with the given prefix.
+     *  @signature (str, prefix)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "startsWith"), lt_make_native(vm, _lt_string_startswith));
+    /** [LittleBinding] string.endsWith
+     *  reports whether a string ends with the given suffix.
+     *  @signature (str, suffix)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "endsWith"), lt_make_native(vm, _lt_string_endswith));
+    /** [LittleBinding] string.indexOf
+     *  returns the zero-based position of the first occurrence of a needle at or after an offset, or -1 when it is not found.
+     *  @signature (str, needle [, start])
+     *  @param start zero-based offset to begin searching from; defaults to 0
+     */
     lt_table_set(vm, t, lt_make_string(vm, "indexOf"), lt_make_native(vm, _lt_string_indexof));
+    /** [LittleBinding] string.replace
+     *  returns a copy of a string with every occurrence of a needle replaced; an empty needle leaves the string unchanged.
+     *  @signature (str, needle, replacement)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "replace"), lt_make_native(vm, _lt_string_replace));
+    /** [LittleBinding] string.split
+     *  splits a string on every occurrence of a separator and returns the parts as an array, splitting into single characters when the separator is empty.
+     *  @signature (str, separator)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "split"), lt_make_native(vm, _lt_string_split));
+    /** [LittleBinding] string.trim
+     *  returns a copy of a string with whitespace removed from both ends.
+     *  @signature (str)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "trim"), lt_make_native(vm, _lt_string_trim));
+    /** [LittleBinding] string.ltrim
+     *  returns a copy of a string with leading whitespace removed.
+     *  @signature (str)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "ltrim"), lt_make_native(vm, _lt_string_ltrim));
+    /** [LittleBinding] string.rtrim
+     *  returns a copy of a string with trailing whitespace removed.
+     *  @signature (str)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "rtrim"), lt_make_native(vm, _lt_string_rtrim));
+    /** [LittleBinding] string.lower
+     *  returns a copy of a string with every ASCII letter converted to lower case.
+     *  @signature (str)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "lower"), lt_make_native(vm, _lt_string_lower));
+    /** [LittleBinding] string.upper
+     *  returns a copy of a string with every ASCII letter converted to upper case.
+     *  @signature (str)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "upper"), lt_make_native(vm, _lt_string_upper));
+    /** [LittleBinding] string.repeat
+     *  returns a string consisting of the source repeated a non-negative whole number of times.
+     *  @signature (str, count)
+     *  @param count number of repetitions
+     */
     lt_table_set(vm, t, lt_make_string(vm, "repeat"), lt_make_native(vm, _lt_string_repeat));
+    /** [LittleBinding] string.expand
+     *  substitutes {{key}} and $name placeholders in a template with values looked up in a table by key or in an array by one-based index, rendering unknown keys as the text null.
+     *  @signature (template, values)
+     *  @param template text containing placeholders
+     *  @param values table keyed by placeholder name, or array indexed from 1
+     */
     lt_table_set(vm, t, lt_make_string(vm, "expand"), lt_make_native(vm, _lt_string_expand));
 
     lt_table_set(vm, vm->global, lt_make_string(vm, "string"), t);

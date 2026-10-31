@@ -438,19 +438,73 @@ void ltstd_open_number(lt_VM* vm)
 {
     lt_Value t = lt_make_table(vm);
 
+    /** [LittleBinding] number.from
+     *  converts a number, or a decimal, 0x hex or 0b binary string, to a number, returning null when the text is not one.
+     *  @signature (x)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "from"), lt_make_native(vm, _lt_number_from));
+    /** [LittleBinding] number.format
+     *  formats a number with a fixed number of decimals, optionally grouping thousands with commas.
+     *  @signature (value, decimals [, separators])
+     *  @param decimals number of digits after the decimal point, from 0 to 32
+     *  @param separators whether to insert thousands separators
+     */
     lt_table_set(vm, t, lt_make_string(vm, "format"), lt_make_native(vm, _lt_number_format));
+    /** [LittleBinding] number.toBase
+     *  renders a whole number in a base from 2 to 36, with a 0x or 0b prefix when requested.
+     *  @signature (value, base [, prefix])
+     *  @param base radix to write the number in, from 2 to 36
+     *  @param prefix whether to prefix a hexadecimal or binary result
+     */
     lt_table_set(vm, t, lt_make_string(vm, "toBase"), lt_make_native(vm, _lt_number_tobase));
 
+    /** [LittleBinding] number.isInteger
+     *  returns true when the value is finite and has no fractional part.
+     *  @signature (x)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "isInteger"), lt_make_native(vm, _lt_number_isinteger));
+    /** [LittleBinding] number.isSafeInteger
+     *  returns true when the value is a whole number that can be represented exactly.
+     *  @signature (x)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "isSafeInteger"), lt_make_native(vm, _lt_number_issafeinteger));
+    /** [LittleBinding] number.isClose
+     *  returns true when two numbers differ by no more than a tolerance that scales with their magnitude.
+     *  @signature (a, b [, epsilon])
+     *  @param epsilon relative tolerance, defaulting to 1e-9
+     */
     lt_table_set(vm, t, lt_make_string(vm, "isClose"), lt_make_native(vm, _lt_number_isclose));
 
+    /** [LittleBinding] number.trunc
+     *  returns the value with its fractional part dropped, towards zero.
+     *  @signature (x)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "trunc"), lt_make_native(vm, _lt_number_trunc));
+    /** [LittleBinding] number.roundTo
+     *  returns the value rounded to the given number of decimals.
+     *  @signature (x, decimals)
+     *  @param decimals number of digits to keep after the decimal point, from 0 to 15
+     */
     lt_table_set(vm, t, lt_make_string(vm, "roundTo"), lt_make_native(vm, _lt_number_roundto));
+    /** [LittleBinding] number.snap
+     *  returns the value rounded to the nearest multiple of step.
+     *  @signature (x, step)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "snap"), lt_make_native(vm, _lt_number_snap));
+    /** [LittleBinding] number.wrap
+     *  wraps the value into the range from min up to but not including max.
+     *  @signature (x, min, max)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "wrap"), lt_make_native(vm, _lt_number_wrap));
+    /** [LittleBinding] number.pingPong
+     *  bounces the value back and forth within the range from 0 to length.
+     *  @signature (x, length)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "pingPong"), lt_make_native(vm, _lt_number_pingpong));
+    /** [LittleBinding] number.map
+     *  rescales the value from the input range onto the output range, without clamping.
+     *  @signature (x, inMin, inMax, outMin, outMax)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "map"), lt_make_native(vm, _lt_number_map));
 
     lt_table_set(vm, t, lt_make_string(vm, "epsilon"), LT_VALUE_NUMBER(DBL_EPSILON));

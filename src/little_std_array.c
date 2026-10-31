@@ -317,21 +317,90 @@ static uint8_t _lt_array_slice(lt_VM* vm, uint8_t argc)
 void ltstd_open_array(lt_VM* vm)
 {
     lt_Value t = lt_make_table(vm);
+    /** [LittleBinding] array.each
+     *  returns an iterator function that yields each element of array in order.
+     *  @signature (array)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "each"), lt_make_native(vm, _lt_array_each));
+    /** [LittleBinding] array.range
+     *  returns an iterator producing numbers from start up to but excluding end, advancing by step.
+     *  @signature ([start,] end [, step])
+     *  @param start first value, defaults to 0
+     *  @param step increment between values, defaults to 1 and must be non-zero
+     */
     lt_table_set(vm, t, lt_make_string(vm, "range"), lt_make_native(vm, _lt_range));
 
+    /** [LittleBinding] array.len
+     *  returns the number of elements in array.
+     *  @signature (array)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "len"), lt_make_native(vm, _lt_array_len));
+    /** [LittleBinding] array.first
+     *  returns the first element of a non-empty array.
+     *  @signature (array)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "first"), lt_make_native(vm, _lt_array_first));
+    /** [LittleBinding] array.last
+     *  returns the last element of a non-empty array.
+     *  @signature (array)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "last"), lt_make_native(vm, _lt_array_last));
+    /** [LittleBinding] array.pop
+     *  removes and returns the last element of array.
+     *  @signature (array)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "pop"), lt_make_native(vm, _lt_array_pop));
+    /** [LittleBinding] array.push
+     *  appends element to the back of array.
+     *  @signature (array, element)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "push"), lt_make_native(vm, _lt_array_push));
+    /** [LittleBinding] array.clear
+     *  removes every element from array.
+     *  @signature (array)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "clear"), lt_make_native(vm, _lt_array_clear));
+    /** [LittleBinding] array.insert
+     *  inserts element at index, shifting later elements right; an index past the end appends.
+     *  @signature (array, index, element)
+     *  @param index non-negative integer position to insert at
+     */
     lt_table_set(vm, t, lt_make_string(vm, "insert"), lt_make_native(vm, _lt_array_insert));
+    /** [LittleBinding] array.remove
+     *  removes the element at index, moving the last element into its place so order is not preserved.
+     *  @signature (array, index)
+     *  @param index integer position of the element to remove
+     */
     lt_table_set(vm, t, lt_make_string(vm, "remove"), lt_make_native(vm, _lt_array_remove));
+    /** [LittleBinding] array.contains
+     *  returns true when value is present in array.
+     *  @signature (array, value)
+     *  @param value value to search for
+     */
     lt_table_set(vm, t, lt_make_string(vm, "contains"), lt_make_native(vm, _lt_array_contains));
+    /** [LittleBinding] array.indexOf
+     *  returns the index of the first occurrence of value in array, or -1 when absent.
+     *  @signature (array, value)
+     *  @param value value to search for
+     */
     lt_table_set(vm, t, lt_make_string(vm, "indexOf"), lt_make_native(vm, _lt_array_indexof));
+    /** [LittleBinding] array.join
+     *  returns the elements converted to strings and concatenated with separator between them.
+     *  @signature (array [, separator])
+     *  @param separator string inserted between elements, defaults to the empty string
+     */
     lt_table_set(vm, t, lt_make_string(vm, "join"), lt_make_native(vm, _lt_array_join));
+    /** [LittleBinding] array.reverse
+     *  returns a new array holding the elements of array in reverse order.
+     *  @signature (array)
+     */
     lt_table_set(vm, t, lt_make_string(vm, "reverse"), lt_make_native(vm, _lt_array_reverse));
+    /** [LittleBinding] array.slice
+     *  returns a new array of count elements from array starting at start, defaulting to the rest of the array.
+     *  @signature (array, start [, count])
+     *  @param start index of the first element to copy
+     *  @param count number of elements to copy
+     */
     lt_table_set(vm, t, lt_make_string(vm, "slice"), lt_make_native(vm, _lt_array_slice));
 
     lt_table_set(vm, vm->global, lt_make_string(vm, "array"), t);

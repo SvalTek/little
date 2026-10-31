@@ -398,11 +398,38 @@ void ltstd_open_all(lt_VM* vm)
        installed it, without the core library depending on this module. */
     lt_set_worker_vm_init(vm, ltstd_open_all);
 
+    /** [LittleBinding] pcall
+     *  calls a callable with the remaining arguments and returns { ok: true value: ... } or { ok: false error: ... } instead of letting runtime errors escape.
+     *  @signature (fn [, args...])
+     *  @param fn callable to invoke
+     *  @param args... arguments passed to fn
+     */
     lt_table_set(vm, vm->global, lt_make_string(vm, "pcall"), lt_make_native(vm, _ltstd_pcall));
+    /** [LittleBinding] unpack
+     *  returns the elements of an array from start through end as positional return values.
+     *  @signature (array [, start [, end]])
+     *  @param array array to read elements from
+     *  @param start first index to read, defaults to 0
+     *  @param end last index to read, inclusive, defaults to the last index
+     */
     lt_table_set(vm, vm->global, lt_make_string(vm, "unpack"), lt_make_native(vm, _ltstd_unpack));
+    /** [LittleBinding] import
+     *  loads the module at path from the module cache or from disk and returns its exported value.
+     *  @signature (path)
+     *  @param path module path to load
+     */
     lt_table_set(vm, vm->global, lt_make_string(vm, "import"), lt_make_native(vm, _ltstd_import));
     lt_Value module = lt_make_table(vm);
+    /** [LittleBinding] module.addPath
+     *  appends one or more directory search paths used to resolve imported modules.
+     *  @signature (path [, ...])
+     *  @param path search path to append; further paths may follow
+     */
     lt_table_set(vm, module, lt_make_string(vm, "addPath"), lt_make_native(vm, _ltstd_module_add_path));
+    /** [LittleBinding] module.clearPaths
+     *  removes every registered module search path.
+     *  @signature ()
+     */
     lt_table_set(vm, module, lt_make_string(vm, "clearPaths"), lt_make_native(vm, _ltstd_module_clear_paths));
     lt_table_set(vm, vm->global, lt_make_string(vm, "module"), module);
     lt_add_module_loader(vm, _ltstd_file_module_loader, 0);

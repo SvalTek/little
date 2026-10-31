@@ -234,7 +234,17 @@ static uint8_t json_stringify_native(lt_VM* vm, uint8_t argc)
 void ltstd_open_json(lt_VM* vm)
 {
     lt_Value json = lt_make_table(vm);
+    /** [LittleBinding] json.parse
+     *  parses JSON text into a Little value, returning null when the text is not valid JSON.
+     *  @signature (text)
+     *  @param text JSON document to parse
+     */
     lt_table_set(vm, json, lt_make_string(vm, "parse"), lt_make_native(vm, json_parse_native));
+    /** [LittleBinding] json.stringify
+     *  serializes a Little value as JSON text, returning null for values JSON cannot represent.
+     *  @signature (value)
+     *  @param value value to serialize
+     */
     lt_table_set(vm, json, lt_make_string(vm, "stringify"), lt_make_native(vm, json_stringify_native));
     lt_table_set(vm, vm->global, lt_make_string(vm, "json"), json);
 }
