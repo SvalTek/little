@@ -5,6 +5,11 @@
 - `url`: absolute http or https URL to request
 - `init`: table with optional method, body, headers, redirects, proxy, and decompress fields
 
+`web.fetchStream(url [, init])` requests a URL and returns a promise resolving to a web.Stream once response headers are available.
+
+- `url`: absolute http or https URL to request
+- `init`: table with optional method, body, headers, redirects, proxy, decompress, and binary fields
+
 `web.serve(handler [, options])` starts an HTTP server that passes each request to the handler and returns a web.Server.
 
 - `handler`: callable receiving a web.Request and returning a web.Response or a promise of one
@@ -18,3 +23,5 @@
 - `options`: table with optional status, statusText, and headers fields
 
 `web.Server()` represents a running HTTP server exposing close() and the bound port.
+
+`web.Stream()` represents a streaming HTTP client response exposing next(), close(), status, statusText, ok, url, headers, and closed.

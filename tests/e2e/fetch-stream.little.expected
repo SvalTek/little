@@ -1,0 +1,8 @@
+status 200.000000 true
+header stream
+url true
+body hello from stream
+closed true
+bytes 2.000000 65.000000 90.000000
+closed true
+done

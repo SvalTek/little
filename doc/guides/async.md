@@ -34,6 +34,18 @@ Object sources may provide `close`; it runs after natural completion, `break`, a
 
 `await` currently polls within the executing frame rather than suspending it. As a result, two concurrent async loops in one VM must not wait on each other: the inner loop blocks the outer async call from progressing. A stream loop can coexist with callback-driven traffic, but independent loops needing mutual progress require separate VMs or a future resumable scheduler.
 
+## HTTP response streams
+
+`web.fetchStream(url [, init])` returns a promise for a `web.Stream` once response headers arrive. Iterate it with `async for`:
+
+```little
+async for chunk in web.fetchStream(url) {
+    io.print(chunk)
+}
+```
+
+Chunks are strings by default. Pass `binary: true` in the init table to receive byte arrays; a text stream rejects if the body contains a NUL byte. Chunk boundaries are arbitrary. `stream:close()` cancels the worker, and `closed` reports EOF or cancellation. The queue is bounded at 4 MiB, so a slow consumer applies backpressure to the network worker instead of growing memory without limit.
+
 ## The mainloop
 
 `mainloop.poll()` advances one step of queued work and reports whether work was performed or remains pending. It never waits.
