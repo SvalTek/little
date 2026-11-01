@@ -95,6 +95,16 @@ for key, value in settings { ... }
 
 Table iteration is live and follows hash order, not insertion order. Entries whose key or value is `null` are skipped. Array iteration reads the current length and index on each step. Existing callable iterators such as `array.each(items)` continue to work, including across `array.range(...)`.
 
+Inside an `async fn`, `async for` repeatedly calls an asynchronous next source and awaits each result:
+
+```js
+async for message in socket {
+    io.print(message)
+}
+```
+
+The source is awaited once. It may be a callable returning values or promises, or an object whose `next` method returns the next value or promise. Object `next` is called with the object as receiver. `null` ends iteration. Two bindings require the resolved value to be an array, whose first two entries are assigned; missing entries are `null`. If the source object has a callable `close` method, it runs after natural completion, `break`, or a `return` that leaves the loop.
+
 ---
 ### while
 ```js

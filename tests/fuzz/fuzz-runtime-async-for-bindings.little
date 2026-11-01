@@ -1,0 +1,16 @@
+var cursor = 0
+var source = {}
+source.next = fn(this) {
+    if cursor >= 1 { return null }
+    cursor = cursor + 1
+    return "scalar"
+}
+
+var work = async fn() {
+    async for key, value in source {
+        io.print(key, value)
+    }
+}
+work().catch(fn(reason) {
+    io.print(string.contains(reason, "Expected async iterator value to be array for multiple loop variables!"))
+})

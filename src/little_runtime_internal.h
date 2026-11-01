@@ -32,3 +32,5 @@ uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc);
 uint16_t lt_exec_capture_internal(lt_VM* vm, lt_Value callable, uint8_t argc, char** error);
 lt_Value lt_pack_values_internal(lt_VM* vm, uint16_t count);
 lt_Value lt_make_iter_internal(lt_VM* vm, lt_Value source, uint8_t bindings);
+lt_Value lt_make_async_next_internal(lt_VM* vm, lt_Value source);
+void lt_close_async_source_internal(lt_VM* vm, lt_Value source);

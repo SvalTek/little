@@ -90,3 +90,70 @@ lt_Value lt_make_iter_internal(lt_VM* vm, lt_Value source, uint8_t bindings)
 	lt_close(vm, 4);
 	return lt_pop(vm);
 }
+
+static lt_Value _lt_iter_member(lt_VM* vm, lt_Value source, const char* name)
+{
+	lt_Value key = lt_make_string(vm, name);
+	if (LT_IS_TABLE(source)) return lt_table_get(vm, source, key);
+	if (LT_IS_INSTANCE(source)) return lt_instance_get_internal(vm, source, key);
+	return LT_VALUE_NULL;
+}
+
+static uint8_t _lt_async_next_dispatch(lt_VM* vm, uint8_t argc)
+{
+	if (argc != 0) lt_runtime_error(vm, "Async iterator next expects no arguments!");
+	lt_Value source = lt_getupval(vm, 0);
+	lt_Value next = lt_getupval(vm, 1);
+	lt_push(vm, source);
+	if (ltasync_is_async_callable(next))
+	{
+		lt_Value promise = ltasync_call(vm, next, 1);
+		lt_push(vm, promise);
+		return 1;
+	}
+	return lt_exec_internal(vm, next, 1);
+}
+
+lt_Value lt_make_async_next_internal(lt_VM* vm, lt_Value source)
+{
+	if (ltasync_is_callable(source)) return source;
+	if (!LT_IS_TABLE(source) && !LT_IS_INSTANCE(source))
+		lt_runtime_error(vm, "Expected async iterator callable or object with next!");
+
+	lt_Value next = _lt_iter_member(vm, source, "next");
+	if (!ltasync_is_callable(next))
+		lt_runtime_error(vm, "Expected async iterator next to be callable!");
+
+	lt_push(vm, lt_make_native(vm, _lt_async_next_dispatch));
+	lt_push(vm, next);
+	lt_push(vm, source);
+	lt_close(vm, 2);
+	return lt_pop(vm);
+}
+
+void lt_close_async_source_internal(lt_VM* vm, lt_Value source)
+{
+	if (ltasync_is_callable(source)) return;
+	if (!LT_IS_TABLE(source) && !LT_IS_INSTANCE(source)) return;
+
+	lt_Value close = _lt_iter_member(vm, source, "close");
+	if (LT_IS_NULL(close)) return;
+	if (!ltasync_is_callable(close))
+		lt_runtime_error(vm, "Expected async iterator close to be callable!");
+
+	lt_push(vm, source);
+	if (ltasync_is_async_callable(close))
+	{
+		lt_Value promise = ltasync_call(vm, close, 1);
+		ltasync_await(vm, promise);
+		return;
+	}
+
+	uint16_t nret = lt_exec_internal(vm, close, 1);
+	if (nret == 1)
+	{
+		lt_Value result = lt_pop(vm);
+		if (lt_native_is_promise_internal(result)) ltasync_await(vm, result);
+	}
+	else while (nret-- > 0) lt_pop(vm);
+}

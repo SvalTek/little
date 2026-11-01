@@ -20,6 +20,20 @@ Callable results follow Little's multi-return rule at promise and task boundarie
 
 Timers are host-side schedules: the callback runs when the event loop is polled after the delay has elapsed, not preemptively. A long-running Little loop that never polls delays every timer.
 
+## Async iteration
+
+`async for` works only inside an `async fn`. Its source may be a callable that returns the next value or promise, or an object with a `next` method. A promise of a source is awaited automatically. Iteration stops when the next result is `null`.
+
+```little
+async for message in socket {
+    io.print(message)
+}
+```
+
+Object sources may provide `close`; it runs after natural completion, `break`, and `return`. Runtime errors skip bytecode cleanup and reject the containing async function, so native sources must stop their workers and release resources when finalized.
+
+`await` currently polls within the executing frame rather than suspending it. As a result, two concurrent async loops in one VM must not wait on each other: the inner loop blocks the outer async call from progressing. A stream loop can coexist with callback-driven traffic, but independent loops needing mutual progress require separate VMs or a future resumable scheduler.
+
 ## The mainloop
 
 `mainloop.poll()` advances one step of queued work and reports whether work was performed or remains pending. It never waits.

@@ -729,6 +729,27 @@ inst_loop:
 		PUSH(lt_make_iter_internal(vm, POP(), (uint8_t)current.arg));
 	} NEXT;
 
+	case LT_OP_AITER: {
+		PUSH(lt_make_async_next_internal(vm, POP()));
+	} NEXT;
+
+	case LT_OP_ABIND: {
+		lt_Value value = POP();
+		if (!LT_IS_ARRAY(value))
+			lt_runtime_error(vm, "Expected async iterator value to be array for multiple loop variables!");
+		PUSH(lt_array_get(vm, value, 0));
+		PUSH(lt_array_get(vm, value, 1));
+	} NEXT;
+
+	case LT_OP_ACLOSE: {
+		lt_Value source = POP();
+		uint16_t top = vm->top;
+		uint8_t last_call_returns = vm->last_call_returns;
+		lt_close_async_source_internal(vm, source);
+		vm->top = top;
+		vm->last_call_returns = last_call_returns;
+	} NEXT;
+
 	case LT_OP_JMP:
 	case LT_OP_BREAK: /* `break` placeholder, resolved by its loop at compile time */
 		frame->pc += current.arg;
