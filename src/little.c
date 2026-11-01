@@ -668,6 +668,10 @@ inst_loop:
 		PUSH(result);
 	} NEXT;
 
+	case LT_OP_ITER: {
+		PUSH(lt_make_iter_internal(vm, POP(), (uint8_t)current.arg));
+	} NEXT;
+
 	case LT_OP_JMP:
 	case LT_OP_BREAK: /* `break` placeholder, resolved by its loop at compile time */
 		frame->pc += current.arg;

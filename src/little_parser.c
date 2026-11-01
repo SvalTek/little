@@ -688,10 +688,30 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 			lt_AstNode* for_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_FOR);
 			current++; // eat for
 
-			if (current->type != LT_TOKEN_IDENTIFIER) lt_parse_error_internal(vm, p->tkn->module, current, "Expected identifier to follow 'for'!");
-			lt_Token* ident = current++;
+			lt_Token* identifiers[LT_MAX_LOOP_VARS];
+			uint8_t identifier_count = 0;
+			for (;;)
+			{
+				if (current->type != LT_TOKEN_IDENTIFIER)
+					lt_parse_error_internal(vm, p->tkn->module, current, identifier_count == 0
+						? "Expected identifier to follow 'for'!"
+						: "Expected identifier after ',' in 'for' header!");
+				for (uint8_t i = 0; i < identifier_count; ++i)
+					if (_lt_tokens_equal(identifiers[i], current))
+						lt_parse_error_internal(vm, p->tkn->module, current, "Duplicate loop variable!");
+				identifiers[identifier_count++] = current++;
 
-			if (current->type != LT_TOKEN_IN) lt_parse_error_internal(vm, p->tkn->module, current, "Expected 'in' to follow 'for' iterator!");
+				if (current->type == LT_TOKEN_COMMA)
+				{
+					current++;
+					if (identifier_count >= LT_MAX_LOOP_VARS)
+						lt_parse_error_internal(vm, p->tkn->module, current, "Too many loop variables!");
+					continue;
+				}
+				if (current->type == LT_TOKEN_IN) break;
+				lt_parse_error_internal(vm, p->tkn->module, current, "Expected comma or 'in' after loop variable!");
+			}
+
 			current++;
 
 			lt_AstNode* iter_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
@@ -713,11 +733,11 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 
 			lt_Token tok;
 			tok.type = LT_TOKEN_IDENTIFIER;
-			tok.line = ident->line;
-			tok.col = ident->col;
+			tok.line = identifiers[0]->line;
+			tok.col = identifiers[0]->col;
 			tok.idx = p->tkn->identifier_buffer.length - 1;
 			tok.flags = LT_TOKEN_SYNTHETIC;
-			tok.span = ident->span;
+			tok.span = identifiers[0]->span;
 
 			for_expr->loop.closureidx = lt_make_local_internal(vm, p->current, &tok);
 			for_expr->loop.iterator = iter_expr;
@@ -726,10 +746,13 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 			current++;
 
 			lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
-			lt_Token* body_args[] = { ident, 0 };
+			lt_Token* body_args[LT_MAX_LOOP_VARS + 1] = { 0 };
+			for (uint8_t i = 0; i < identifier_count; ++i) body_args[i] = identifiers[i];
 			lt_Scope* body_scope = _lt_parse_block(vm, p, current, &body, 1, LT_PARSE_SCOPE_LEXICAL, body_args);
 			current = body_scope->end;
-			for_expr->loop.identifier = (uint16_t)lt_find_local_internal(vm, body_scope, ident);
+			for_expr->loop.identifier_count = identifier_count;
+			for (uint8_t i = 0; i < identifier_count; ++i)
+				for_expr->loop.identifier[i] = (uint16_t)lt_find_local_internal(vm, body_scope, identifiers[i]);
 			for_expr->loop.body = body;
 			for_expr->loop.scope = body_scope;
 

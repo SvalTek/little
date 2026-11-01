@@ -74,19 +74,26 @@ else {
 ### for
 ```js
 var a = [ 100, 200, 300 ]
-for item in array.each(a) { ... }
+for item in a { ... }
 ```
-`for` loops require one loop-variable identifier and an expression that evaluates to an iterator function. Little repeatedly calls that function, stores its return value in the loop variable, and stops when it returns `null`.
+`for` loops support one or two loop variables. A direct array or table is converted into an iterator; a callable is used as an iterator function and called repeatedly until it returns `null`.
 
-Arrays are not iterators themselves. Wrap an array with `array.each(...)`:
+With one variable, arrays and tables yield their values:
 
 ```js
-for item in array.each(items) {
+for item in items {
     io.print(item)
 }
 ```
 
-Passing an array directly to `for` attempts to call the array and raises a runtime error.
+With two variables, arrays yield a zero-based index and value, while tables yield a key and value:
+
+```js
+for index, item in items { ... }
+for key, value in settings { ... }
+```
+
+Table iteration is live and follows hash order, not insertion order. Entries whose key or value is `null` are skipped. Array iteration reads the current length and index on each step. Existing callable iterators such as `array.each(items)` continue to work, including across `array.range(...)`.
 
 ---
 ### while

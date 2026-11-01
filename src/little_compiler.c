@@ -479,15 +479,22 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 
 	case LT_AST_NODE_FOR: {
 		_lt_compile_node(vm, p, name, debug, node->loop.iterator, scope, code_body, constants);
+		OPARG(ITER, node->loop.identifier_count);
 		OPARG(STORE, node->loop.closureidx);
 
 		uint32_t loop_header = code_body->length;
 		OPARG(LOAD, node->loop.closureidx);
 		OPARG(CALL, 0);
-		if (lt_is_captured_local_internal(node->loop.scope, node->loop.identifier)) OPARG(STORECELL, node->loop.identifier)
-		else OPARG(STORE, node->loop.identifier);
-		if (lt_is_captured_local_internal(node->loop.scope, node->loop.identifier)) OPARG(LOADCELL, node->loop.identifier)
-		else OPARG(LOAD, node->loop.identifier);
+		OPARG(FIXRET, node->loop.identifier_count);
+		for (int32_t i = node->loop.identifier_count - 1; i >= 0; --i)
+		{
+			uint16_t identifier = node->loop.identifier[i];
+			if (lt_is_captured_local_internal(node->loop.scope, identifier)) OPARG(STORECELL, identifier)
+			else OPARG(STORE, identifier);
+		}
+		uint16_t first_identifier = node->loop.identifier[0];
+		if (lt_is_captured_local_internal(node->loop.scope, first_identifier)) OPARG(LOADCELL, first_identifier)
+		else OPARG(LOAD, first_identifier);
 		uint32_t loop_start = code_body->length;
 		OPARG(JMPN, 0);
 

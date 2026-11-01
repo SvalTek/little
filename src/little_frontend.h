@@ -290,7 +290,8 @@ typedef struct lt_AstNode {
 		} branch;
 
 		struct {
-			uint16_t identifier, closureidx;
+			uint16_t identifier[LT_MAX_LOOP_VARS], closureidx;
+			uint8_t identifier_count;
 			struct lt_AstNode* iterator;
 			lt_Buffer body;
 			struct lt_Scope* scope;

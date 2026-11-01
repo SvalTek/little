@@ -29,3 +29,4 @@ lt_Value lt_find_class_constructor_internal(lt_Object* klass);
 
 void lt_sweep_v(lt_VM* vm, lt_Value val);
 uint16_t lt_exec_internal(lt_VM* vm, lt_Value callable, uint8_t argc);
+lt_Value lt_make_iter_internal(lt_VM* vm, lt_Value source, uint8_t bindings);

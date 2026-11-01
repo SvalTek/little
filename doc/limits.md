@@ -16,6 +16,7 @@ Little is intentionally small and uses fixed-size VM stacks for predictable embe
 | --- | ---: | ---: |
 | `LT_MAX_FUNCTION_PARAMS` | 16 | 16 declared parameters. |
 | `LT_MAX_CALL_ARGS` | 16 | 16 call arguments. Method-call sugar passes the receiver internally, so `obj:method(...)` supports 15 user arguments by default. |
+| `LT_MAX_LOOP_VARS` | 2 | One or two bindings can be declared in a `for` or `async for` header. |
 | `LT_MAX_BRANCHES` | 32 | 32 compiled branch exits in one `if` / `elseif` chain. Extremely long chains fail with `Too many if/elseif branches!`. |
 | `LT_MAX_RETURNS` | 255 | 255 returned values from one call. |
 | `LT_MAX_CONSTANTS` | 32767 | Constants per compiled function/chunk. |
