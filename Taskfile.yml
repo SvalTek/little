@@ -16,6 +16,7 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - scripts/sources.ps1
       - scripts/prepare-miniz.ps1
       - vendor/miniz/**
       - vendor/llhttp/**
@@ -27,6 +28,17 @@ tasks:
     generates:
       - build/little.exe
 
+  build:lib:
+    desc: Build the core static library
+    cmds:
+      - pwsh -ExecutionPolicy Bypass -File ./scripts/build-core.ps1
+
+  check:core:
+    desc: Check public headers and link and run the core-only test
+    deps: [build:lib]
+    cmds:
+      - pwsh -ExecutionPolicy Bypass -File ./scripts/check-core.ps1
+
   build:baseline:
     desc: Build baseline CLI into build/little-baseline.exe
     cmds:
@@ -35,6 +47,7 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - scripts/sources.ps1
       - scripts/prepare-miniz.ps1
       - vendor/miniz/**
       - vendor/llhttp/**
@@ -54,6 +67,7 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - scripts/sources.ps1
       - scripts/prepare-miniz.ps1
       - vendor/miniz/**
       - vendor/llhttp/**
@@ -73,6 +87,7 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - scripts/sources.ps1
       - scripts/prepare-miniz.ps1
       - vendor/miniz/**
       - vendor/llhttp/**
@@ -92,6 +107,7 @@ tasks:
       - main.c
       - src/*.c
       - src/*.h
+      - scripts/sources.ps1
       - scripts/prepare-miniz.ps1
       - vendor/miniz/**
       - vendor/llhttp/**
@@ -132,7 +148,7 @@ tasks:
 
   test:
     desc: Run end-to-end language tests
-    deps: [build]
+    deps: [build, check:core]
     cmds:
       - pwsh -ExecutionPolicy Bypass -File ./test.ps1
 

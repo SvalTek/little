@@ -1,5 +1,6 @@
 #include "../../src/little.h"
 #include "../../src/little_std.h"
+#include "../../src/little_loadlib.h"
 
 #include <stdio.h>
 #include <stdlib.h>

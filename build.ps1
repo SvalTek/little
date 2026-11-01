@@ -34,6 +34,9 @@ $minizSources = @(
     (Join-Path $minizDir "miniz_tinfl.c"),
     (Join-Path $minizDir "miniz_tdef.c")
 )
+. (Join-Path $repo "scripts/sources.ps1")
+$littleSources = @($LittleCliExecutableSources | ForEach-Object { Join-Path $repo $_ })
+$vendorSources = @($LittleVendorSources | ForEach-Object { Join-Path $repo $_ })
 $threadFlags = @()
 $dynamicFlags = @()
 if ($env:OS -ne "Windows_NT") {
@@ -90,38 +93,8 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     -DYYJSON_READER_DEPTH_LIMIT=64 `
     -DYYJSON_WRITER_DEPTH_LIMIT=64 `
     $minizFlags `
-    (Join-Path $repo "main.c") `
-    (Join-Path $repo "src/little_bundle.c") `
-    (Join-Path $repo "src/little_buffer.c") `
-    (Join-Path $repo "src/little.c") `
-    (Join-Path $repo "src/little_analysis.c") `
-    (Join-Path $repo "src/little_common.c") `
-    (Join-Path $repo "src/little_std.c") `
-    (Join-Path $repo "src/little_loadlib.c") `
-    (Join-Path $repo "src/little_std_io.c") `
-    (Join-Path $repo "src/little_std_web.c") `
-    (Join-Path $repo "src/little_std_term.c") `
-    (Join-Path $repo "src/little_std_math.c") `
-    (Join-Path $repo "src/little_std_number.c") `
-    (Join-Path $repo "src/little_std_bit.c") `
-    (Join-Path $repo "src/little_std_array.c") `
-    (Join-Path $repo "src/little_std_table.c") `
-    (Join-Path $repo "src/little_std_string.c") `
-    (Join-Path $repo "src/little_std_gc.c") `
-    (Join-Path $repo "src/little_std_json.c") `
-    (Join-Path $repo "src/little_std_ws.c") `
-    (Join-Path $repo "src/little_async.c") `
-    (Join-Path $repo "vendor/llhttp/llhttp.c") `
-    (Join-Path $repo "vendor/llhttp/api.c") `
-    (Join-Path $repo "vendor/llhttp/http.c") `
-    (Join-Path $repo "vendor/yyjson/yyjson.c") `
-    (Join-Path $repo "vendor/pcg/pcg_basic.c") `
-    (Join-Path $repo "vendor/wslay/lib/wslay_event.c") `
-    (Join-Path $repo "vendor/wslay/lib/wslay_frame.c") `
-    (Join-Path $repo "vendor/wslay/lib/wslay_net.c") `
-    (Join-Path $repo "vendor/wslay/lib/wslay_queue.c") `
-    (Join-Path $repo "vendor/wslay/lib/wslay_stack.c") `
-    (Join-Path $repo "nativelib/term/term.c") `
+    $littleSources `
+    $vendorSources `
     $minizSources `
     -I $terminalVendor `
     -DPDC_FORCE_UTF8 `

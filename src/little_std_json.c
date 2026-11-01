@@ -1,5 +1,6 @@
 #include "little_std.h"
-#include "little_internal.h"
+#include "little.h"
+#include "little_std_internal.h"
 
 #include "yyjson.h"
 

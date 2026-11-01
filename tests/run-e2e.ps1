@@ -27,6 +27,9 @@ $platformCFlags = if ($env:OS -eq "Windows_NT") { @() } else { @("-D_XOPEN_SOURC
 $socketFlags = if ($env:OS -eq "Windows_NT") { @("-lws2_32", "-lcrypt32") } else { @() }
 $buildDir = Join-Path $repo "build"
 $exe = if ($Exe) { $Exe } else { Join-Path $buildDir "little-e2e.exe" }
+. (Join-Path $repo "scripts/sources.ps1")
+$harnessSources = @($LittleEmbeddingSources | ForEach-Object { Join-Path $repo $_ })
+$harnessVendorSources = @($LittleVendorSources | ForEach-Object { Join-Path $repo $_ })
 
 if (!$SkipBuild) {
     New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
@@ -69,33 +72,8 @@ if (!$SkipBuild) {
         @("-I", (Join-Path $repo "vendor/wslay/lib/includes")) `
         @("-I", (Join-Path $repo "vendor/pcg")) `
         (Join-Path $repo "tests/native/loadlib-opt-in.c") `
-        (Join-Path $repo "src/little_buffer.c") `
-        (Join-Path $repo "src/little.c") `
-        (Join-Path $repo "src/little_common.c") `
-        (Join-Path $repo "src/little_std.c") `
-        (Join-Path $repo "src/little_std_web.c") `
-        (Join-Path $repo "src/little_loadlib.c") `
-        (Join-Path $repo "src/little_std_io.c") `
-        (Join-Path $repo "src/little_std_math.c") `
-        (Join-Path $repo "src/little_std_number.c") `
-        (Join-Path $repo "src/little_std_bit.c") `
-        (Join-Path $repo "src/little_std_array.c") `
-        (Join-Path $repo "src/little_std_table.c") `
-        (Join-Path $repo "src/little_std_string.c") `
-        (Join-Path $repo "src/little_std_gc.c") `
-        (Join-Path $repo "src/little_std_json.c") `
-        (Join-Path $repo "src/little_async.c") `
-        (Join-Path $repo "src/little_std_ws.c") `
-        (Join-Path $repo "vendor/llhttp/llhttp.c") `
-        (Join-Path $repo "vendor/llhttp/api.c") `
-        (Join-Path $repo "vendor/llhttp/http.c") `
-        (Join-Path $repo "vendor/yyjson/yyjson.c") `
-        (Join-Path $repo "vendor/wslay/lib/wslay_event.c") `
-        (Join-Path $repo "vendor/wslay/lib/wslay_frame.c") `
-        (Join-Path $repo "vendor/wslay/lib/wslay_net.c") `
-        (Join-Path $repo "vendor/wslay/lib/wslay_queue.c") `
-        (Join-Path $repo "vendor/wslay/lib/wslay_stack.c") `
-        (Join-Path $repo "vendor/pcg/pcg_basic.c") `
+        $harnessSources `
+        $harnessVendorSources `
         $threadFlags `
         $dynamicFlags `
         -lssl -lcrypto -lcurl $socketFlags -lm -o $optInHarness
@@ -119,33 +97,8 @@ if (!$SkipBuild) {
         @("-I", (Join-Path $repo "vendor/wslay/lib/includes")) `
         @("-I", (Join-Path $repo "vendor/pcg")) `
         (Join-Path $repo "tests/native/module-loader.c") `
-        (Join-Path $repo "src/little_buffer.c") `
-        (Join-Path $repo "src/little.c") `
-        (Join-Path $repo "src/little_common.c") `
-        (Join-Path $repo "src/little_std.c") `
-        (Join-Path $repo "src/little_std_web.c") `
-        (Join-Path $repo "src/little_loadlib.c") `
-        (Join-Path $repo "src/little_std_io.c") `
-        (Join-Path $repo "src/little_std_math.c") `
-        (Join-Path $repo "src/little_std_number.c") `
-        (Join-Path $repo "src/little_std_bit.c") `
-        (Join-Path $repo "src/little_std_array.c") `
-        (Join-Path $repo "src/little_std_table.c") `
-        (Join-Path $repo "src/little_std_string.c") `
-        (Join-Path $repo "src/little_std_gc.c") `
-        (Join-Path $repo "src/little_std_json.c") `
-        (Join-Path $repo "src/little_async.c") `
-        (Join-Path $repo "src/little_std_ws.c") `
-        (Join-Path $repo "vendor/llhttp/llhttp.c") `
-        (Join-Path $repo "vendor/llhttp/api.c") `
-        (Join-Path $repo "vendor/llhttp/http.c") `
-        (Join-Path $repo "vendor/yyjson/yyjson.c") `
-        (Join-Path $repo "vendor/wslay/lib/wslay_event.c") `
-        (Join-Path $repo "vendor/wslay/lib/wslay_frame.c") `
-        (Join-Path $repo "vendor/wslay/lib/wslay_net.c") `
-        (Join-Path $repo "vendor/wslay/lib/wslay_queue.c") `
-        (Join-Path $repo "vendor/wslay/lib/wslay_stack.c") `
-        (Join-Path $repo "vendor/pcg/pcg_basic.c") `
+        $harnessSources `
+        $harnessVendorSources `
         $threadFlags `
         $dynamicFlags `
         -lssl -lcrypto -lcurl $socketFlags -lm -o $moduleLoaderHarness

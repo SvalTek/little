@@ -1,4 +1,5 @@
-#include "little_internal.h"
+#include "little_vm_layout.h"
+#include "little_frontend.h"
 
 #include <string.h>
 

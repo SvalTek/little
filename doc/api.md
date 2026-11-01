@@ -1,5 +1,11 @@
 # little - C API overview
 
+Include `little.h` for the compatibility umbrella, including the VM and object
+layouts. New consumers can include `little_api.h`, `little_value.h`, and
+`little_frontend.h` as needed; `little_vm_layout.h` exposes the advanced VM
+layout. `task build:lib` builds the core static library. See
+[architecture.md](architecture.md) for source sets and build guidance.
+
 ## VM manipulation
 ```c
 lt_VM* lt_open(lt_AllocFn, lt_FreeFn, lt_ErrorFn);
