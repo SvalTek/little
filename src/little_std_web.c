@@ -807,6 +807,7 @@ static void* web_fetch_thread(void* data) { web_fetch_worker(data); return 0; }
 static lt_Value web_headers_from_data(lt_VM* vm, char* header_data)
 {
     lt_Value headers = lt_make_table(vm);
+    lt_push(vm, headers);
     char* cursor = header_data;
     while (cursor && *cursor)
     {
@@ -829,6 +830,7 @@ static lt_Value web_headers_from_data(lt_VM* vm, char* header_data)
         *end = saved;
         cursor = saved ? end + 1 : end;
     }
+    lt_pop(vm);
     return headers;
 }
 
@@ -1458,7 +1460,9 @@ static lt_PollResult web_stream_poll(lt_VM* vm, void* context)
         lt_remove_poll_hook(vm, stream->hook);
         did_work = 1;
     }
-    return did_work ? LT_POLL_WORK : LT_POLL_PENDING;
+    if (did_work) return LT_POLL_WORK;
+    if (stream->headers_sent && LT_IS_NULL(stream->pending_next)) return LT_POLL_IDLE;
+    return LT_POLL_PENDING;
 }
 
 static uint8_t web_fetch_stream(lt_VM* vm, uint8_t argc)
@@ -1529,7 +1533,7 @@ static uint8_t web_fetch_stream(lt_VM* vm, uint8_t argc)
     const char* url = lt_get_string(vm, url_value);
     WebStreamState* stream = calloc(1, sizeof(*stream));
     if (!stream) { lt_runtime_error(vm, "Out of memory creating HTTP stream!"); return 0; }
-    atomic_init(&stream->refs, 2);
+    atomic_init(&stream->refs, 1);
     atomic_init(&stream->done, 0);
     atomic_init(&stream->stop, 0);
     atomic_init(&stream->headers_ready, 0);
@@ -1587,10 +1591,14 @@ static uint8_t web_fetch_stream(lt_VM* vm, uint8_t argc)
     stream->hook = ltasync_add_owned_poll_hook(vm, web_stream_poll, stream, web_stream_hook_destroy);
     if (!stream->hook)
     {
+        lt_native_unroot_persistent_internal(vm, stream->promise);
+        stream->promise = LT_VALUE_NULL;
         web_stream_release(stream);
         lt_runtime_error(vm, "Failed to register HTTP stream poll hook!");
         return 0;
     }
+    web_stream_retain(stream); /* poll hook */
+    web_stream_retain(stream); /* worker */
 #ifdef _WIN32
     HANDLE thread = CreateThread(NULL, 0, web_stream_thread, stream, 0, NULL);
     if (thread) CloseHandle(thread);
@@ -1602,8 +1610,9 @@ static uint8_t web_fetch_stream(lt_VM* vm, uint8_t argc)
 #endif
         web_stream_set_error(stream, "Failed to start HTTP stream worker");
         atomic_store(&stream->done, 1);
-        web_stream_release(stream);
+        web_stream_release(stream); /* failed worker */
     }
+    web_stream_release(stream); /* setup reference */
     lt_push(vm, stream->promise);
     return 1;
 }
@@ -2121,7 +2130,7 @@ void ltstd_open_web(lt_VM* vm)
      */
     lt_table_set(vm, web, lt_make_string(vm, "Server"), server_class);
     /** [LittleBinding] web.Stream
-     *  represents a streaming HTTP client response exposing next(), close(), status, statusText, ok, url, headers, and closed.
+     *  represents a streaming HTTP client response returned by fetchStream, exposing next(), close(), status, statusText, ok, url, headers, and closed.
      *  @signature ()
      */
     lt_table_set(vm, web, lt_make_string(vm, "Stream"), stream_class);

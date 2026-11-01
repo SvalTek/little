@@ -24,4 +24,4 @@
 
 `web.Server()` represents a running HTTP server exposing close() and the bound port.
 
-`web.Stream()` represents a streaming HTTP client response exposing next(), close(), status, statusText, ok, url, headers, and closed.
+`web.Stream()` represents a streaming HTTP client response returned by fetchStream, exposing next(), close(), status, statusText, ok, url, headers, and closed.
