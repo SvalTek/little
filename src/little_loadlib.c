@@ -1,6 +1,7 @@
 #include "little_loadlib.h"
 #include "little_common.h"
-#include "little_internal.h"
+#include "little.h"
+#include "little_buffer_internal.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -25,115 +26,6 @@ static lt_Value _lt_native_library_paths(lt_VM* vm, uint8_t create)
     return paths;
 }
 
-static void* _lt_api_alloc(lt_VM* vm, size_t size)
-{
-    return vm->alloc(size);
-}
-
-static void _lt_api_free(lt_VM* vm, void* ptr)
-{
-    vm->free(ptr);
-}
-
-static uint8_t _lt_api_is_promise(lt_Value value)
-{
-    return LT_IS_OBJECT(value) && LT_GET_OBJECT(value)->type == LT_OBJECT_PROMISE;
-}
-
-static lt_PromiseState _lt_api_promise_state(lt_Value value)
-{
-    if (!_lt_api_is_promise(value)) return LT_PROMISE_REJECTED;
-    return LT_GET_OBJECT(value)->promise.state;
-}
-
-static lt_Value _lt_api_promise_result(lt_Value value)
-{
-    if (!_lt_api_is_promise(value)) return LT_VALUE_NULL;
-    return LT_GET_OBJECT(value)->promise.result;
-}
-
-static void _lt_api_root(lt_VM* vm, lt_Value value)
-{
-    lt_buffer_push(vm, &vm->native_roots, &value);
-}
-
-static void _lt_api_unroot(lt_VM* vm, lt_Value value)
-{
-    for (uint32_t i = vm->native_root_floor; i < vm->native_roots.length; ++i)
-    {
-        if (*(lt_Value*)lt_buffer_at(&vm->native_roots, i) == value)
-        {
-            lt_buffer_cycle(&vm->native_roots, i);
-            return;
-        }
-    }
-}
-
-static void _lt_api_root_persistent(lt_VM* vm, lt_Value value)
-{
-    if (LT_IS_OBJECT(value)) lt_nocollect(vm, LT_GET_OBJECT(value));
-}
-
-static void _lt_api_unroot_persistent(lt_VM* vm, lt_Value value)
-{
-    if (LT_IS_OBJECT(value)) lt_resumecollect(vm, LT_GET_OBJECT(value));
-}
-
-static const lt_Api _lt_native_api = {
-    .version = LT_API_VERSION,
-    .size = sizeof(lt_Api),
-    .alloc = _lt_api_alloc,
-    .free = _lt_api_free,
-    .runtime_error = lt_runtime_error,
-    .push = lt_push,
-    .pop = lt_pop,
-    .exec = lt_exec,
-    .make_number = lt_make_number,
-    .get_number = lt_get_number,
-    .make_string = lt_make_string,
-    .get_string = lt_get_string,
-    .make_table = lt_make_table,
-    .make_array = lt_make_array,
-    .make_native = lt_make_native,
-    .make_ptr = lt_make_ptr,
-    .get_ptr = lt_get_ptr,
-    .table_set = lt_table_set,
-    .table_get = lt_table_get,
-    .table_next = lt_table_next,
-    .table_pop = lt_table_pop,
-    .array_push = lt_array_push,
-    .array_get = lt_array_get,
-    .array_set = lt_array_set,
-    .array_remove = lt_array_remove,
-    .array_length = lt_array_length,
-    .poll = lt_poll,
-    .add_poll_hook = lt_add_poll_hook,
-    .remove_poll_hook = lt_remove_poll_hook,
-    .is_promise = _lt_api_is_promise,
-    .promise_state = _lt_api_promise_state,
-    .promise_result = _lt_api_promise_result,
-    .poll_now = lt_poll_now,
-    .root = _lt_api_root,
-    .unroot = _lt_api_unroot,
-    .equals = lt_equals,
-    .class_create = lt_class_create,
-    .class_set_constructor = lt_class_set_constructor,
-    .class_add_method = lt_class_add_method,
-    .class_add_getter = lt_class_add_getter,
-    .class_add_setter = lt_class_add_setter,
-    .class_set_native_data_destroy = lt_class_set_native_data_destroy,
-    .instance_set_native_data = lt_instance_set_native_data,
-    .instance_get_native_data = lt_instance_get_native_data,
-    .instance_dispose_native_data = lt_instance_dispose_native_data,
-    .instance_clear_native_data = lt_instance_clear_native_data,
-    .root_persistent = _lt_api_root_persistent,
-    .unroot_persistent = _lt_api_unroot_persistent,
-};
-
-const lt_Api* ltstd_native_api(void)
-{
-    return &_lt_native_api;
-}
 
 static const char* _lt_native_library_suffix(void)
 {
@@ -343,7 +235,7 @@ static uint8_t _lt_load_library(lt_VM* vm, uint8_t argc)
     uint32_t root_mark = vm->native_roots.length;
     uint32_t saved_root_floor = vm->native_root_floor;
     vm->native_root_floor = root_mark;
-    lt_Value value = open_fn(vm, &_lt_native_api);
+    lt_Value value = open_fn(vm, ltstd_native_api());
     vm->native_roots.length = root_mark;
     vm->native_root_floor = saved_root_floor;
     if (value == LT_VALUE_NULL)

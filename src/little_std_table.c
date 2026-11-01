@@ -1,4 +1,6 @@
-#include "little_internal.h"
+#include "little.h"
+#include "little_std_internal.h"
+#include "little_shared_internal.h"
 #include "little_std.h"
 
 static lt_Value _lt_table_pop_arg(lt_VM* vm, const char* message)

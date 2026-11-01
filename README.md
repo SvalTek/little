@@ -17,7 +17,7 @@ for animal in array.each(animals) {
 ```
 ---
 ## Feature Overview
-* Tiny implementation - core langauge is <2500 sloc in a single .h/.c pair
+* Small C implementation with a modular core and optional libraries
 * Light embedding - compiles down to less than 20kb, 3 API calls to get started
 * Reasonably fast for realtime applications
 * Low memory footprint with simple mark and sweep garbage collector
@@ -57,6 +57,8 @@ The included Taskfile is the supported development workflow:
 
 ```powershell
 task build
+task build:lib
+task check:core
 build/little.exe --help
 build/little.exe -i
 build/little.exe scripts/hello.little
@@ -64,6 +66,11 @@ build/little.exe -e 'io.print("hello")'
 build/little.exe -I lib scripts/main.little
 build/little.exe -L native scripts/main.little
 ```
+
+`build:lib` builds `build/liblittle.a` from the core source set without the
+standard library. `check:core` compiles the public headers independently and
+links and runs a core-only embedding test. See [architecture](doc/architecture.md)
+for the source sets and header boundaries.
 
 ### Bundling Scripts
 

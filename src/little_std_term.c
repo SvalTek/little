@@ -1,5 +1,4 @@
 #include "little_std.h"
-#include "little_loadlib.h"
 
 lt_Value ltopen(lt_VM* vm, const lt_Api* api);
 void lt_term_shutdown(void);

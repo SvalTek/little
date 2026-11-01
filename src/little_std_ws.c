@@ -1,7 +1,15 @@
 #define _GNU_SOURCE
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
 #include "little_std.h"
 #include "little_async.h"
-#include "little_internal.h"
+#include "little.h"
+#include "little_runtime_internal.h"
+#include "little_async_internal.h"
+#include "little_std_internal.h"
+#include "little_net.h"
 
 #include <wslay/wslay.h>
 #include <openssl/ssl.h>
@@ -44,15 +52,15 @@
 #define WS_MAX_MESSAGE 4194304
 #define WS_MAX_QUEUE 4194304
 
-#ifdef _WIN32
-typedef SOCKET ws_Socket;
-#define WS_BAD_SOCKET INVALID_SOCKET
-#define WS_SHUTDOWN_BOTH SD_BOTH
-#else
-typedef int ws_Socket;
-#define WS_BAD_SOCKET (-1)
-#define WS_SHUTDOWN_BOTH SHUT_RDWR
-#endif
+typedef lt_NetSocket ws_Socket;
+#define WS_BAD_SOCKET LT_NET_BAD_SOCKET
+#define WS_SHUTDOWN_BOTH LT_NET_SHUTDOWN_BOTH
+
+#define ws_strdup lt_net_strdup
+#define ws_close_socket lt_net_close
+#define ws_shutdown_socket lt_net_shutdown
+#define ws_nonblocking lt_net_nonblocking
+#define ws_no_sigpipe lt_net_no_sigpipe
 
 typedef struct WsServer WsServer;
 
@@ -119,60 +127,13 @@ struct WsServer {
     WsConn* clients[WS_CLIENT_LIMIT];
 };
 
-#define ws_api (ltstd_native_api())
 
 static lt_Value ws_class(lt_VM* vm, const char* name)
 {
-    lt_Value registry = ws_api->table_get(vm, vm->global, ws_api->make_string(vm, "__little_ws_classes"));
-    lt_Value klass = ws_api->table_get(vm, registry, ws_api->make_string(vm, name));
-    if (!LT_IS_CLASS(klass)) ws_api->runtime_error(vm, "WebSocket class registry is unavailable!");
+    lt_Value registry = lt_table_get(vm, vm->global, lt_make_string(vm, "__little_ws_classes"));
+    lt_Value klass = lt_table_get(vm, registry, lt_make_string(vm, name));
+    if (!LT_IS_CLASS(klass)) lt_runtime_error(vm, "WebSocket class registry is unavailable!");
     return klass;
-}
-
-static char* ws_strdup(const char* text)
-{
-    if (!text) return 0;
-    size_t length = strlen(text);
-    char* copy = malloc(length + 1);
-    if (copy) memcpy(copy, text, length + 1);
-    return copy;
-}
-
-static void ws_close_socket(ws_Socket socket_fd)
-{
-    if (socket_fd == WS_BAD_SOCKET) return;
-#ifdef _WIN32
-    closesocket(socket_fd);
-#else
-    close(socket_fd);
-#endif
-}
-
-static void ws_shutdown_socket(ws_Socket socket_fd)
-{
-    if (socket_fd == WS_BAD_SOCKET) return;
-    shutdown(socket_fd, WS_SHUTDOWN_BOTH);
-}
-
-static void ws_no_sigpipe(ws_Socket socket_fd)
-{
-#if defined(SO_NOSIGPIPE)
-    int enabled = 1;
-    setsockopt(socket_fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled));
-#else
-    (void)socket_fd;
-#endif
-}
-
-static int ws_nonblocking(ws_Socket socket_fd)
-{
-#ifdef _WIN32
-    u_long mode = 1;
-    return ioctlsocket(socket_fd, FIONBIO, &mode) == 0;
-#else
-    int flags = fcntl(socket_fd, F_GETFL, 0);
-    return flags >= 0 && fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) == 0;
-#endif
 }
 
 static int ws_would_block(void)
@@ -337,26 +298,7 @@ static ws_Socket ws_create_listener(const char* hostname, int port, int* bound_p
     address.sin_family = AF_INET;
     address.sin_port = htons((unsigned short)port);
     if (inet_pton(AF_INET, hostname, &address.sin_addr) != 1) { *error = "Server hostname must be an IPv4 address!"; return WS_BAD_SOCKET; }
-    ws_Socket socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (socket_fd == WS_BAD_SOCKET) { *error = "Failed to create server socket!"; return WS_BAD_SOCKET; }
-    int reuse = 1;
-    setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
-    if (bind(socket_fd, (struct sockaddr*)&address, sizeof(address)) != 0 ||
-        listen(socket_fd, 16) != 0 || !ws_nonblocking(socket_fd))
-    {
-        ws_close_socket(socket_fd);
-        *error = "Failed to start server socket!";
-        return WS_BAD_SOCKET;
-    }
-    socklen_t length = sizeof(address);
-    if (getsockname(socket_fd, (struct sockaddr*)&address, &length) != 0)
-    {
-        ws_close_socket(socket_fd);
-        *error = "Failed to inspect server socket!";
-        return WS_BAD_SOCKET;
-    }
-    *bound_port = ntohs(address.sin_port);
-    return socket_fd;
+    return lt_net_listen_ipv4(&address, bound_port, error);
 }
 
 #ifdef _WIN32
@@ -844,10 +786,10 @@ static void ws_conn_destroy_native(void* data)
     atomic_store_explicit(&conn->stop, 1, memory_order_release);
     ws_shutdown_socket((ws_Socket)atomic_load(&conn->socket));
     if (!atomic_load(&conn->worker_running)) ws_conn_cleanup_io(conn);
-    if (conn->hook) { ws_api->remove_poll_hook(vm, conn->hook); conn->hook = 0; }
-    if (!LT_IS_NULL(conn->connect_promise)) { ws_api->unroot_persistent(vm, conn->connect_promise); conn->connect_promise = LT_VALUE_NULL; }
-    if (!LT_IS_NULL(conn->pending_next)) { ws_api->unroot_persistent(vm, conn->pending_next); conn->pending_next = LT_VALUE_NULL; }
-    if (!LT_IS_NULL(conn->instance)) { ws_api->unroot_persistent(vm, conn->instance); conn->instance = LT_VALUE_NULL; }
+    if (conn->hook) { lt_remove_poll_hook(vm, conn->hook); conn->hook = 0; }
+    if (!LT_IS_NULL(conn->connect_promise)) { lt_native_unroot_persistent_internal(vm, conn->connect_promise); conn->connect_promise = LT_VALUE_NULL; }
+    if (!LT_IS_NULL(conn->pending_next)) { lt_native_unroot_persistent_internal(vm, conn->pending_next); conn->pending_next = LT_VALUE_NULL; }
+    if (!LT_IS_NULL(conn->instance)) { lt_native_unroot_persistent_internal(vm, conn->instance); conn->instance = LT_VALUE_NULL; }
     ws_conn_detach_server(conn);
     ws_conn_release(conn);
 }
@@ -916,12 +858,12 @@ static void ws_conn_deliver_next(lt_VM* vm, WsConn* conn)
         if (!conn->msg_head) conn->msg_tail = 0;
         conn->queued_bytes -= msg->length;
         lt_Value value = ws_msg_value(vm, msg);
-        ws_api->root(vm, value);
+        lt_native_root_internal(vm, value);
         ltasync_settle_promise(vm, conn->pending_next, LT_PROMISE_FULFILLED, value);
         free(msg->data);
         free(msg);
     }
-    ws_api->unroot_persistent(vm, conn->pending_next);
+    lt_native_unroot_persistent_internal(vm, conn->pending_next);
     conn->pending_next = LT_VALUE_NULL;
 }
 
@@ -1007,13 +949,13 @@ static int ws_append(char* buffer, size_t capacity, size_t* length, const char* 
 
 static lt_Value ws_request_table(lt_VM* vm, WsConn* conn)
 {
-    lt_Value request = ws_api->make_table(vm);
-    ws_api->root(vm, request);
-    ws_api->table_set(vm, request, ws_api->make_string(vm, "url"), ws_api->make_string(vm, conn->request_path ? conn->request_path : "/"));
-    ws_api->table_set(vm, request, ws_api->make_string(vm, "method"), ws_api->make_string(vm, conn->method ? conn->method : "GET"));
-    ws_api->table_set(vm, request, ws_api->make_string(vm, "body"), ws_api->make_string(vm, conn->body ? conn->body : ""));
-    lt_Value headers = ws_api->make_table(vm);
-    ws_api->root(vm, headers);
+    lt_Value request = lt_make_table(vm);
+    lt_native_root_internal(vm, request);
+    lt_table_set(vm, request, lt_make_string(vm, "url"), lt_make_string(vm, conn->request_path ? conn->request_path : "/"));
+    lt_table_set(vm, request, lt_make_string(vm, "method"), lt_make_string(vm, conn->method ? conn->method : "GET"));
+    lt_table_set(vm, request, lt_make_string(vm, "body"), lt_make_string(vm, conn->body ? conn->body : ""));
+    lt_Value headers = lt_make_table(vm);
+    lt_native_root_internal(vm, headers);
     const char* cursor = conn->headers_blob;
     while (cursor && *cursor)
     {
@@ -1034,14 +976,14 @@ static lt_Value ws_request_table(lt_VM* vm, WsConn* conn)
                 name[colon - cursor] = 0;
                 memcpy(text, value, (size_t)(tail - value));
                 text[tail - value] = 0;
-                ws_api->table_set(vm, headers, ws_api->make_string(vm, name), ws_api->make_string(vm, text));
+                lt_table_set(vm, headers, lt_make_string(vm, name), lt_make_string(vm, text));
             }
             free(name);
             free(text);
         }
         cursor = *end ? end + 1 : end;
     }
-    ws_api->table_set(vm, request, ws_api->make_string(vm, "headers"), headers);
+    lt_table_set(vm, request, lt_make_string(vm, "headers"), headers);
     return request;
 }
 
@@ -1049,13 +991,13 @@ static void ws_invoke_server_handler(lt_VM* vm, WsConn* conn)
 {
     if (!conn->server || LT_IS_NULL(conn->server->handler)) return;
     lt_Value request = ws_request_table(vm, conn);
-    ws_api->push(vm, conn->instance);
-    ws_api->push(vm, request);
+    lt_push(vm, conn->instance);
+    lt_push(vm, request);
     if (ltasync_is_async_callable(conn->server->handler)) ltasync_call(vm, conn->server->handler, 2);
     else
     {
-        uint16_t count = ws_api->exec(vm, conn->server->handler, 2);
-        while (count--) ws_api->pop(vm);
+        uint16_t count = lt_exec(vm, conn->server->handler, 2);
+        while (count--) lt_pop(vm);
     }
 }
 
@@ -1069,19 +1011,19 @@ static lt_PollResult ws_conn_poll(lt_VM* vm, void* context)
         {
             ltasync_settle_promise(vm, conn->connect_promise, LT_PROMISE_REJECTED,
                 lt_make_string(vm, conn->error ? conn->error : "WebSocket connection failed"));
-            ws_api->unroot_persistent(vm, conn->connect_promise);
+            lt_native_unroot_persistent_internal(vm, conn->connect_promise);
             conn->connect_promise = LT_VALUE_NULL;
         }
         if (!LT_IS_NULL(conn->instance))
         {
-            ws_api->unroot_persistent(vm, conn->instance);
+            lt_native_unroot_persistent_internal(vm, conn->instance);
             conn->instance = LT_VALUE_NULL;
         }
         if (!conn->closed)
         {
             conn->closed = 1;
             ws_conn_cleanup_io(conn);
-            if (conn->hook) { ws_api->remove_poll_hook(vm, conn->hook); conn->hook = 0; }
+            if (conn->hook) { lt_remove_poll_hook(vm, conn->hook); conn->hook = 0; }
         }
         return LT_POLL_WORK;
     }
@@ -1096,7 +1038,7 @@ static lt_PollResult ws_conn_poll(lt_VM* vm, void* context)
             conn->error = ws_strdup("WebSocket initialization failed");
             conn->closed = 1;
             ws_conn_cleanup_io(conn);
-            if (conn->hook) { ws_api->remove_poll_hook(vm, conn->hook); conn->hook = 0; }
+            if (conn->hook) { lt_remove_poll_hook(vm, conn->hook); conn->hook = 0; }
             return LT_POLL_WORK;
         }
         wslay_event_config_set_max_recv_msg_length(conn->wslay, WS_MAX_MESSAGE);
@@ -1106,12 +1048,12 @@ static lt_PollResult ws_conn_poll(lt_VM* vm, void* context)
             if (!LT_IS_NULL(conn->connect_promise))
             {
                 ltasync_settle_promise(vm, conn->connect_promise, LT_PROMISE_FULFILLED, conn->instance);
-                ws_api->unroot_persistent(vm, conn->connect_promise);
+                lt_native_unroot_persistent_internal(vm, conn->connect_promise);
                 conn->connect_promise = LT_VALUE_NULL;
             }
             if (!LT_IS_NULL(conn->instance))
             {
-                ws_api->unroot_persistent(vm, conn->instance);
+                lt_native_unroot_persistent_internal(vm, conn->instance);
                 conn->instance = LT_VALUE_NULL;
             }
         }
@@ -1120,7 +1062,7 @@ static lt_PollResult ws_conn_poll(lt_VM* vm, void* context)
             ws_invoke_server_handler(vm, conn);
             if (!LT_IS_NULL(conn->instance))
             {
-                ws_api->unroot_persistent(vm, conn->instance);
+                lt_native_unroot_persistent_internal(vm, conn->instance);
                 conn->instance = LT_VALUE_NULL;
             }
         }
@@ -1151,7 +1093,7 @@ static lt_PollResult ws_conn_poll(lt_VM* vm, void* context)
     {
         ws_conn_deliver_next(vm, conn);
         ws_conn_cleanup_io(conn);
-        if (conn->hook) { ws_api->remove_poll_hook(vm, conn->hook); conn->hook = 0; }
+        if (conn->hook) { lt_remove_poll_hook(vm, conn->hook); conn->hook = 0; }
     }
     else ws_conn_deliver_next(vm, conn);
     return (did_work || conn->closed) ? LT_POLL_WORK : LT_POLL_PENDING;
@@ -1159,13 +1101,13 @@ static lt_PollResult ws_conn_poll(lt_VM* vm, void* context)
 
 static WsConn* ws_instance_conn(lt_VM* vm, lt_Value instance)
 {
-    return ws_api->instance_get_native_data(vm, instance, ws_class(vm, "WebSocket"));
+    return lt_instance_get_native_data(vm, instance, ws_class(vm, "WebSocket"));
 }
 
 static uint8_t ws_socket_next(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 1) ws_api->runtime_error(vm, "WebSocket.next expects no arguments!");
-    lt_Value instance = ws_api->pop(vm);
+    if (argc != 1) lt_runtime_error(vm, "WebSocket.next expects no arguments!");
+    lt_Value instance = lt_pop(vm);
     WsConn* conn = ws_instance_conn(vm, instance);
     lt_Value promise = ltasync_make_promise(vm);
     if (!LT_IS_NULL(conn->pending_next))
@@ -1175,27 +1117,27 @@ static uint8_t ws_socket_next(lt_VM* vm, uint8_t argc)
     else if (conn->msg_head || conn->closed)
     {
         conn->pending_next = promise;
-        ws_api->root_persistent(vm, promise);
+        lt_native_root_persistent_internal(vm, promise);
         ws_conn_deliver_next(vm, conn);
     }
     else
     {
         conn->pending_next = promise;
-        ws_api->root_persistent(vm, promise);
+        lt_native_root_persistent_internal(vm, promise);
     }
-    ws_api->push(vm, promise);
+    lt_push(vm, promise);
     return 1;
 }
 
 static uint8_t ws_socket_send(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 2) ws_api->runtime_error(vm, "WebSocket.send expects one argument!");
-    lt_Value value = ws_api->pop(vm);
-    lt_Value instance = ws_api->pop(vm);
+    if (argc != 2) lt_runtime_error(vm, "WebSocket.send expects one argument!");
+    lt_Value value = lt_pop(vm);
+    lt_Value instance = lt_pop(vm);
     WsConn* conn = ws_instance_conn(vm, instance);
     if (!conn->open || conn->closed || !conn->wslay)
     {
-        ws_api->push(vm, LT_VALUE_FALSE);
+        lt_push(vm, LT_VALUE_FALSE);
         return 1;
     }
     struct wslay_event_msg message;
@@ -1204,23 +1146,23 @@ static uint8_t ws_socket_send(lt_VM* vm, uint8_t argc)
     if (LT_IS_STRING(value))
     {
         message.opcode = WSLAY_TEXT_FRAME;
-        message.msg = (const uint8_t*)ws_api->get_string(vm, value);
+        message.msg = (const uint8_t*)lt_get_string(vm, value);
         message.msg_length = strlen((const char*)message.msg);
     }
     else if (LT_IS_ARRAY(value))
     {
         uint32_t length = lt_array_length(value);
         binary = malloc(length ? length : 1);
-        if (!binary) { ws_api->push(vm, LT_VALUE_FALSE); return 1; }
+        if (!binary) { lt_push(vm, LT_VALUE_FALSE); return 1; }
         for (uint32_t i = 0; i < length; ++i)
         {
             lt_Value item = lt_array_get(vm, value, i);
-            if (!LT_IS_NUMBER(item)) { free(binary); ws_api->runtime_error(vm, "WebSocket binary message values must be bytes!"); return 0; }
-            double byte = ws_api->get_number(item);
+            if (!LT_IS_NUMBER(item)) { free(binary); lt_runtime_error(vm, "WebSocket binary message values must be bytes!"); return 0; }
+            double byte = lt_get_number(item);
             if (byte < 0 || byte > 255 || byte != (double)(unsigned char)byte)
             {
                 free(binary);
-                ws_api->runtime_error(vm, "WebSocket binary message values must be bytes!");
+                lt_runtime_error(vm, "WebSocket binary message values must be bytes!");
                 return 0;
             }
             binary[i] = (char)(unsigned char)byte;
@@ -1231,46 +1173,46 @@ static uint8_t ws_socket_send(lt_VM* vm, uint8_t argc)
     }
     else
     {
-        ws_api->runtime_error(vm, "WebSocket.send expects a string or byte array!");
+        lt_runtime_error(vm, "WebSocket.send expects a string or byte array!");
         return 0;
     }
     if (wslay_event_get_queued_msg_length(conn->wslay) + message.msg_length > WS_MAX_QUEUE)
     {
         free(binary);
-        ws_api->push(vm, LT_VALUE_FALSE);
+        lt_push(vm, LT_VALUE_FALSE);
         return 1;
     }
     int result = wslay_event_queue_msg(conn->wslay, &message);
     free(binary);
-    ws_api->push(vm, result == 0 ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    lt_push(vm, result == 0 ? LT_VALUE_TRUE : LT_VALUE_FALSE);
     return 1;
 }
 
 static uint8_t ws_socket_close(lt_VM* vm, uint8_t argc)
 {
-    if (argc < 1 || argc > 3) ws_api->runtime_error(vm, "WebSocket.close expects optional code and reason!");
-    lt_Value reason_value = argc == 3 ? ws_api->pop(vm) : LT_VALUE_NULL;
-    lt_Value code_value = argc >= 2 ? ws_api->pop(vm) : LT_VALUE_NULL;
-    lt_Value instance = ws_api->pop(vm);
+    if (argc < 1 || argc > 3) lt_runtime_error(vm, "WebSocket.close expects optional code and reason!");
+    lt_Value reason_value = argc == 3 ? lt_pop(vm) : LT_VALUE_NULL;
+    lt_Value code_value = argc >= 2 ? lt_pop(vm) : LT_VALUE_NULL;
+    lt_Value instance = lt_pop(vm);
     WsConn* conn = ws_instance_conn(vm, instance);
     int code = 1000;
     const char* reason = "";
     if (!LT_IS_NULL(code_value))
     {
-        if (!LT_IS_NUMBER(code_value)) { ws_api->runtime_error(vm, "WebSocket.close code must be an integer!"); return 0; }
-        double number = ws_api->get_number(code_value);
+        if (!LT_IS_NUMBER(code_value)) { lt_runtime_error(vm, "WebSocket.close code must be an integer!"); return 0; }
+        double number = lt_get_number(code_value);
         if (number != (double)(int)number || (number != 1000 && (number < 3000 || number > 4999)))
         {
-            ws_api->runtime_error(vm, "WebSocket.close code must be 1000 or 3000-4999!");
+            lt_runtime_error(vm, "WebSocket.close code must be 1000 or 3000-4999!");
             return 0;
         }
         code = (int)number;
     }
     if (!LT_IS_NULL(reason_value))
     {
-        if (!LT_IS_STRING(reason_value)) { ws_api->runtime_error(vm, "WebSocket.close reason must be a string!"); return 0; }
-        reason = ws_api->get_string(vm, reason_value);
-        if (strlen(reason) > 123) { ws_api->runtime_error(vm, "WebSocket.close reason is too long!"); return 0; }
+        if (!LT_IS_STRING(reason_value)) { lt_runtime_error(vm, "WebSocket.close reason must be a string!"); return 0; }
+        reason = lt_get_string(vm, reason_value);
+        if (strlen(reason) > 123) { lt_runtime_error(vm, "WebSocket.close reason is too long!"); return 0; }
     }
     if (conn->open && conn->wslay && !conn->closed)
     {
@@ -1283,18 +1225,18 @@ static uint8_t ws_socket_close(lt_VM* vm, uint8_t argc)
 static uint8_t ws_socket_url(lt_VM* vm, uint8_t argc)
 {
     (void)argc;
-    lt_Value instance = ws_api->pop(vm);
+    lt_Value instance = lt_pop(vm);
     WsConn* conn = ws_instance_conn(vm, instance);
-    ws_api->push(vm, ws_api->make_string(vm, conn && conn->url ? conn->url : ""));
+    lt_push(vm, lt_make_string(vm, conn && conn->url ? conn->url : ""));
     return 1;
 }
 
 static uint8_t ws_socket_closed(lt_VM* vm, uint8_t argc)
 {
     (void)argc;
-    lt_Value instance = ws_api->pop(vm);
+    lt_Value instance = lt_pop(vm);
     WsConn* conn = ws_instance_conn(vm, instance);
-    ws_api->push(vm, conn && conn->closed ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    lt_push(vm, conn && conn->closed ? LT_VALUE_TRUE : LT_VALUE_FALSE);
     return 1;
 }
 
@@ -1328,14 +1270,14 @@ static int ws_build_client_request(lt_VM* vm, WsConn* conn, lt_Value headers)
         uint64_t cursor = 0;
         lt_Value name = LT_VALUE_NULL;
         lt_Value value = LT_VALUE_NULL;
-        while (ws_api->table_next(vm, headers, &cursor, &name, &value))
+        while (lt_table_next(vm, headers, &cursor, &name, &value))
         {
-            if (!LT_IS_STRING(name) || !LT_IS_STRING(value)) { ws_api->runtime_error(vm, "ws.connect headers must contain strings!"); return 0; }
-            const char* field = ws_api->get_string(vm, name);
-            const char* text = ws_api->get_string(vm, value);
+            if (!LT_IS_STRING(name) || !LT_IS_STRING(value)) { lt_runtime_error(vm, "ws.connect headers must contain strings!"); return 0; }
+            const char* field = lt_get_string(vm, name);
+            const char* text = lt_get_string(vm, value);
             if (strchr(field, ':') || strpbrk(field, "\r\n") || strpbrk(text, "\r\n"))
             {
-                ws_api->runtime_error(vm, "Invalid WebSocket header!");
+                lt_runtime_error(vm, "Invalid WebSocket header!");
                 return 0;
             }
             if (ws_header_name_is(field, strlen(field), "Host") || ws_header_name_is(field, strlen(field), "Connection") ||
@@ -1351,28 +1293,28 @@ static int ws_build_client_request(lt_VM* vm, WsConn* conn, lt_Value headers)
 
 static uint8_t ws_connect(lt_VM* vm, uint8_t argc)
 {
-    if (argc < 1 || argc > 2) { ws_api->runtime_error(vm, "ws.connect expects url and optional init!"); return 0; }
-    lt_Value init = argc == 2 ? ws_api->pop(vm) : LT_VALUE_NULL;
-    lt_Value url_value = ws_api->pop(vm);
-    if (!LT_IS_STRING(url_value)) { ws_api->runtime_error(vm, "ws.connect url must be a string!"); return 0; }
-    if (!LT_IS_NULL(init) && !LT_IS_TABLE(init)) { ws_api->runtime_error(vm, "ws.connect init must be a table!"); return 0; }
-    ws_api->root(vm, url_value);
-    ws_api->root(vm, init);
+    if (argc < 1 || argc > 2) { lt_runtime_error(vm, "ws.connect expects url and optional init!"); return 0; }
+    lt_Value init = argc == 2 ? lt_pop(vm) : LT_VALUE_NULL;
+    lt_Value url_value = lt_pop(vm);
+    if (!LT_IS_STRING(url_value)) { lt_runtime_error(vm, "ws.connect url must be a string!"); return 0; }
+    if (!LT_IS_NULL(init) && !LT_IS_TABLE(init)) { lt_runtime_error(vm, "ws.connect init must be a table!"); return 0; }
+    lt_native_root_internal(vm, url_value);
+    lt_native_root_internal(vm, init);
     lt_Value headers = LT_VALUE_NULL;
     if (LT_IS_TABLE(init))
     {
-        headers = ws_api->table_get(vm, init, ws_api->make_string(vm, "headers"));
-        if (!LT_IS_NULL(headers) && !LT_IS_TABLE(headers)) { ws_api->runtime_error(vm, "ws.connect headers must be a table!"); return 0; }
+        headers = lt_table_get(vm, init, lt_make_string(vm, "headers"));
+        if (!LT_IS_NULL(headers) && !LT_IS_TABLE(headers)) { lt_runtime_error(vm, "ws.connect headers must be a table!"); return 0; }
     }
     char host[256], path[2048];
     int port = 0, secure = 0;
-    if (!ws_parse_url(ws_api->get_string(vm, url_value), host, sizeof(host), &port, &secure, path, sizeof(path)))
+    if (!ws_parse_url(lt_get_string(vm, url_value), host, sizeof(host), &port, &secure, path, sizeof(path)))
     {
-        ws_api->runtime_error(vm, "Unsupported WebSocket URL!");
+        lt_runtime_error(vm, "Unsupported WebSocket URL!");
         return 0;
     }
     WsConn* conn = calloc(1, sizeof(*conn));
-    if (!conn) { ws_api->runtime_error(vm, "Out of memory creating WebSocket!"); return 0; }
+    if (!conn) { lt_runtime_error(vm, "Out of memory creating WebSocket!"); return 0; }
     conn->owner = vm;
     conn->instance = LT_VALUE_NULL;
     conn->connect_promise = LT_VALUE_NULL;
@@ -1388,27 +1330,27 @@ static uint8_t ws_connect(lt_VM* vm, uint8_t argc)
     conn->port = port;
     conn->secure = secure;
     conn->path = ws_strdup(path);
-    conn->url = ws_strdup(ws_api->get_string(vm, url_value));
+    conn->url = ws_strdup(lt_get_string(vm, url_value));
     if (!conn->host || !conn->path || !conn->url || !ws_build_client_request(vm, conn, headers))
     {
         ws_conn_release(conn);
-        ws_api->runtime_error(vm, "Out of memory creating WebSocket!");
+        lt_runtime_error(vm, "Out of memory creating WebSocket!");
         return 0;
     }
-    uint16_t count = ws_api->exec(vm, ws_class(vm, "WebSocket"), 0);
-    lt_Value instance = count ? ws_api->pop(vm) : LT_VALUE_NULL;
-    while (count > 1) { ws_api->pop(vm); --count; }
+    uint16_t count = lt_exec(vm, ws_class(vm, "WebSocket"), 0);
+    lt_Value instance = count ? lt_pop(vm) : LT_VALUE_NULL;
+    while (count > 1) { lt_pop(vm); --count; }
     if (!LT_IS_INSTANCE(instance))
     {
         ws_conn_release(conn);
-        ws_api->runtime_error(vm, "Failed to create WebSocket instance!");
+        lt_runtime_error(vm, "Failed to create WebSocket instance!");
         return 0;
     }
     conn->instance = instance;
-    ws_api->root_persistent(vm, instance);
-    ws_api->instance_set_native_data(vm, instance, ws_class(vm, "WebSocket"), conn);
+    lt_native_root_persistent_internal(vm, instance);
+    lt_instance_set_native_data(vm, instance, ws_class(vm, "WebSocket"), conn);
     conn->connect_promise = ltasync_make_promise(vm);
-    ws_api->root_persistent(vm, conn->connect_promise);
+    lt_native_root_persistent_internal(vm, conn->connect_promise);
     conn->hook = lt_add_poll_hook(vm, ws_conn_poll, conn);
 #ifdef _WIN32
     HANDLE thread = CreateThread(NULL, 0, ws_client_thread, conn, 0, NULL);
@@ -1423,7 +1365,7 @@ static uint8_t ws_connect(lt_VM* vm, uint8_t argc)
         atomic_store(&conn->handshake_ready, 1);
         ws_conn_release(conn);
     }
-    ws_api->push(vm, conn->connect_promise);
+    lt_push(vm, conn->connect_promise);
     return 1;
 }
 
@@ -1441,8 +1383,8 @@ static void ws_server_hook_destroy(lt_VM* vm, void* context)
 {
     WsServer* server = context;
     if (server->listener != WS_BAD_SOCKET) { ws_close_socket(server->listener); server->listener = WS_BAD_SOCKET; }
-    if (!LT_IS_NULL(server->handler)) { ws_api->unroot_persistent(vm, server->handler); server->handler = LT_VALUE_NULL; }
-    if (!LT_IS_NULL(server->instance)) { ws_api->unroot_persistent(vm, server->instance); server->instance = LT_VALUE_NULL; }
+    if (!LT_IS_NULL(server->handler)) { lt_native_unroot_persistent_internal(vm, server->handler); server->handler = LT_VALUE_NULL; }
+    if (!LT_IS_NULL(server->instance)) { lt_native_unroot_persistent_internal(vm, server->instance); server->instance = LT_VALUE_NULL; }
     ws_server_release(server);
 }
 
@@ -1488,9 +1430,9 @@ static lt_PollResult ws_server_poll(lt_VM* vm, void* context)
             conn->tls_ctx = server->tls_ctx;
             SSL_CTX_up_ref(conn->tls_ctx);
         }
-        uint16_t count = ws_api->exec(vm, ws_class(vm, "WebSocket"), 0);
-        lt_Value instance = count ? ws_api->pop(vm) : LT_VALUE_NULL;
-        while (count > 1) { ws_api->pop(vm); --count; }
+        uint16_t count = lt_exec(vm, ws_class(vm, "WebSocket"), 0);
+        lt_Value instance = count ? lt_pop(vm) : LT_VALUE_NULL;
+        while (count > 1) { lt_pop(vm); --count; }
         if (!LT_IS_INSTANCE(instance))
         {
             ws_conn_release(conn);
@@ -1498,8 +1440,8 @@ static lt_PollResult ws_server_poll(lt_VM* vm, void* context)
             continue;
         }
         conn->instance = instance;
-        ws_api->root_persistent(vm, instance);
-        ws_api->instance_set_native_data(vm, instance, ws_class(vm, "WebSocket"), conn);
+        lt_native_root_persistent_internal(vm, instance);
+        lt_instance_set_native_data(vm, instance, ws_class(vm, "WebSocket"), conn);
         server->clients[slot] = conn;
         conn->hook = lt_add_poll_hook(vm, ws_conn_poll, conn);
 #ifdef _WIN32
@@ -1522,59 +1464,59 @@ static lt_PollResult ws_server_poll(lt_VM* vm, void* context)
 
 static uint8_t ws_serve(lt_VM* vm, uint8_t argc)
 {
-    if (argc < 1 || argc > 2) { ws_api->runtime_error(vm, "ws.serve expects handler and optional options!"); return 0; }
-    lt_Value options = argc == 2 ? ws_api->pop(vm) : LT_VALUE_NULL;
-    lt_Value handler = ws_api->pop(vm);
-    if (!ltasync_is_callable(handler)) { ws_api->runtime_error(vm, "ws.serve handler must be callable!"); return 0; }
-    ws_api->root(vm, handler);
-    ws_api->root(vm, options);
+    if (argc < 1 || argc > 2) { lt_runtime_error(vm, "ws.serve expects handler and optional options!"); return 0; }
+    lt_Value options = argc == 2 ? lt_pop(vm) : LT_VALUE_NULL;
+    lt_Value handler = lt_pop(vm);
+    if (!ltasync_is_callable(handler)) { lt_runtime_error(vm, "ws.serve handler must be callable!"); return 0; }
+    lt_native_root_internal(vm, handler);
+    lt_native_root_internal(vm, options);
     const char* hostname = "0.0.0.0";
     int port = 8000;
     const char* cert = 0;
     const char* key = 0;
     if (LT_IS_TABLE(options))
     {
-        lt_Value value = ws_api->table_get(vm, options, ws_api->make_string(vm, "hostname"));
-        if (LT_IS_STRING(value)) hostname = ws_api->get_string(vm, value);
-        value = ws_api->table_get(vm, options, ws_api->make_string(vm, "port"));
+        lt_Value value = lt_table_get(vm, options, lt_make_string(vm, "hostname"));
+        if (LT_IS_STRING(value)) hostname = lt_get_string(vm, value);
+        value = lt_table_get(vm, options, lt_make_string(vm, "port"));
         if (!LT_IS_NULL(value))
         {
-            if (!LT_IS_NUMBER(value)) { ws_api->runtime_error(vm, "Invalid WebSocket server port!"); return 0; }
-            double number = ws_api->get_number(value);
-            if (number < 0 || number > 65535 || number != (double)(int)number) { ws_api->runtime_error(vm, "Invalid WebSocket server port!"); return 0; }
+            if (!LT_IS_NUMBER(value)) { lt_runtime_error(vm, "Invalid WebSocket server port!"); return 0; }
+            double number = lt_get_number(value);
+            if (number < 0 || number > 65535 || number != (double)(int)number) { lt_runtime_error(vm, "Invalid WebSocket server port!"); return 0; }
             port = (int)number;
         }
-        value = ws_api->table_get(vm, options, ws_api->make_string(vm, "tls"));
+        value = lt_table_get(vm, options, lt_make_string(vm, "tls"));
         if (!LT_IS_NULL(value))
         {
-            if (!LT_IS_TABLE(value)) { ws_api->runtime_error(vm, "WebSocket tls options must be a table!"); return 0; }
-            lt_Value cert_value = ws_api->table_get(vm, value, ws_api->make_string(vm, "cert"));
-            lt_Value key_value = ws_api->table_get(vm, value, ws_api->make_string(vm, "key"));
+            if (!LT_IS_TABLE(value)) { lt_runtime_error(vm, "WebSocket tls options must be a table!"); return 0; }
+            lt_Value cert_value = lt_table_get(vm, value, lt_make_string(vm, "cert"));
+            lt_Value key_value = lt_table_get(vm, value, lt_make_string(vm, "key"));
             if (!LT_IS_STRING(cert_value) || !LT_IS_STRING(key_value))
             {
-                ws_api->runtime_error(vm, "WebSocket tls requires cert and key strings!");
+                lt_runtime_error(vm, "WebSocket tls requires cert and key strings!");
                 return 0;
             }
-            cert = ws_api->get_string(vm, cert_value);
-            key = ws_api->get_string(vm, key_value);
+            cert = lt_get_string(vm, cert_value);
+            key = lt_get_string(vm, key_value);
         }
     }
 #ifdef _WIN32
     WSADATA wsa;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { ws_api->runtime_error(vm, "Socket initialization failed!"); return 0; }
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { lt_runtime_error(vm, "Socket initialization failed!"); return 0; }
 #endif
     const char* error = 0;
     int bound_port = 0;
     ws_Socket listener = ws_create_listener(hostname, port, &bound_port, &error);
-    if (listener == WS_BAD_SOCKET) { ws_api->runtime_error(vm, error ? error : "Failed to start server socket!"); return 0; }
+    if (listener == WS_BAD_SOCKET) { lt_runtime_error(vm, error ? error : "Failed to start server socket!"); return 0; }
     SSL_CTX* tls_ctx = 0;
     if (cert)
     {
         tls_ctx = ws_tls_server_context(cert, key, &error);
-        if (!tls_ctx) { ws_close_socket(listener); ws_api->runtime_error(vm, error ? error : "TLS initialization failed"); return 0; }
+        if (!tls_ctx) { ws_close_socket(listener); lt_runtime_error(vm, error ? error : "TLS initialization failed"); return 0; }
     }
     WsServer* server = calloc(1, sizeof(*server));
-    if (!server) { ws_close_socket(listener); if (tls_ctx) SSL_CTX_free(tls_ctx); ws_api->runtime_error(vm, "Out of memory starting WebSocket server!"); return 0; }
+    if (!server) { ws_close_socket(listener); if (tls_ctx) SSL_CTX_free(tls_ctx); lt_runtime_error(vm, "Out of memory starting WebSocket server!"); return 0; }
     server->owner = vm;
     server->instance = LT_VALUE_NULL;
     server->handler = LT_VALUE_NULL;
@@ -1582,31 +1524,31 @@ static uint8_t ws_serve(lt_VM* vm, uint8_t argc)
     server->listener = listener;
     server->tls_ctx = tls_ctx;
     server->handler = handler;
-    ws_api->root_persistent(vm, handler);
-    uint16_t count = ws_api->exec(vm, ws_class(vm, "Server"), 0);
-    lt_Value instance = count ? ws_api->pop(vm) : LT_VALUE_NULL;
-    while (count > 1) { ws_api->pop(vm); --count; }
+    lt_native_root_persistent_internal(vm, handler);
+    uint16_t count = lt_exec(vm, ws_class(vm, "Server"), 0);
+    lt_Value instance = count ? lt_pop(vm) : LT_VALUE_NULL;
+    while (count > 1) { lt_pop(vm); --count; }
     if (!LT_IS_INSTANCE(instance))
     {
         ws_close_socket(listener);
         if (tls_ctx) SSL_CTX_free(tls_ctx);
         free(server);
-        ws_api->runtime_error(vm, "Failed to create WebSocket server instance!");
+        lt_runtime_error(vm, "Failed to create WebSocket server instance!");
         return 0;
     }
     server->instance = instance;
-    ws_api->root_persistent(vm, instance);
-    ws_api->instance_set_native_data(vm, instance, ws_class(vm, "Server"), server);
+    lt_native_root_persistent_internal(vm, instance);
+    lt_instance_set_native_data(vm, instance, ws_class(vm, "Server"), server);
     server->hook = ltasync_add_owned_poll_hook(vm, ws_server_poll, server, ws_server_hook_destroy);
-    ws_api->push(vm, instance);
+    lt_push(vm, instance);
     return 1;
 }
 
 static uint8_t ws_server_close(lt_VM* vm, uint8_t argc)
 {
-    if (argc != 1) ws_api->runtime_error(vm, "WebSocket server close expects no arguments!");
-    lt_Value instance = ws_api->pop(vm);
-    WsServer* server = ws_api->instance_get_native_data(vm, instance, ws_class(vm, "Server"));
+    if (argc != 1) lt_runtime_error(vm, "WebSocket server close expects no arguments!");
+    lt_Value instance = lt_pop(vm);
+    WsServer* server = lt_instance_get_native_data(vm, instance, ws_class(vm, "Server"));
     if (server && !server->closed)
     {
         server->closed = 1;
@@ -1620,8 +1562,8 @@ static uint8_t ws_server_close(lt_VM* vm, uint8_t argc)
 static uint8_t ws_server_port(lt_VM* vm, uint8_t argc)
 {
     (void)argc;
-    lt_Value instance = ws_api->pop(vm);
-    WsServer* server = ws_api->instance_get_native_data(vm, instance, ws_class(vm, "Server"));
+    lt_Value instance = lt_pop(vm);
+    WsServer* server = lt_instance_get_native_data(vm, instance, ws_class(vm, "Server"));
     int port = 0;
     if (server && server->listener != WS_BAD_SOCKET)
     {
@@ -1629,55 +1571,55 @@ static uint8_t ws_server_port(lt_VM* vm, uint8_t argc)
         socklen_t length = sizeof(address);
         if (getsockname(server->listener, (struct sockaddr*)&address, &length) == 0) port = ntohs(address.sin_port);
     }
-    ws_api->push(vm, ws_api->make_number(port));
+    lt_push(vm, lt_make_number(port));
     return 1;
 }
 
 void ltstd_open_ws(lt_VM* vm)
 {
-    lt_Value socket_class = ws_api->class_create(vm, "WebSocket");
-    ws_api->class_set_native_data_destroy(vm, socket_class, ws_conn_destroy_native);
-    ws_api->class_add_method(vm, socket_class, "next", ws_socket_next, LT_VIS_PUBLIC, 0);
-    ws_api->class_add_method(vm, socket_class, "send", ws_socket_send, LT_VIS_PUBLIC, 0);
-    ws_api->class_add_method(vm, socket_class, "close", ws_socket_close, LT_VIS_PUBLIC, 0);
-    ws_api->class_add_getter(vm, socket_class, "url", ws_socket_url, LT_VIS_PUBLIC, 0);
-    ws_api->class_add_getter(vm, socket_class, "closed", ws_socket_closed, LT_VIS_PUBLIC, 0);
+    lt_Value socket_class = lt_class_create(vm, "WebSocket");
+    lt_class_set_native_data_destroy(vm, socket_class, ws_conn_destroy_native);
+    lt_class_add_method(vm, socket_class, "next", ws_socket_next, LT_VIS_PUBLIC, 0);
+    lt_class_add_method(vm, socket_class, "send", ws_socket_send, LT_VIS_PUBLIC, 0);
+    lt_class_add_method(vm, socket_class, "close", ws_socket_close, LT_VIS_PUBLIC, 0);
+    lt_class_add_getter(vm, socket_class, "url", ws_socket_url, LT_VIS_PUBLIC, 0);
+    lt_class_add_getter(vm, socket_class, "closed", ws_socket_closed, LT_VIS_PUBLIC, 0);
 
-    lt_Value server_class = ws_api->class_create(vm, "Server");
-    ws_api->class_set_native_data_destroy(vm, server_class, ws_server_destroy_native);
-    ws_api->class_add_method(vm, server_class, "close", ws_server_close, LT_VIS_PUBLIC, 0);
-    ws_api->class_add_getter(vm, server_class, "port", ws_server_port, LT_VIS_PUBLIC, 0);
+    lt_Value server_class = lt_class_create(vm, "Server");
+    lt_class_set_native_data_destroy(vm, server_class, ws_server_destroy_native);
+    lt_class_add_method(vm, server_class, "close", ws_server_close, LT_VIS_PUBLIC, 0);
+    lt_class_add_getter(vm, server_class, "port", ws_server_port, LT_VIS_PUBLIC, 0);
 
-    lt_Value registry = ws_api->make_table(vm);
-    ws_api->table_set(vm, registry, ws_api->make_string(vm, "WebSocket"), socket_class);
-    ws_api->table_set(vm, registry, ws_api->make_string(vm, "Server"), server_class);
-    ws_api->table_set(vm, vm->global, ws_api->make_string(vm, "__little_ws_classes"), registry);
+    lt_Value registry = lt_make_table(vm);
+    lt_table_set(vm, registry, lt_make_string(vm, "WebSocket"), socket_class);
+    lt_table_set(vm, registry, lt_make_string(vm, "Server"), server_class);
+    lt_table_set(vm, vm->global, lt_make_string(vm, "__little_ws_classes"), registry);
 
-    lt_Value ws = ws_api->make_table(vm);
+    lt_Value ws = lt_make_table(vm);
     /** [LittleBinding] ws.connect
      *  opens a WebSocket connection to the URL and returns a promise resolving to a ws.WebSocket.
      *  @signature (url [, init])
      *  @param url ws or wss URL to connect to
      *  @param init table with an optional headers table
      */
-    ws_api->table_set(vm, ws, ws_api->make_string(vm, "connect"), ws_api->make_native(vm, ws_connect));
+    lt_table_set(vm, ws, lt_make_string(vm, "connect"), lt_make_native(vm, ws_connect));
     /** [LittleBinding] ws.serve
      *  starts a WebSocket server that passes each accepted connection to the handler and returns a ws.Server.
      *  @signature (handler [, options])
      *  @param handler callable receiving each accepted ws.WebSocket
      *  @param options table with optional hostname, port, and tls fields, where tls holds cert and key paths
      */
-    ws_api->table_set(vm, ws, ws_api->make_string(vm, "serve"), ws_api->make_native(vm, ws_serve));
+    lt_table_set(vm, ws, lt_make_string(vm, "serve"), lt_make_native(vm, ws_serve));
     /** [LittleBinding] ws.WebSocket
      *  represents a WebSocket connection exposing next(), send(), close(), url, and closed.
      *  @signature ()
      */
-    ws_api->table_set(vm, ws, ws_api->make_string(vm, "WebSocket"), socket_class);
+    lt_table_set(vm, ws, lt_make_string(vm, "WebSocket"), socket_class);
     /** [LittleBinding] ws.Server
      *  represents a running WebSocket server exposing close() and the bound port.
      *  @signature ()
      */
-    ws_api->table_set(vm, ws, ws_api->make_string(vm, "Server"), server_class);
-    ws_api->table_set(vm, vm->global, ws_api->make_string(vm, "ws"), ws);
+    lt_table_set(vm, ws, lt_make_string(vm, "Server"), server_class);
+    lt_table_set(vm, vm->global, lt_make_string(vm, "ws"), ws);
 }
 

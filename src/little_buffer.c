@@ -1,4 +1,4 @@
-#include "little_internal.h"
+#include "little_buffer_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
