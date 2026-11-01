@@ -280,18 +280,23 @@ typedef struct lt_AstNode {
 
 		struct {
 			struct lt_AstNode* expr;
+			lt_Buffer cleanups;
 		} ret;
 
 		struct {
 			struct lt_AstNode* expr;
 			lt_Buffer body;
 			struct lt_AstNode* next;
+			struct lt_Scope* scope;
 		} branch;
 
 		struct {
-			uint16_t identifier, closureidx;
+			uint16_t identifier[LT_MAX_LOOP_VARS], closureidx, sourceidx, itemidx;
+			uint8_t identifier_count;
+			uint8_t is_async;
 			struct lt_AstNode* iterator;
 			lt_Buffer body;
+			struct lt_Scope* scope;
 		} loop;
 
 		struct {
@@ -332,6 +337,8 @@ typedef struct {
 	uint8_t had_error;
 	uint32_t next_with_id;
 	lt_Token* self_token;
+		lt_Buffer async_cleanups;
+		uint32_t async_cleanup_floor;
 } lt_Parser;
 
 /* Result of a non-executing analysis pass. Diagnostics live on the VM that

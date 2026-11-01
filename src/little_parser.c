@@ -525,6 +525,83 @@ static lt_Token* _lt_parse_destructure_pattern(lt_VM* vm, lt_Parser* p, lt_Token
 
 enum { LT_PARSE_SCOPE_NONE, LT_PARSE_SCOPE_FRAME, LT_PARSE_SCOPE_LEXICAL };
 
+static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* dst, uint8_t expects_terminator, uint8_t scope_type, lt_Token** argnames);
+
+static lt_Token* _lt_parse_for_statement(lt_VM* vm, lt_Parser* p, lt_Token* current, lt_Buffer* dst, uint8_t is_async)
+{
+	lt_AstNode* for_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_FOR);
+	for_expr->loop.is_async = is_async;
+	for_expr->loop.sourceidx = UINT16_MAX;
+	for_expr->loop.itemidx = UINT16_MAX;
+	current++; // eat for
+
+	if (is_async && !p->in_async)
+		lt_parse_error_internal(vm, p->tkn->module, current, "'async for' is only valid inside async functions!");
+
+	lt_Token* identifiers[LT_MAX_LOOP_VARS];
+	uint8_t identifier_count = 0;
+	for (;;)
+	{
+		if (current->type != LT_TOKEN_IDENTIFIER)
+			lt_parse_error_internal(vm, p->tkn->module, current, identifier_count == 0
+				? "Expected identifier to follow 'for'!"
+				: "Expected identifier after ',' in 'for' header!");
+		for (uint8_t i = 0; i < identifier_count; ++i)
+			if (_lt_tokens_equal(identifiers[i], current))
+				lt_parse_error_internal(vm, p->tkn->module, current, "Duplicate loop variable!");
+		identifiers[identifier_count++] = current++;
+
+		if (current->type == LT_TOKEN_COMMA)
+		{
+			current++;
+			if (identifier_count >= LT_MAX_LOOP_VARS)
+				lt_parse_error_internal(vm, p->tkn->module, current, "Too many loop variables!");
+			continue;
+		}
+		if (current->type == LT_TOKEN_IN) break;
+		lt_parse_error_internal(vm, p->tkn->module, current, "Expected comma or 'in' after loop variable!");
+	}
+	current++;
+
+	lt_AstNode* iter_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
+	uint8_t was_allow_table_call = p->allow_table_call;
+	p->allow_table_call = 0;
+	current = _lt_parse_expression(vm, p, current, iter_expr);
+	p->allow_table_call = was_allow_table_call;
+
+	lt_Token* iter_token = _lt_make_hidden_identifier_token(vm, p, "__iter", identifiers[0]);
+	for_expr->loop.closureidx = lt_make_local_internal(vm, p->current, iter_token);
+	if (is_async)
+	{
+		lt_Token* source_token = _lt_make_hidden_identifier_token(vm, p, "__source", identifiers[0]);
+		lt_Token* item_token = _lt_make_hidden_identifier_token(vm, p, "__item", identifiers[0]);
+		for_expr->loop.sourceidx = lt_make_local_internal(vm, p->current, source_token);
+		for_expr->loop.itemidx = lt_make_local_internal(vm, p->current, item_token);
+	}
+	for_expr->loop.iterator = iter_expr;
+
+	if (current->type != LT_TOKEN_OPENBRACE) lt_parse_error_internal(vm, p->tkn->module, current, "Expected open brace to follow 'for' header!");
+	current++;
+
+	lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
+	lt_Token* body_args[LT_MAX_LOOP_VARS + 1] = { 0 };
+	for (uint8_t i = 0; i < identifier_count; ++i) body_args[i] = identifiers[i];
+	uint32_t cleanup_len = p->async_cleanups.length;
+	if (is_async) lt_buffer_push(vm, &p->async_cleanups, &for_expr->loop.sourceidx);
+	lt_Scope* body_scope = _lt_parse_block(vm, p, current, &body, 1, LT_PARSE_SCOPE_LEXICAL, body_args);
+	p->async_cleanups.length = cleanup_len;
+	current = body_scope->end;
+
+	for_expr->loop.identifier_count = identifier_count;
+	for (uint8_t i = 0; i < identifier_count; ++i)
+		for_expr->loop.identifier[i] = (uint16_t)lt_find_local_internal(vm, body_scope, identifiers[i]);
+	for_expr->loop.body = body;
+	for_expr->loop.scope = body_scope;
+
+	lt_buffer_push(vm, dst, &for_expr);
+	return current;
+}
+
 static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Buffer* dst, uint8_t expects_terminator, uint8_t scope_type, lt_Token** argnames)
 {
 	if (scope_type != LT_PARSE_SCOPE_NONE)
@@ -567,6 +644,8 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 		uint8_t statement_constructor = p->in_constructor;
 		uint8_t statement_table_call = p->allow_table_call;
 		lt_Token* statement_self = p->self_token;
+		uint32_t statement_cleanup_len = p->async_cleanups.length;
+		uint32_t statement_cleanup_floor = p->async_cleanup_floor;
 
 		void* saved_error_buf = vm->error_buf;
 		jmp_buf recovery;
@@ -581,6 +660,8 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 			p->in_constructor = statement_constructor;
 			p->allow_table_call = statement_table_call;
 			p->self_token = statement_self;
+			p->async_cleanups.length = statement_cleanup_len;
+			p->async_cleanup_floor = statement_cleanup_floor;
 
 			uint16_t error_line = vm->error_line ? vm->error_line : statement_start->line;
 			uint16_t error_col = vm->error_col;
@@ -632,12 +713,13 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 			current++;
 
 			lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
-			_lt_parse_block(vm, p, current, &body, 1, 0, 0);
-			current = p->current->end;
+			lt_Scope* body_scope = _lt_parse_block(vm, p, current, &body, 1, LT_PARSE_SCOPE_LEXICAL, 0);
+			current = body_scope->end;
 
 			if_statement->branch.expr = expr;
 			if_statement->branch.body = body;
 			if_statement->branch.next = 0;
+			if_statement->branch.scope = body_scope;
 
 			lt_AstNode* last = 0;
 			while (current->type == LT_TOKEN_ELSEIF || current->type == LT_TOKEN_ELSE)
@@ -670,10 +752,11 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 				current++;
 
 				lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
-				_lt_parse_block(vm, p, current, &body, 1, 0, 0);
-				current = p->current->end;
+				lt_Scope* body_scope = _lt_parse_block(vm, p, current, &body, 1, LT_PARSE_SCOPE_LEXICAL, 0);
+				current = body_scope->end;
 
 				node->branch.body = body;
+				node->branch.scope = body_scope;
 
 				last = node;
 			}
@@ -683,54 +766,7 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 		} break;
 
 		case LT_TOKEN_FOR: {
-			lt_AstNode* for_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_FOR);
-			current++; // eat for
-
-			lt_Token* ident = current++;
-			uint16_t iteridx = lt_make_local_internal(vm, p->current, ident);
-
-			if (current->type != LT_TOKEN_IN) lt_parse_error_internal(vm, p->tkn->module, current, "Expected 'in' to follow 'for' iterator!");
-			current++;
-
-			lt_AstNode* iter_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
-			uint8_t was_allow_table_call = p->allow_table_call;
-			p->allow_table_call = 0;
-			current = _lt_parse_expression(vm, p, current, iter_expr);
-			p->allow_table_call = was_allow_table_call;
-
-			for_expr->loop.identifier = iteridx;
-
-			const char* FOR_ITER_NAME = "__iter";
-			uint16_t len = (uint16_t)strlen(FOR_ITER_NAME);
-
-			lt_Identifier newid;
-			newid.num_references = 1;
-			newid.name = vm->alloc(len + 1);
-			strncpy_s(newid.name, len + 1, FOR_ITER_NAME, len);
-			newid.name[len] = 0;
-
-			lt_buffer_push(vm, &p->tkn->identifier_buffer, &newid);
-
-			lt_Token tok;
-			tok.type = LT_TOKEN_IDENTIFIER;
-			tok.line = ident->line;
-			tok.col = ident->col;
-			tok.idx = p->tkn->identifier_buffer.length - 1;
-			tok.flags = LT_TOKEN_SYNTHETIC;
-			tok.span = ident->span;
-
-			for_expr->loop.closureidx = lt_make_local_internal(vm, p->current, &tok);
-			for_expr->loop.iterator = iter_expr;
-
-			if (current->type != LT_TOKEN_OPENBRACE) lt_parse_error_internal(vm, p->tkn->module, current, "Expected open brace to follow 'for' header!");
-			current++;
-
-			lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
-			_lt_parse_block(vm, p, current, &body, 1, 0, 0);
-			current = p->current->end;
-			for_expr->loop.body = body;
-
-			lt_buffer_push(vm, dst, &for_expr);
+			current = _lt_parse_for_statement(vm, p, current, dst, 0);
 			REQUIRE_STATEMENT_BOUNDARY();
 		} break;
 
@@ -750,9 +786,10 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 			current++;
 
 			lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
-			_lt_parse_block(vm, p, current, &body, 1, 0, 0);
-			current = p->current->end;
+			lt_Scope* body_scope = _lt_parse_block(vm, p, current, &body, 1, LT_PARSE_SCOPE_LEXICAL, 0);
+			current = body_scope->end;
 			while_expr->loop.body = body;
+			while_expr->loop.scope = body_scope;
 
 			lt_buffer_push(vm, dst, &while_expr);
 			REQUIRE_STATEMENT_BOUNDARY();
@@ -808,6 +845,9 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 		case LT_TOKEN_RETURN: {
 			lt_AstNode* ret = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_RETURN);
 			ret->ret.expr = 0;
+			ret->ret.cleanups = lt_buffer_new(sizeof(uint16_t));
+			for (uint32_t i = p->async_cleanup_floor; i < p->async_cleanups.length; ++i)
+				lt_buffer_push(vm, &ret->ret.cleanups, lt_buffer_at(&p->async_cleanups, i));
 			current++; // eat 'return'
 
 			lt_AstNode* expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_EMPTY);
@@ -984,6 +1024,12 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 		} break;
 		case LT_TOKEN_ASYNC: {
 			lt_Token* async_token = current++;
+			if (current->type == LT_TOKEN_FOR)
+			{
+				current = _lt_parse_for_statement(vm, p, current, dst, 1);
+				REQUIRE_STATEMENT_BOUNDARY();
+				break;
+			}
 			if (current->type != LT_TOKEN_FN || (current + 1)->type != LT_TOKEN_IDENTIFIER)
 			{
 				current = async_token;
@@ -1078,13 +1124,16 @@ static lt_Token* _lt_parse_class_function(lt_VM* vm, lt_Parser* p, lt_Token* cur
 	uint8_t was_async = p->in_async;
 	uint8_t was_constructor = p->in_constructor;
 	lt_Token* previous_self = p->self_token;
+	uint32_t saved_cleanup_floor = p->async_cleanup_floor;
 	p->in_async = fn->fn.is_async;
 	p->in_constructor = is_constructor;
+	p->async_cleanup_floor = p->async_cleanups.length;
 	if (add_this) p->self_token = fn->fn.args[0];
 	lt_Scope* fn_scope = _lt_parse_block(vm, p, current, &body, 1, 1, fn->fn.args);
 	p->in_async = was_async;
 	p->in_constructor = was_constructor;
 	p->self_token = previous_self;
+	p->async_cleanup_floor = saved_cleanup_floor;
 	current = fn_scope->end;
 
 	if (allow_auto_assign)
@@ -1661,14 +1710,17 @@ static lt_Token* _lt_parse_expression(lt_VM* vm, lt_Parser* p, lt_Token* start, 
 			uint8_t was_async = p->in_async;
 			uint8_t was_constructor = p->in_constructor;
 			lt_Token* previous_self = p->self_token;
+			uint32_t saved_cleanup_floor = p->async_cleanup_floor;
 			lt_Token* this_token = _lt_make_identifier_token(vm, p, "this", current);
 			p->in_async = is_async;
 			p->in_constructor = 0;
+			p->async_cleanup_floor = p->async_cleanups.length;
 			if (nargs > 0 && _lt_tokens_equal(func->fn.args[0], this_token)) p->self_token = func->fn.args[0];
 			lt_Scope* fn_scope = _lt_parse_block(vm, p, current, &body, 1, 1, func->fn.args);
 			p->in_async = was_async;
 			p->in_constructor = was_constructor;
 			p->self_token = previous_self;
+			p->async_cleanup_floor = saved_cleanup_floor;
 			current = fn_scope->end;
 
 			func->fn.scope = fn_scope;
@@ -1902,6 +1954,8 @@ lt_Parser lt_parse(lt_VM* vm, lt_Tokenizer* tkn)
 	p.ast_nodes = lt_buffer_new(sizeof(lt_AstNode*));
 	p.generated_tokens = lt_buffer_new(sizeof(lt_Token*));
 	p.scopes = lt_buffer_new(sizeof(lt_Scope*));
+	p.async_cleanups = lt_buffer_new(sizeof(uint16_t));
+	p.async_cleanup_floor = 0;
 
 	void* saved_error_buf = vm->error_buf;
 	jmp_buf error_buf;
@@ -1957,6 +2011,7 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 			break;
 		case LT_AST_NODE_TABLE: lt_buffer_destroy(vm, &entry->table.keys); lt_buffer_destroy(vm, &entry->table.values); break;
 		case LT_AST_NODE_ARRAY: lt_buffer_destroy(vm, &entry->array.values); break;
+		case LT_AST_NODE_RETURN: lt_buffer_destroy(vm, &entry->ret.cleanups); break;
 		case LT_AST_NODE_IF: case LT_AST_NODE_ELSEIF: case LT_AST_NODE_ELSE: lt_buffer_destroy(vm, &entry->branch.body); break;
 		case LT_AST_NODE_WITH:
 			lt_buffer_destroy(vm, &entry->with_stmt.body);
@@ -1979,5 +2034,6 @@ void lt_free_parser(lt_VM* vm, lt_Parser* p)
 		vm->free(*(lt_Token**)lt_buffer_at(&p->generated_tokens, i));
 	lt_buffer_destroy(vm, &p->generated_tokens);
 	lt_buffer_destroy(vm, &p->scopes);
+	lt_buffer_destroy(vm, &p->async_cleanups);
 	lt_buffer_destroy(vm, &p->ast_nodes);
 }

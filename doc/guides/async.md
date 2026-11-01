@@ -8,7 +8,9 @@ The signatures for `Promise`, `setTimeout`, `setInterval`, `clearTimeout`, `clea
 
 `next(fn(value) { ... })`, `catch(fn(reason) { ... })` and `finally(fn() { ... })` register reactions. Reactions do not run inline: they are queued and drained by the event loop, so code after the `.next(...)` call runs before the reaction does.
 
-An `async fn` returns a promise. `await` suspends the current async function, queues its continuation through the event loop, and resumes with the awaited value. If the awaited value is a promise, the continuation waits for it to settle.
+An `async fn` returns a promise. `await` polls the event loop from the current executing frame until the value settles, then continues with the result. It does not create a suspended coroutine. If the awaited value is not a promise, `await` returns it unchanged.
+
+Callable results follow Little's multi-return rule at promise and task boundaries: no values become `null`, one value stays scalar, and multiple values become an array. Destructure the awaited array with `var [a, b] = await work()`. Runtime errors inside an async function or promise callback reject the resulting promise.
 
 `pcall` only catches errors raised while its callback is executing. It does not catch a later rejection of a promise the callback returned; attach `.catch(...)` to observe that.
 
@@ -17,6 +19,32 @@ An `async fn` returns a promise. `await` suspends the current async function, qu
 `setTimeout(callback, ms)` schedules one call after the delay and returns a timer id. `setInterval(callback, ms)` schedules a repeating call and returns a timer id. `clearTimeout(id)` and `clearInterval(id)` cancel either kind of timer.
 
 Timers are host-side schedules: the callback runs when the event loop is polled after the delay has elapsed, not preemptively. A long-running Little loop that never polls delays every timer.
+
+## Async iteration
+
+`async for` works only inside an `async fn`. Its source may be a callable that returns the next value or promise, or an object with a `next` method. A promise of a source is awaited automatically. Iteration stops when the next result is `null`.
+
+```little
+async for message in socket {
+    io.print(message)
+}
+```
+
+Object sources may provide `close`; it runs after natural completion, `break`, and `return`. Runtime errors skip bytecode cleanup and reject the containing async function, so native sources must stop their workers and release resources when finalized.
+
+`await` currently polls within the executing frame rather than suspending it. As a result, two concurrent async loops in one VM must not wait on each other: the inner loop blocks the outer async call from progressing. A stream loop can coexist with callback-driven traffic, but independent loops needing mutual progress require separate VMs or a future resumable scheduler.
+
+## HTTP response streams
+
+`web.fetchStream(url [, init])` returns a promise for a `web.Stream` once response headers arrive. Iterate it with `async for`:
+
+```little
+async for chunk in web.fetchStream(url) {
+    io.print(chunk)
+}
+```
+
+Chunks are strings by default. Pass `binary: true` in the init table to receive byte arrays; a text stream rejects if the body contains a NUL byte. Chunk boundaries are arbitrary. `stream:close()` cancels the worker, and `closed` reports EOF or cancellation. The queue is bounded at 4 MiB, so a slow consumer applies backpressure to the network worker instead of growing memory without limit.
 
 ## The mainloop
 

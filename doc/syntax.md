@@ -99,6 +99,8 @@ while running
 
 `if`, `elseif`, `else`, `for`, `while`, `with`, functions, methods, constructors, getters, setters, class bodies, table literals, and destructuring patterns all use braces according to their grammar.
 
+Control-flow bodies create lexical scopes. A local declared in an `if`, `elseif`, `else`, `for`, or `while` body is not visible after the closing brace. Loop variables are scoped to the loop body. Conditions and the expression after `in` are evaluated in the surrounding scope.
+
 ## Chained Expressions
 
 Postfix expression operations can continue across whitespace:

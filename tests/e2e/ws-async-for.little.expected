@@ -1,0 +1,4 @@
+client text hello
+client binary 3.000000 255.000000
+client stopped
+done

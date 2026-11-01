@@ -44,6 +44,8 @@ typedef uint64_t lt_Value;
 #define LT_MAX_CALL_ARGS 16
 #endif
 
+#define LT_MAX_LOOP_VARS 2
+
 #ifndef LT_MAX_BRANCHES
 #define LT_MAX_BRANCHES 32
 #endif

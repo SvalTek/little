@@ -1,0 +1,56 @@
+var label = "outer"
+if true {
+    var label = "if"
+    var hiddenIf = "if-local"
+    io.print(label)
+}
+io.print(label)
+io.print(hiddenIf)
+
+var branchResult = ""
+if false {
+    var branch = "if"
+}
+elseif true {
+    var branch = "elseif"
+    branchResult = branch
+}
+else {
+    var branch = "else"
+}
+io.print(branchResult)
+io.print(branch)
+
+var count = 0
+var whileLabel = "outer"
+while count < 1 {
+    var whileLabel = "while"
+    var hiddenWhile = "while-local"
+    io.print(whileLabel)
+    count = count + 1
+}
+io.print(whileLabel)
+io.print(hiddenWhile)
+
+var item = "outer-item"
+for item in array.each([ "loop-item" ]) {
+    var hiddenFor = "for-local"
+    io.print(item, hiddenFor)
+}
+io.print(item)
+io.print(hiddenFor)
+
+var saved = null
+if true {
+    var inner = "captured"
+    saved = fn() { return inner }
+}
+io.print(saved())
+
+var nested = 0
+for i in array.each([ 1 ]) {
+    for j in array.each([ 2 ]) {
+        nested = i + j
+    }
+}
+io.print(nested)

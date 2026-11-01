@@ -1,6 +1,7 @@
 #include "little_async.h"
 #include "little_task_internal.h"
 #include "little_buffer_internal.h"
+#include "little_runtime_internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -179,7 +180,7 @@ static void* _lt_worker_main(void* arg)
 
 	if (!has_error)
 	{
-		lt_Value value = nret > 0 ? lt_pop(vm) : LT_VALUE_NULL;
+		lt_Value value = lt_pack_values_internal(vm, (uint16_t)nret);
 		if (LT_IS_OBJECT(value) && LT_GET_OBJECT(value)->type == LT_OBJECT_PROMISE)
 		{
 			lt_Object* promise = LT_GET_OBJECT(value);

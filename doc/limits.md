@@ -16,6 +16,7 @@ Little is intentionally small and uses fixed-size VM stacks for predictable embe
 | --- | ---: | ---: |
 | `LT_MAX_FUNCTION_PARAMS` | 16 | 16 declared parameters. |
 | `LT_MAX_CALL_ARGS` | 16 | 16 call arguments. Method-call sugar passes the receiver internally, so `obj:method(...)` supports 15 user arguments by default. |
+| `LT_MAX_LOOP_VARS` | 2 | One or two bindings can be declared in a `for` or `async for` header. |
 | `LT_MAX_BRANCHES` | 32 | 32 compiled branch exits in one `if` / `elseif` chain. Extremely long chains fail with `Too many if/elseif branches!`. |
 | `LT_MAX_RETURNS` | 255 | 255 returned values from one call. |
 | `LT_MAX_CONSTANTS` | 32767 | Constants per compiled function/chunk. |
@@ -44,7 +45,7 @@ outbound payload is limited to 4 MiB, and only one `socket:next()` promise may
 be pending per connection.
 
 ## Multi-return limits
-Multi-return counts are stored in `uint8_t`, so one call can produce at most `LT_MAX_RETURNS` returned values. `unpack` stops at that limit. Scalar contexts collapse multi-return values to the first value, or `null` if no values were returned.
+Multi-return counts are stored in `uint8_t`, so one call can produce at most `LT_MAX_RETURNS` returned values. `unpack` stops at that limit. Scalar contexts collapse multi-return values to the first value, or `null` if no values were returned. Promise and task completion pack multiple returned values into one array.
 
 ## Loops and execution time
 `while` and `for` loops do not have an instruction budget or iteration cap. A script can intentionally run forever:

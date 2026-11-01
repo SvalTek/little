@@ -432,15 +432,19 @@ uint8_t ltasync_poll_internal(lt_VM* vm, int allow_sleep)
 		for (uint8_t i = 0; i < task.argc; ++i) ltasync_keep_value_internal(vm, task.args[i]);
 
 		for (uint8_t i = 0; i < task.argc; ++i) lt_push(vm, task.args[i]);
-		uint16_t nret = lt_exec(vm, task.callee, task.argc);
-		lt_Value result = LT_VALUE_NULL;
-		if (nret > 0)
+		char* error = 0;
+		uint16_t nret = lt_exec_capture_internal(vm, task.callee, task.argc, &error);
+		if (error)
 		{
-			result = lt_pop(vm);
-			for (uint16_t i = 1; i < nret; ++i) lt_pop(vm);
+			lt_Value reason = lt_make_string(vm, error);
+			vm->free(error);
+			_lt_settle_promise(vm, task.promise, LT_PROMISE_REJECTED, reason);
 		}
-
-		_lt_settle_promise(vm, task.promise, LT_PROMISE_FULFILLED, result);
+		else
+		{
+			lt_Value result = lt_pack_values_internal(vm, nret);
+			_lt_settle_promise(vm, task.promise, LT_PROMISE_FULFILLED, result);
+		}
 		for (uint8_t i = task.argc; i > 0; --i) ltasync_release_value_internal(vm, task.args[i - 1]);
 		ltasync_release_value_internal(vm, task.callee);
 		ltasync_release_value_internal(vm, task.promise);
@@ -478,26 +482,30 @@ uint8_t ltasync_poll_internal(lt_VM* vm, int allow_sleep)
 
 		if (should_call)
 		{
+			char* error = 0;
 			uint16_t nret = 0;
 			if (task.reaction.kind == LT_REACTION_FINALLY)
 			{
-				nret = lt_exec(vm, task.reaction.callback, 0);
+				nret = lt_exec_capture_internal(vm, task.reaction.callback, 0, &error);
 			}
 			else
 			{
 				lt_push(vm, result);
-				nret = lt_exec(vm, task.reaction.callback, 1);
+				nret = lt_exec_capture_internal(vm, task.reaction.callback, 1, &error);
 			}
 
-			lt_Value callback_result = LT_VALUE_NULL;
-			if (nret > 0)
+			if (error)
 			{
-				callback_result = lt_pop(vm);
-				for (uint16_t i = 1; i < nret; ++i) lt_pop(vm);
+				lt_Value reason = lt_make_string(vm, error);
+				vm->free(error);
+				_lt_settle_promise(vm, task.reaction.next_promise, LT_PROMISE_REJECTED, reason);
 			}
-
-			if (propagate_original) _lt_settle_promise(vm, task.reaction.next_promise, state, result);
-			else _lt_settle_promise(vm, task.reaction.next_promise, LT_PROMISE_FULFILLED, callback_result);
+			else
+			{
+				lt_Value callback_result = lt_pack_values_internal(vm, nret);
+				if (propagate_original) _lt_settle_promise(vm, task.reaction.next_promise, state, result);
+				else _lt_settle_promise(vm, task.reaction.next_promise, LT_PROMISE_FULFILLED, callback_result);
+			}
 		}
 		else
 		{

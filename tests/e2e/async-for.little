@@ -1,0 +1,97 @@
+var cursor = 0
+var closed = 0
+var source = {}
+source.next = fn(this) {
+    if cursor >= 2 { return null }
+    cursor = cursor + 1
+    return cursor
+}
+source.close = fn(this) {
+    closed = closed + 1
+}
+
+var natural = async fn() {
+    var total = 0
+    async for value in source {
+        total = total + value
+    }
+    return total
+}
+natural().next(fn(value) {
+    io.print("natural", value, closed)
+})
+mainloop.run()
+
+cursor = 0
+var early = async fn() {
+    async for value in source {
+        break
+    }
+    return "break"
+}
+early().next(fn(value) {
+    io.print("break", value, closed)
+})
+mainloop.run()
+
+cursor = 0
+var returning = async fn() {
+    async for value in source {
+        return "return"
+    }
+}
+returning().next(fn(value) {
+    io.print("return", value, closed)
+})
+mainloop.run()
+
+var pairCursor = 0
+var pairs = {}
+pairs.next = fn(this) {
+    if pairCursor >= 1 { return null }
+    pairCursor = pairCursor + 1
+    return unpack([ "key", "value" ])
+}
+pairs.close = fn(this) {}
+var readPairs = async fn() {
+    async for key, value in pairs {
+        io.print("pair", key, value)
+    }
+}
+readPairs().next(fn(value) {
+    io.print("pairs done", value)
+})
+mainloop.run()
+
+var promiseCursor = 0
+var promiseNext = async fn() {
+    if promiseCursor >= 2 { return null }
+    promiseCursor = promiseCursor + 1
+    return promiseCursor
+}
+var readCallable = async fn() {
+    var total = 0
+    async for value in promiseNext {
+        total = total + value
+    }
+    return total
+}
+readCallable().next(fn(value) {
+    io.print("callable", value)
+})
+mainloop.run()
+
+var wrapped = Promise(fn(resolve, reject) {
+    resolve(source)
+})
+
+cursor = 0
+var promisedSource = async fn() {
+    async for value in wrapped {
+        io.print("promise source", value)
+    }
+}
+promisedSource().next(fn(value) {
+    io.print("promise done", value)
+})
+mainloop.run()
