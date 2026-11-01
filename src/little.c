@@ -188,6 +188,63 @@ uint16_t lt_exec(lt_VM* vm, lt_Value callable, uint8_t argc)
 	}
 }
 
+uint16_t lt_exec_capture_internal(lt_VM* vm, lt_Value callable, uint8_t argc, char** error)
+{
+	if (error) *error = 0;
+	uint16_t base = vm->top - argc;
+	uint16_t saved_depth = vm->depth;
+	uint32_t root_mark = vm->native_roots.length;
+	uint32_t temporary_root_mark = vm->temporary_roots.length;
+	uint32_t saved_root_floor = vm->native_root_floor;
+	lt_Frame* saved_current = vm->current;
+	void* saved_error_buf = vm->error_buf;
+	uint8_t saved_trap_errors = vm->trap_errors;
+	char* saved_error_trap = vm->error_trap;
+	jmp_buf error_buf;
+	vm->error_buf = &error_buf;
+	vm->trap_errors = 1;
+	vm->error_trap = 0;
+
+	if (!setjmp(error_buf))
+	{
+		uint16_t nret = lt_exec_internal(vm, callable, argc);
+		vm->error_buf = saved_error_buf;
+		vm->trap_errors = saved_trap_errors;
+		if (vm->error_trap) vm->free(vm->error_trap);
+		vm->error_trap = saved_error_trap;
+		return nret;
+	}
+
+	char* trapped = vm->error_trap;
+	vm->top = base;
+	vm->depth = saved_depth;
+	vm->current = saved_current;
+	vm->native_roots.length = root_mark;
+	vm->temporary_roots.length = temporary_root_mark;
+	vm->native_root_floor = saved_root_floor;
+	vm->error_buf = saved_error_buf;
+	vm->trap_errors = saved_trap_errors;
+	vm->error_trap = saved_error_trap;
+	if (error) *error = trapped;
+	else if (trapped) vm->free(trapped);
+	return 0;
+}
+
+lt_Value lt_pack_values_internal(lt_VM* vm, uint16_t count)
+{
+	if (count == 0) return LT_VALUE_NULL;
+	if (count == 1) return lt_pop(vm);
+
+	uint16_t start = vm->top - count;
+	lt_Value array = lt_make_array(vm);
+	lt_push(vm, array);
+	for (uint16_t i = 0; i < count; ++i)
+		lt_array_push(vm, array, vm->stack[start + i]);
+	vm->top = start;
+	lt_push(vm, array);
+	return array;
+}
+
 static uint8_t _lt_call_native(lt_VM* vm, lt_NativeFn fn, uint8_t argc)
 {
 	uint32_t root_mark = vm->native_roots.length;

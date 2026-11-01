@@ -8,7 +8,9 @@ The signatures for `Promise`, `setTimeout`, `setInterval`, `clearTimeout`, `clea
 
 `next(fn(value) { ... })`, `catch(fn(reason) { ... })` and `finally(fn() { ... })` register reactions. Reactions do not run inline: they are queued and drained by the event loop, so code after the `.next(...)` call runs before the reaction does.
 
-An `async fn` returns a promise. `await` suspends the current async function, queues its continuation through the event loop, and resumes with the awaited value. If the awaited value is a promise, the continuation waits for it to settle.
+An `async fn` returns a promise. `await` polls the event loop from the current executing frame until the value settles, then continues with the result. It does not create a suspended coroutine. If the awaited value is not a promise, `await` returns it unchanged.
+
+Callable results follow Little's multi-return rule at promise and task boundaries: no values become `null`, one value stays scalar, and multiple values become an array. Destructure the awaited array with `var [a, b] = await work()`. Runtime errors inside an async function or promise callback reject the resulting promise.
 
 `pcall` only catches errors raised while its callback is executing. It does not catch a later rejection of a promise the callback returned; attach `.catch(...)` to observe that.
 

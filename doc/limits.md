@@ -45,7 +45,7 @@ outbound payload is limited to 4 MiB, and only one `socket:next()` promise may
 be pending per connection.
 
 ## Multi-return limits
-Multi-return counts are stored in `uint8_t`, so one call can produce at most `LT_MAX_RETURNS` returned values. `unpack` stops at that limit. Scalar contexts collapse multi-return values to the first value, or `null` if no values were returned.
+Multi-return counts are stored in `uint8_t`, so one call can produce at most `LT_MAX_RETURNS` returned values. `unpack` stops at that limit. Scalar contexts collapse multi-return values to the first value, or `null` if no values were returned. Promise and task completion pack multiple returned values into one array.
 
 ## Loops and execution time
 `while` and `for` loops do not have an instruction budget or iteration cap. A script can intentionally run forever:

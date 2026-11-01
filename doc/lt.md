@@ -318,6 +318,8 @@ See [syntax.md](syntax.md) for details on table-call sugar and expression bounda
 ### Multiple returns
 Little supports multiple return values through `unpack(array)`. In scalar contexts, only the first returned value is used, or `null` when no values are returned.
 
+At callable promise and task boundaries, multiple return values are packed into an array. Async functions therefore resolve to `null`, one scalar, or an array, and an awaited multi-return value can be destructured normally.
+
 Final call arguments expand:
 ```js
 fn(1, unpack([ 2, 3 ])) ; fn(1, 2, 3)

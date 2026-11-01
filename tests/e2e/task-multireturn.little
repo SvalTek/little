@@ -1,0 +1,5 @@
+task.run(fn(state) {
+    return unpack([ state.a, state.b ])
+}, { a: 2 b: 3 }).next(fn(value) {
+    io.print(type value, value[0], value[1])
+})

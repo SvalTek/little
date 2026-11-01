@@ -1,0 +1,29 @@
+var values = async fn() {
+    return unpack([ "first", "second" ])
+}
+
+values().next(fn(value) {
+    io.print(type value, value[0], value[1])
+})
+mainloop.run()
+
+var work = async fn() {
+    var [a, b] = await values()
+    io.print(a, b)
+    return unpack([ a, b ])
+}
+
+work().next(fn(value) {
+    io.print(type value, value[0], value[1])
+})
+mainloop.run()
+
+Promise(fn(resolve, reject) {
+    resolve(2)
+}).next(fn(value) {
+    return unpack([ value, value + 1 ])
+}).next(fn(value) {
+    io.print(type value, value[0], value[1])
+})
+
+mainloop.run()
