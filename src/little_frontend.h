@@ -286,12 +286,14 @@ typedef struct lt_AstNode {
 			struct lt_AstNode* expr;
 			lt_Buffer body;
 			struct lt_AstNode* next;
+			struct lt_Scope* scope;
 		} branch;
 
 		struct {
 			uint16_t identifier, closureidx;
 			struct lt_AstNode* iterator;
 			lt_Buffer body;
+			struct lt_Scope* scope;
 		} loop;
 
 		struct {

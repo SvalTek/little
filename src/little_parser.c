@@ -632,12 +632,13 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 			current++;
 
 			lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
-			_lt_parse_block(vm, p, current, &body, 1, 0, 0);
-			current = p->current->end;
+			lt_Scope* body_scope = _lt_parse_block(vm, p, current, &body, 1, LT_PARSE_SCOPE_LEXICAL, 0);
+			current = body_scope->end;
 
 			if_statement->branch.expr = expr;
 			if_statement->branch.body = body;
 			if_statement->branch.next = 0;
+			if_statement->branch.scope = body_scope;
 
 			lt_AstNode* last = 0;
 			while (current->type == LT_TOKEN_ELSEIF || current->type == LT_TOKEN_ELSE)
@@ -670,10 +671,11 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 				current++;
 
 				lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
-				_lt_parse_block(vm, p, current, &body, 1, 0, 0);
-				current = p->current->end;
+				lt_Scope* body_scope = _lt_parse_block(vm, p, current, &body, 1, LT_PARSE_SCOPE_LEXICAL, 0);
+				current = body_scope->end;
 
 				node->branch.body = body;
+				node->branch.scope = body_scope;
 
 				last = node;
 			}
@@ -686,8 +688,8 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 			lt_AstNode* for_expr = _lt_get_node_of_type(vm, current, p, LT_AST_NODE_FOR);
 			current++; // eat for
 
+			if (current->type != LT_TOKEN_IDENTIFIER) lt_parse_error_internal(vm, p->tkn->module, current, "Expected identifier to follow 'for'!");
 			lt_Token* ident = current++;
-			uint16_t iteridx = lt_make_local_internal(vm, p->current, ident);
 
 			if (current->type != LT_TOKEN_IN) lt_parse_error_internal(vm, p->tkn->module, current, "Expected 'in' to follow 'for' iterator!");
 			current++;
@@ -697,8 +699,6 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 			p->allow_table_call = 0;
 			current = _lt_parse_expression(vm, p, current, iter_expr);
 			p->allow_table_call = was_allow_table_call;
-
-			for_expr->loop.identifier = iteridx;
 
 			const char* FOR_ITER_NAME = "__iter";
 			uint16_t len = (uint16_t)strlen(FOR_ITER_NAME);
@@ -726,9 +726,12 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 			current++;
 
 			lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
-			_lt_parse_block(vm, p, current, &body, 1, 0, 0);
-			current = p->current->end;
+			lt_Token* body_args[] = { ident, 0 };
+			lt_Scope* body_scope = _lt_parse_block(vm, p, current, &body, 1, LT_PARSE_SCOPE_LEXICAL, body_args);
+			current = body_scope->end;
+			for_expr->loop.identifier = (uint16_t)lt_find_local_internal(vm, body_scope, ident);
 			for_expr->loop.body = body;
+			for_expr->loop.scope = body_scope;
 
 			lt_buffer_push(vm, dst, &for_expr);
 			REQUIRE_STATEMENT_BOUNDARY();
@@ -750,9 +753,10 @@ static lt_Scope* _lt_parse_block(lt_VM* vm, lt_Parser* p, lt_Token* start, lt_Bu
 			current++;
 
 			lt_Buffer body = lt_buffer_new(sizeof(lt_AstNode*));
-			_lt_parse_block(vm, p, current, &body, 1, 0, 0);
-			current = p->current->end;
+			lt_Scope* body_scope = _lt_parse_block(vm, p, current, &body, 1, LT_PARSE_SCOPE_LEXICAL, 0);
+			current = body_scope->end;
 			while_expr->loop.body = body;
+			while_expr->loop.scope = body_scope;
 
 			lt_buffer_push(vm, dst, &while_expr);
 			REQUIRE_STATEMENT_BOUNDARY();

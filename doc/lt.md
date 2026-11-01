@@ -31,7 +31,7 @@ var { id, name } = user
 var { id: userId } = user
 ```
 Variables are declared with the `var` keyword. A declaration may bind a single name, or destructure values from an array or table.
-Locals declared inside a `with` block are scoped to that block. Nested blocks can use them, and leaving the block restores any shadowed outer local.
+Control-flow bodies and `with` blocks have their own lexical scope. Locals declared inside `if`, `elseif`, `else`, `for`, `while`, or `with` are visible in nested blocks but not after the body. A body local may shadow an outer local; the outer value is visible again after the body. Loop variables are scoped to the loop body in the same way.
 
 Array destructuring reads 0-based positions and binds missing slots as `null`:
 ```js
