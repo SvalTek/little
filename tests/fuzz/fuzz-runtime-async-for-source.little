@@ -1,0 +1,8 @@
+var work = async fn() {
+    async for value in 1 {
+        io.print(value)
+    }
+}
+work().catch(fn(reason) {
+    io.print(string.contains(reason, "Expected async iterator callable or object with next!"))
+})

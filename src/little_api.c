@@ -11,11 +11,6 @@ static void _lt_api_free(lt_VM* vm, void* ptr)
     vm->free(ptr);
 }
 
-uint8_t lt_native_is_promise_internal(lt_Value value)
-{
-    return LT_IS_OBJECT(value) && LT_GET_OBJECT(value)->type == LT_OBJECT_PROMISE;
-}
-
 lt_PromiseState lt_native_promise_state_internal(lt_Value value)
 {
     if (!lt_native_is_promise_internal(value)) return LT_PROMISE_REJECTED;

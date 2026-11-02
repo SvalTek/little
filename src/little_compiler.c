@@ -399,20 +399,30 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 	} break;
 
 	case LT_AST_NODE_RETURN: {
+		uint8_t returns_many = 0;
 		if (node->ret.expr)
 		{
 			if (node->ret.expr->type == LT_AST_NODE_CALL)
 			{
 				_lt_compile_node_ex(vm, p, name, debug, node->ret.expr, scope, code_body, constants, 1);
-				OP(RETM);
+				returns_many = 1;
 			}
 			else
 			{
 				_lt_compile_node(vm, p, name, debug, node->ret.expr, scope, code_body, constants);
-				OPARG(RET, 1);
 			}
 		}
-		else OP(RET);
+
+		for (int32_t i = (int32_t)node->ret.cleanups.length - 1; i >= 0; --i)
+		{
+			uint16_t sourceidx = *(uint16_t*)lt_buffer_at(&node->ret.cleanups, i);
+			OPARG(LOAD, sourceidx);
+			OP(ACLOSE);
+		}
+
+		if (returns_many) { OP(RETM); }
+		else if (node->ret.expr) { OPARG(RET, 1); }
+		else { OP(RET); }
 	} break;
 
 #define REG_JMP() { if (n_branches >= LT_MAX_BRANCHES) lt_error(vm, "Too many if/elseif branches!"); branch_stack[n_branches++] = code_body->length; OP(NOP); }
@@ -425,7 +435,7 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		uint32_t jidx = code_body->length;
 		OP(JMPC);
 
-		_lt_compile_body(vm, p, name, debug, &node->branch.body, scope, code_body, constants);
+		_lt_compile_body(vm, p, name, debug, &node->branch.body, node->branch.scope, code_body, constants);
 		REG_JMP();
 
 		((lt_Op*)lt_buffer_at(code_body, jidx))->arg = code_body->length - jidx - 1;
@@ -445,7 +455,7 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 				uint32_t jidx = code_body->length;
 				OP(JMPC);
 
-				_lt_compile_body(vm, p, name, debug, &next->branch.body, scope, code_body, constants);
+				_lt_compile_body(vm, p, name, debug, &next->branch.body, next->branch.scope, code_body, constants);
 				REG_JMP();
 
 				((lt_Op*)lt_buffer_at(code_body, jidx))->arg = code_body->length - jidx - 1;
@@ -454,7 +464,7 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 			{
 				has_else = 1;
 
-				_lt_compile_body(vm, p, name, debug, &next->branch.body, scope, code_body, constants);
+				_lt_compile_body(vm, p, name, debug, &next->branch.body, next->branch.scope, code_body, constants);
 			}
 
 			next = next->branch.next;
@@ -479,25 +489,76 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 
 	case LT_AST_NODE_FOR: {
 		_lt_compile_node(vm, p, name, debug, node->loop.iterator, scope, code_body, constants);
+		if (node->loop.is_async)
+		{
+			OP(AWAIT);
+			OPARG(STORE, node->loop.sourceidx);
+			OPARG(LOAD, node->loop.sourceidx);
+			OP(AITER);
+		}
+		else OPARG(ITER, node->loop.identifier_count);
 		OPARG(STORE, node->loop.closureidx);
 
 		uint32_t loop_header = code_body->length;
 		OPARG(LOAD, node->loop.closureidx);
 		OPARG(CALL, 0);
-		if (lt_is_captured_local_internal(scope, node->loop.identifier)) OPARG(STORECELL, node->loop.identifier)
-		else OPARG(STORE, node->loop.identifier);
-		if (lt_is_captured_local_internal(scope, node->loop.identifier)) OPARG(LOADCELL, node->loop.identifier)
-		else OPARG(LOAD, node->loop.identifier);
-		uint32_t loop_start = code_body->length;
-		OPARG(JMPN, 0);
+		uint32_t loop_start;
+		if (node->loop.is_async)
+		{
+			OP(PACKRET);
+			OP(AWAIT);
+			OPARG(STORE, node->loop.itemidx);
+			OPARG(LOAD, node->loop.itemidx);
+			loop_start = code_body->length;
+			OPARG(JMPN, 0);
+			OPARG(LOAD, node->loop.itemidx);
+			if (node->loop.identifier_count == 1)
+			{
+				uint16_t identifier = node->loop.identifier[0];
+				if (lt_is_captured_local_internal(node->loop.scope, identifier)) OPARG(STORECELL, identifier)
+				else OPARG(STORE, identifier);
+			}
+			else
+			{
+				OPARG(ABIND, 2);
+				for (int32_t i = node->loop.identifier_count - 1; i >= 0; --i)
+				{
+					uint16_t identifier = node->loop.identifier[i];
+					if (lt_is_captured_local_internal(node->loop.scope, identifier)) OPARG(STORECELL, identifier)
+					else OPARG(STORE, identifier);
+				}
+			}
+		}
+		else
+		{
+			OPARG(FIXRET, node->loop.identifier_count);
+			for (int32_t i = node->loop.identifier_count - 1; i >= 0; --i)
+			{
+				uint16_t identifier = node->loop.identifier[i];
+				if (lt_is_captured_local_internal(node->loop.scope, identifier)) OPARG(STORECELL, identifier)
+				else OPARG(STORE, identifier);
+			}
+			uint16_t first_identifier = node->loop.identifier[0];
+			if (lt_is_captured_local_internal(node->loop.scope, first_identifier)) OPARG(LOADCELL, first_identifier)
+			else OPARG(LOAD, first_identifier);
+			loop_start = code_body->length;
+			OPARG(JMPN, 0);
+		}
 
-		_lt_compile_body(vm, p, name, debug, &node->loop.body, scope, code_body, constants);
+		_lt_compile_body(vm, p, name, debug, &node->loop.body, node->loop.scope, code_body, constants);
 		OPARG(JMP, loop_header - code_body->length - 1);
 
-		lt_Op* cond = lt_buffer_at(code_body, loop_start);
-		cond->arg = code_body->length - loop_start - 1;
+		uint32_t close_target = code_body->length;
+		if (node->loop.is_async)
+		{
+			OPARG(LOAD, node->loop.sourceidx);
+			OP(ACLOSE);
+		}
 
-		for (uint32_t i = loop_start; i < code_body->length; ++i)
+		lt_Op* cond = lt_buffer_at(code_body, loop_start);
+		cond->arg = close_target - loop_start - 1;
+
+		for (uint32_t i = loop_start; i < close_target; ++i)
 		{
 			lt_Op* current = lt_buffer_at(code_body, i);
 			if (current->op == LT_OP_BREAK)
@@ -505,7 +566,7 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 				/* Flip to JMP so an enclosing loop's pass cannot resolve it
 				   again and redirect it past the outer loop. */
 				current->op = LT_OP_JMP;
-				current->arg = code_body->length - i - 1;
+				current->arg = close_target - i - 1;
 			}
 		}
 	} break;
@@ -516,7 +577,7 @@ static void _lt_compile_node_ex(lt_VM* vm, lt_Parser* p, const char* name, lt_Bu
 		uint32_t loop_start = code_body->length;
 		OPARG(JMPC, 0);
 
-		_lt_compile_body(vm, p, name, debug, &node->loop.body, scope, code_body, constants);
+		_lt_compile_body(vm, p, name, debug, &node->loop.body, node->loop.scope, code_body, constants);
 		OPARG(JMP, loop_header - code_body->length - 1);
 
 		lt_Op* cond = lt_buffer_at(code_body, loop_start);

@@ -1,6 +1,7 @@
 #include "little_async.h"
 #include "little_task_internal.h"
 #include "little_buffer_internal.h"
+#include "little_runtime_internal.h"
 
 static uint8_t _lt_promise_resolve_native(lt_VM* vm, uint8_t argc);
 static uint8_t _lt_promise_reject_native(lt_VM* vm, uint8_t argc);
@@ -72,8 +73,15 @@ uint8_t ltasync_native_promise(lt_VM* vm, uint8_t argc)
 
 	lt_push(vm, resolve);
 	lt_push(vm, reject);
-	uint16_t nret = lt_exec(vm, executor, 2);
+	char* error = 0;
+	uint16_t nret = lt_exec_capture_internal(vm, executor, 2, &error);
 	while (nret-- > 0) lt_pop(vm);
+	if (error)
+	{
+		lt_Value reason = lt_make_string(vm, error);
+		vm->free(error);
+		ltasync_settle_promise(vm, promise, LT_PROMISE_REJECTED, reason);
+	}
 
 	lt_push(vm, promise);
 	lt_resumecollect(vm, LT_GET_OBJECT(promise));
@@ -83,8 +91,7 @@ uint8_t ltasync_native_promise(lt_VM* vm, uint8_t argc)
 static uint8_t _lt_promise_resolve_native(lt_VM* vm, uint8_t argc)
 {
 	lt_Value promise = ltasync_current_receiver_internal(vm);
-	lt_Value value = argc > 0 ? lt_pop(vm) : LT_VALUE_NULL;
-	while (argc-- > 1) lt_pop(vm);
+	lt_Value value = lt_pack_values_internal(vm, argc);
 	ltasync_settle_promise(vm, promise, LT_PROMISE_FULFILLED, value);
 	return 0;
 }
@@ -92,8 +99,7 @@ static uint8_t _lt_promise_resolve_native(lt_VM* vm, uint8_t argc)
 static uint8_t _lt_promise_reject_native(lt_VM* vm, uint8_t argc)
 {
 	lt_Value promise = ltasync_current_receiver_internal(vm);
-	lt_Value value = argc > 0 ? lt_pop(vm) : LT_VALUE_NULL;
-	while (argc-- > 1) lt_pop(vm);
+	lt_Value value = lt_pack_values_internal(vm, argc);
 	ltasync_settle_promise(vm, promise, LT_PROMISE_REJECTED, value);
 	return 0;
 }

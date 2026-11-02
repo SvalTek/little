@@ -1611,7 +1611,7 @@ void ltstd_open_ws(lt_VM* vm)
      */
     lt_table_set(vm, ws, lt_make_string(vm, "serve"), lt_make_native(vm, ws_serve));
     /** [LittleBinding] ws.WebSocket
-     *  represents a WebSocket connection exposing next(), send(), close(), url, and closed.
+     *  represents a WebSocket connection exposing next(), send(), close(), url, and closed; it can be used as an async for source.
      *  @signature ()
      */
     lt_table_set(vm, ws, lt_make_string(vm, "WebSocket"), socket_class);

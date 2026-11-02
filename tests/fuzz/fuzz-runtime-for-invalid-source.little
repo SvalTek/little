@@ -1,0 +1,7 @@
+var result = pcall(fn() {
+    for value in 1 {
+        io.print(value)
+    }
+})
+io.print(result.ok)
+io.print(string.contains(result.error, "Expected array, table, or callable iterator for 'for'!"))

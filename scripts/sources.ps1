@@ -6,6 +6,7 @@ $LittleCoreSources = @(
     "src/little_error.c"
     "src/little_value.c"
     "src/little_table.c"
+    "src/little_iter.c"
     "src/little_lexer.c"
     "src/little_parser.c"
     "src/little_compiler.c"

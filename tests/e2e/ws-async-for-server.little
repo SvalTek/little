@@ -1,0 +1,20 @@
+var server = ws.serve(async fn(socket, request) {
+    async for message in socket {
+        socket:send(message)
+    }
+    io.print("server eof")
+    mainloop.stop()
+}, { hostname: "127.0.0.1" port: 0 })
+
+var port = string.format("%d", server.port)
+ws.connect(string.expand("ws://127.0.0.1:{{port}}/echo", { port })).next(fn(socket) {
+    socket:send("hello")
+    socket:next().next(fn(message) {
+        io.print("client got", message)
+        socket:close()
+    })
+})
+
+mainloop.run()
+server:close()
+io.print("done")

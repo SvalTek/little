@@ -92,8 +92,39 @@ web.fetch("http://127.0.0.1:PORT/head", { method: "HEAD" }).next(fn(response) {
     io.print("head response rejected")
 })
 '@
+$streamChunkedScript = @'
+var work = async fn() {
+    var body = ""
+    async for chunk in web.fetchStream("http://127.0.0.1:PORT/stream-chunked") {
+        body = string.concat(body, chunk)
+    }
+    io.print(body)
+}
+work().catch(fn(reason) { io.print("stream chunked rejected", reason) })
+'@
+$streamBinaryScript = @'
+var work = async fn() {
+    var total = 0
+    async for chunk in web.fetchStream("http://127.0.0.1:PORT/stream-binary", { binary: true }) {
+        total = total + array.len(chunk)
+    }
+    io.print(total is 3)
+}
+work().catch(fn(reason) { io.print("stream binary rejected", reason) })
+'@
+$streamTextNulScript = @'
+var work = async fn() {
+    async for chunk in web.fetchStream("http://127.0.0.1:PORT/stream-text-nul") {
+        io.print("unexpected text chunk")
+    }
+}
+work().catch(fn(reason) {
+    io.print(string.contains(reason, "Binary HTTP response is not supported"))
+})
+'@
 $response = "HTTP/1.1 200 OK`r`nTransfer-Encoding: chunked`r`nConnection: close`r`n`r`n4`r`nWiki`r`n5`r`npedia`r`n0`r`n`r`n"
 $headResponse = "HTTP/1.1 200 OK`r`nTransfer-Encoding: chunked`r`nConnection: close`r`n`r`n"
+$binaryResponse = "HTTP/1.1 200 OK`r`nContent-Length: 3`r`nConnection: close`r`n`r`nA`0B"
 $failures = @()
 try { Test-FetchFixture 'chunked' $chunkedScript (@('true', 'true', 'true') -join "`n") $response }
 catch { $failures += "chunked: $_" }
@@ -101,4 +132,10 @@ try { Test-FetchFixture 'empty' $emptyScript 'empty response rejected' '' }
 catch { $failures += "empty: $_" }
 try { Test-FetchFixture 'head' $headScript (@('true', 'true') -join "`n") $headResponse 'HEAD' }
 catch { $failures += "head: $_" }
+try { Test-FetchFixture 'stream-chunked' $streamChunkedScript 'Wikipedia' $response }
+catch { $failures += "stream-chunked: $_" }
+try { Test-FetchFixture 'stream-binary' $streamBinaryScript 'true' $binaryResponse }
+catch { $failures += "stream-binary: $_" }
+try { Test-FetchFixture 'stream-text-nul' $streamTextNulScript 'true' $binaryResponse }
+catch { $failures += "stream-text-nul: $_" }
 if ($failures.Count) { throw ($failures -join "`n") }

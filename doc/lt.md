@@ -31,7 +31,7 @@ var { id, name } = user
 var { id: userId } = user
 ```
 Variables are declared with the `var` keyword. A declaration may bind a single name, or destructure values from an array or table.
-Locals declared inside a `with` block are scoped to that block. Nested blocks can use them, and leaving the block restores any shadowed outer local.
+Control-flow bodies and `with` blocks have their own lexical scope. Locals declared inside `if`, `elseif`, `else`, `for`, `while`, or `with` are visible in nested blocks but not after the body. A body local may shadow an outer local; the outer value is visible again after the body. Loop variables are scoped to the loop body in the same way.
 
 Array destructuring reads 0-based positions and binds missing slots as `null`:
 ```js
@@ -74,19 +74,36 @@ else {
 ### for
 ```js
 var a = [ 100, 200, 300 ]
-for item in array.each(a) { ... }
+for item in a { ... }
 ```
-`for` loops require one loop-variable identifier and an expression that evaluates to an iterator function. Little repeatedly calls that function, stores its return value in the loop variable, and stops when it returns `null`.
+`for` loops support one or two loop variables. A direct array or table is converted into an iterator; a callable is used as an iterator function and called repeatedly until it returns `null`.
 
-Arrays are not iterators themselves. Wrap an array with `array.each(...)`:
+With one variable, arrays and tables yield their values:
 
 ```js
-for item in array.each(items) {
+for item in items {
     io.print(item)
 }
 ```
 
-Passing an array directly to `for` attempts to call the array and raises a runtime error.
+With two variables, arrays yield a zero-based index and value, while tables yield a key and value:
+
+```js
+for index, item in items { ... }
+for key, value in settings { ... }
+```
+
+Table iteration is live and follows hash order, not insertion order. Entries whose key or value is `null` are skipped. Array iteration reads the current length and index on each step. Existing callable iterators such as `array.each(items)` continue to work, including across `array.range(...)`.
+
+Inside an `async fn`, `async for` repeatedly calls an asynchronous next source and awaits each result:
+
+```js
+async for message in socket {
+    io.print(message)
+}
+```
+
+The source is awaited once. It may be a callable returning values or promises, or an object whose `next` method returns the next value or promise. Object `next` is called with the object as receiver. `null` ends iteration. Two bindings require the resolved value to be an array, whose first two entries are assigned; missing entries are `null`. If the source object has a callable `close` method, it runs after natural completion, `break`, or a `return` that leaves the loop.
 
 ---
 ### while
@@ -310,6 +327,8 @@ See [syntax.md](syntax.md) for details on table-call sugar and expression bounda
 
 ### Multiple returns
 Little supports multiple return values through `unpack(array)`. In scalar contexts, only the first returned value is used, or `null` when no values are returned.
+
+At callable promise and task boundaries, multiple return values are packed into an array. Async functions therefore resolve to `null`, one scalar, or an array, and an awaited multi-return value can be destructured normally.
 
 Final call arguments expand:
 ```js

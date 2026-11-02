@@ -1,0 +1,17 @@
+var state = {
+    entries: { a: 1 b: 2 }
+    values: [ 10, 20 ]
+}
+
+task.run(fn(state) {
+    var total = 0
+    for key, value in state.entries {
+        total = total + value
+    }
+    for index, value in state.values {
+        total = total + index + value
+    }
+    return total
+}, state).next(fn(value) {
+    io.print(value)
+})

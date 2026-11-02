@@ -29,6 +29,7 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #else
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -56,6 +57,51 @@ typedef struct {
     char* body;
     lt_Value headers;
 } WebRequestData;
+
+#define WEB_STREAM_QUEUE_LIMIT (4u * 1024u * 1024u)
+
+typedef struct WebStreamChunk {
+    struct WebStreamChunk* next;
+    size_t length;
+    char* data;
+} WebStreamChunk;
+
+typedef struct {
+    atomic_int refs;
+    atomic_int done;
+    atomic_int stop;
+    atomic_int headers_ready;
+    lt_VM* vm;
+    uint32_t hook;
+    lt_Value promise;
+    lt_Value pending_next;
+    char* url;
+    char* method;
+    char* body;
+    char* proxy;
+    struct curl_slist* headers;
+    long redirects;
+    int decompress;
+    int head;
+    int binary;
+    int status;
+    int headers_sent;
+    char status_text[256];
+    char* header_data;
+    size_t header_len;
+    size_t header_cap;
+    char* error;
+    WebStreamChunk* chunk_head;
+    WebStreamChunk* chunk_tail;
+    size_t queued_bytes;
+#if defined(_WIN32)
+    CRITICAL_SECTION lock;
+    CONDITION_VARIABLE wake;
+#else
+    pthread_mutex_t lock;
+    pthread_cond_t wake;
+#endif
+} WebStreamState;
 
 /* At most this many requests can be active on one listener. */
 #define WEB_SERVER_CLIENT_LIMIT 8
@@ -138,6 +184,88 @@ static void web_destroy_request(void* data)
     free(rq->method);
     free(rq->body);
     free(rq);
+}
+
+static void web_stream_lock(WebStreamState* stream)
+{
+#if defined(_WIN32)
+    EnterCriticalSection(&stream->lock);
+#else
+    pthread_mutex_lock(&stream->lock);
+#endif
+}
+
+static void web_stream_unlock(WebStreamState* stream)
+{
+#if defined(_WIN32)
+    LeaveCriticalSection(&stream->lock);
+#else
+    pthread_mutex_unlock(&stream->lock);
+#endif
+}
+
+static void web_stream_wait(WebStreamState* stream)
+{
+#if defined(_WIN32)
+    SleepConditionVariableCS(&stream->wake, &stream->lock, INFINITE);
+#else
+    pthread_cond_wait(&stream->wake, &stream->lock);
+#endif
+}
+
+static void web_stream_wake(WebStreamState* stream)
+{
+#if defined(_WIN32)
+    WakeAllConditionVariable(&stream->wake);
+#else
+    pthread_cond_broadcast(&stream->wake);
+#endif
+}
+
+static void web_stream_clear_chunks(WebStreamState* stream)
+{
+    WebStreamChunk* chunk = stream->chunk_head;
+    while (chunk)
+    {
+        WebStreamChunk* next = chunk->next;
+        free(chunk->data);
+        free(chunk);
+        chunk = next;
+    }
+    stream->chunk_head = 0;
+    stream->chunk_tail = 0;
+    stream->queued_bytes = 0;
+}
+
+static void web_stream_release(WebStreamState* stream)
+{
+    if (!stream || atomic_fetch_sub(&stream->refs, 1) != 1) return;
+#if defined(_WIN32)
+    DeleteCriticalSection(&stream->lock);
+#else
+    pthread_cond_destroy(&stream->wake);
+    pthread_mutex_destroy(&stream->lock);
+#endif
+    web_stream_clear_chunks(stream);
+    if (stream->headers) curl_slist_free_all(stream->headers);
+    free(stream->url);
+    free(stream->method);
+    free(stream->body);
+    free(stream->proxy);
+    free(stream->header_data);
+    free(stream->error);
+    free(stream);
+}
+
+static void web_stream_destroy_data(void* data)
+{
+    WebStreamState* stream = data;
+    if (!stream) return;
+    atomic_store(&stream->stop, 1);
+    web_stream_lock(stream);
+    web_stream_wake(stream);
+    web_stream_unlock(stream);
+    web_stream_release(stream);
 }
 
 static void web_destroy_server(void* data)
@@ -676,6 +804,36 @@ static DWORD WINAPI web_fetch_thread(LPVOID data) { web_fetch_worker(data); retu
 static void* web_fetch_thread(void* data) { web_fetch_worker(data); return 0; }
 #endif
 
+static lt_Value web_headers_from_data(lt_VM* vm, char* header_data)
+{
+    lt_Value headers = lt_make_table(vm);
+    lt_push(vm, headers);
+    char* cursor = header_data;
+    while (cursor && *cursor)
+    {
+        char* end = strchr(cursor, '\n');
+        if (!end) end = cursor + strlen(cursor);
+        char saved = *end;
+        *end = 0;
+        char* colon = strchr(cursor, ':');
+        if (colon)
+        {
+            *colon = 0;
+            char* value = colon + 1;
+            while (*value == ' ' || *value == '\t') ++value;
+            char* tail = value + strlen(value);
+            while (tail > value && (tail[-1] == ' ' || tail[-1] == '\t')) --tail;
+            *tail = 0;
+            if (web_header_valid(cursor, value))
+                lt_table_set(vm, headers, lt_make_string(vm, cursor), lt_make_string(vm, value));
+        }
+        *end = saved;
+        cursor = saved ? end + 1 : end;
+    }
+    lt_pop(vm);
+    return headers;
+}
+
 static lt_PollResult web_fetch_poll(lt_VM* vm, void* context)
 {
     WebFetch* f = context;
@@ -686,30 +844,7 @@ static lt_PollResult web_fetch_poll(lt_VM* vm, void* context)
     }
     else
     {
-        lt_Value headers = lt_make_table(vm);
-        lt_native_root_internal(vm, headers);
-        char* cursor = f->header_data;
-        while (cursor && *cursor)
-        {
-            char* end = strchr(cursor, '\n');
-            if (!end) end = cursor + strlen(cursor);
-            char saved = *end;
-            *end = 0;
-            char* colon = strchr(cursor, ':');
-            if (colon)
-            {
-                *colon = 0;
-                char* value = colon + 1;
-                while (*value == ' ' || *value == '\t') ++value;
-                char* tail = value + strlen(value);
-                while (tail > value && (tail[-1] == ' ' || tail[-1] == '\t')) --tail;
-                *tail = 0;
-                if (web_header_valid(cursor, value))
-                    lt_table_set(vm, headers, lt_make_string(vm, cursor), lt_make_string(vm, value));
-            }
-            *end = saved;
-            cursor = saved ? end + 1 : end;
-        }
+        lt_Value headers = web_headers_from_data(vm, f->header_data);
         const char* body = f->response_data ? f->response_data : "";
         lt_Value response = create_response_instance(vm, f->status, f->status_text, headers, body, f->url);
         ltasync_settle_promise(vm, f->promise, LT_PROMISE_FULFILLED, response);
@@ -836,6 +971,649 @@ static uint8_t web_fetch(lt_VM* vm, uint8_t argc)
         web_fetch_release(f);
     }
     lt_push(vm, f->promise);
+    return 1;
+}
+
+/* ---------- fetchStream ---------- */
+
+static void web_stream_retain(WebStreamState* stream)
+{
+    atomic_fetch_add(&stream->refs, 1);
+}
+
+static void web_stream_set_error_locked(WebStreamState* stream, const char* message)
+{
+    if (stream->error || !message) return;
+    stream->error = web_strdup(message);
+}
+
+static void web_stream_set_error(WebStreamState* stream, const char* message)
+{
+    web_stream_lock(stream);
+    web_stream_set_error_locked(stream, message);
+    web_stream_unlock(stream);
+}
+
+static size_t web_stream_curl_header(char* data, size_t size, size_t count, void* userdata)
+{
+    WebStreamState* stream = userdata;
+    size_t length = size * count;
+    if (length >= 5 && strncmp(data, "HTTP/", 5) == 0)
+    {
+        int status = 0;
+        char reason[256] = "";
+        sscanf(data, "HTTP/%*u.%*u %d %255[^\r\n]", &status, reason);
+        if (status >= 100)
+        {
+            stream->status = status;
+            strncpy(stream->status_text, reason, sizeof(stream->status_text) - 1);
+            stream->status_text[sizeof(stream->status_text) - 1] = 0;
+            if (status >= 200)
+            {
+                stream->header_len = 0;
+                if (stream->header_data) stream->header_data[0] = 0;
+            }
+        }
+        return length;
+    }
+
+    size_t line = length;
+    while (line && (data[line - 1] == '\r' || data[line - 1] == '\n')) --line;
+    if (line == 0)
+    {
+        if (stream->status >= 200) atomic_store_explicit(&stream->headers_ready, 1, memory_order_release);
+        return length;
+    }
+    if (stream->header_len + line + 2 > 65535)
+    {
+        web_stream_set_error(stream, "HTTP response headers too large");
+        return 0;
+    }
+    if (stream->header_len + line + 2 > stream->header_cap)
+    {
+        size_t capacity = stream->header_cap ? stream->header_cap * 2 : 1024;
+        while (capacity < stream->header_len + line + 2) capacity *= 2;
+        char* grown = realloc(stream->header_data, capacity);
+        if (!grown)
+        {
+            web_stream_set_error(stream, "Out of memory");
+            return 0;
+        }
+        stream->header_data = grown;
+        stream->header_cap = capacity;
+    }
+    memcpy(stream->header_data + stream->header_len, data, line);
+    stream->header_len += line;
+    stream->header_data[stream->header_len++] = '\n';
+    stream->header_data[stream->header_len] = 0;
+    return length;
+}
+
+static size_t web_stream_curl_body(char* data, size_t size, size_t count, void* userdata)
+{
+    WebStreamState* stream = userdata;
+    size_t length = size * count;
+    if (atomic_load_explicit(&stream->stop, memory_order_acquire)) return 0;
+    if (!stream->binary && memchr(data, 0, length))
+    {
+        web_stream_set_error(stream, "Binary HTTP response is not supported; set binary: true");
+        return 0;
+    }
+
+    web_stream_lock(stream);
+    while (!atomic_load_explicit(&stream->stop, memory_order_acquire) &&
+        stream->queued_bytes + length > WEB_STREAM_QUEUE_LIMIT)
+        web_stream_wait(stream);
+    if (atomic_load_explicit(&stream->stop, memory_order_acquire))
+    {
+        web_stream_unlock(stream);
+        return 0;
+    }
+
+    WebStreamChunk* chunk = calloc(1, sizeof(*chunk));
+    if (!chunk || !(chunk->data = malloc(length + 1)))
+    {
+        free(chunk);
+        web_stream_set_error_locked(stream, "Out of memory");
+        web_stream_unlock(stream);
+        return 0;
+    }
+    if (length) memcpy(chunk->data, data, length);
+    chunk->data[length] = 0;
+    chunk->length = length;
+    if (stream->chunk_tail) stream->chunk_tail->next = chunk;
+    else stream->chunk_head = chunk;
+    stream->chunk_tail = chunk;
+    stream->queued_bytes += length;
+    web_stream_unlock(stream);
+    return length;
+}
+
+static const char* web_stream_curl_error(CURLcode code, const WebStreamState* stream)
+{
+    if (stream->error) return stream->error;
+    switch (code)
+    {
+    case CURLE_COULDNT_RESOLVE_HOST: return "DNS lookup failed";
+    case CURLE_COULDNT_CONNECT: return "Connection failed";
+    case CURLE_PEER_FAILED_VERIFICATION:
+    case CURLE_SSL_CERTPROBLEM: return "TLS certificate verification failed";
+    case CURLE_SSL_CONNECT_ERROR: return "TLS handshake failed";
+    case CURLE_OPERATION_TIMEDOUT: return "HTTP response read failed";
+    case CURLE_UNSUPPORTED_PROTOCOL:
+    case CURLE_URL_MALFORMAT: return "Unsupported URL";
+    case CURLE_TOO_MANY_REDIRECTS: return "Too many redirects";
+    default: return "HTTP request failed";
+    }
+}
+
+static void web_stream_worker(WebStreamState* stream)
+{
+    CURL* curl = curl_easy_init();
+    if (!curl)
+    {
+        web_stream_set_error(stream, "HTTP request failed");
+        goto done;
+    }
+
+    char error_buffer[CURL_ERROR_SIZE] = "";
+    curl_easy_setopt(curl, CURLOPT_URL, stream->url);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 1L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 10L);
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, web_stream_curl_body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, stream);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, web_stream_curl_header);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, stream);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, stream->headers);
+    curl_easy_setopt(curl, CURLOPT_PROXY, stream->proxy);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, stream->redirects > 0 ? 1L : 0L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, stream->redirects);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    const char* ca_file = getenv("CURL_CA_BUNDLE");
+    if (!ca_file || !*ca_file) ca_file = getenv("SSL_CERT_FILE");
+    if (ca_file && *ca_file) curl_easy_setopt(curl, CURLOPT_CAINFO, ca_file);
+    const char* ca_dir = getenv("SSL_CERT_DIR");
+    if (ca_dir && *ca_dir) curl_easy_setopt(curl, CURLOPT_CAPATH, ca_dir);
+#ifdef _WIN32
+    if (!getenv("SSL_CERT_FILE")) curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
+#endif
+    if (stream->decompress) curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+    if (stream->head) curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+    else if (stream->body && stream->body[0])
+    {
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, stream->body);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(stream->body));
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, stream->method);
+    }
+    else if (!web_header_is(stream->method, "GET"))
+    {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, stream->method);
+    }
+
+    CURLcode code = curl_easy_perform(curl);
+    if (code != CURLE_OK && !atomic_load_explicit(&stream->stop, memory_order_acquire))
+        web_stream_set_error(stream, web_stream_curl_error(code, stream));
+    else
+    {
+        long status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        if (status > 0) stream->status = (int)status;
+    }
+    curl_easy_cleanup(curl);
+
+done:
+    atomic_store_explicit(&stream->done, 1, memory_order_release);
+    web_stream_release(stream);
+}
+
+#ifdef _WIN32
+static DWORD WINAPI web_stream_thread(LPVOID data) { web_stream_worker(data); return 0; }
+#else
+static void* web_stream_thread(void* data) { web_stream_worker(data); return 0; }
+#endif
+
+static WebStreamState* web_stream_data(lt_VM* vm, lt_Value instance)
+{
+    return lt_instance_get_native_data(vm, instance, web_instance_class(vm, instance, web_stream_destroy_data));
+}
+
+static lt_Value web_stream_chunk_value(lt_VM* vm, WebStreamState* stream, WebStreamChunk* chunk)
+{
+    if (!stream->binary) return lt_make_string(vm, chunk->data);
+    lt_Value array = lt_make_array(vm);
+    lt_push(vm, array);
+    for (size_t i = 0; i < chunk->length; ++i)
+        lt_array_push(vm, array, lt_make_number((double)(unsigned char)chunk->data[i]));
+    lt_pop(vm);
+    return array;
+}
+
+static uint8_t web_stream_next(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt_runtime_error(vm, "Stream.next expects no arguments!");
+    lt_Value instance = lt_pop(vm);
+    WebStreamState* stream = web_stream_data(vm, instance);
+    if (!stream) lt_runtime_error(vm, "Invalid web stream!");
+
+    lt_Value promise = ltasync_make_promise(vm);
+    lt_push(vm, promise);
+    if (!LT_IS_NULL(stream->pending_next))
+    {
+        ltasync_settle_promise(vm, promise, LT_PROMISE_REJECTED, lt_make_string(vm, "Stream.next is already pending!"));
+        return 1;
+    }
+
+    web_stream_lock(stream);
+    WebStreamChunk* chunk = stream->chunk_head;
+    if (chunk)
+    {
+        stream->chunk_head = chunk->next;
+        if (!stream->chunk_head) stream->chunk_tail = 0;
+        stream->queued_bytes -= chunk->length;
+        web_stream_wake(stream);
+    }
+    char* error = stream->error ? web_strdup(stream->error) : 0;
+    uint8_t done = (uint8_t)atomic_load_explicit(&stream->done, memory_order_acquire);
+    uint8_t stopped = (uint8_t)atomic_load_explicit(&stream->stop, memory_order_acquire);
+    web_stream_unlock(stream);
+
+    if (chunk)
+    {
+        lt_Value value = web_stream_chunk_value(vm, stream, chunk);
+        ltasync_settle_promise(vm, promise, LT_PROMISE_FULFILLED, value);
+        free(chunk->data);
+        free(chunk);
+    }
+    else if (error)
+    {
+        ltasync_settle_promise(vm, promise, LT_PROMISE_REJECTED, lt_make_string(vm, error));
+        free(error);
+    }
+    else if (done || stopped)
+    {
+        ltasync_settle_promise(vm, promise, LT_PROMISE_FULFILLED, LT_VALUE_NULL);
+    }
+    else
+    {
+        stream->pending_next = promise;
+        lt_native_root_persistent_internal(vm, promise);
+    }
+    return 1;
+}
+
+static uint8_t web_stream_close(lt_VM* vm, uint8_t argc)
+{
+    if (argc != 1) lt_runtime_error(vm, "Stream.close expects no arguments!");
+    lt_Value instance = lt_pop(vm);
+    WebStreamState* stream = web_stream_data(vm, instance);
+    if (!stream) return 0;
+
+    atomic_store(&stream->stop, 1);
+    web_stream_lock(stream);
+    web_stream_clear_chunks(stream);
+    web_stream_wake(stream);
+    lt_Value pending = stream->pending_next;
+    stream->pending_next = LT_VALUE_NULL;
+    web_stream_unlock(stream);
+    if (!LT_IS_NULL(pending))
+    {
+        ltasync_settle_promise(vm, pending, LT_PROMISE_FULFILLED, LT_VALUE_NULL);
+        lt_native_unroot_persistent_internal(vm, pending);
+    }
+    if (stream->hook) lt_remove_poll_hook(vm, stream->hook);
+    return 0;
+}
+
+static uint8_t web_stream_status(lt_VM* vm, uint8_t argc)
+{
+    (void)argc;
+    lt_Value instance = lt_pop(vm);
+    WebStreamState* stream = web_stream_data(vm, instance);
+    lt_push(vm, lt_make_number(stream ? (double)stream->status : 0));
+    return 1;
+}
+
+static uint8_t web_stream_status_text(lt_VM* vm, uint8_t argc)
+{
+    (void)argc;
+    lt_Value instance = lt_pop(vm);
+    WebStreamState* stream = web_stream_data(vm, instance);
+    lt_push(vm, lt_make_string(vm, stream ? stream->status_text : ""));
+    return 1;
+}
+
+static uint8_t web_stream_ok(lt_VM* vm, uint8_t argc)
+{
+    (void)argc;
+    lt_Value instance = lt_pop(vm);
+    WebStreamState* stream = web_stream_data(vm, instance);
+    lt_push(vm, stream && stream->status >= 200 && stream->status < 300 ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
+static uint8_t web_stream_url(lt_VM* vm, uint8_t argc)
+{
+    (void)argc;
+    lt_Value instance = lt_pop(vm);
+    WebStreamState* stream = web_stream_data(vm, instance);
+    lt_push(vm, lt_make_string(vm, stream && stream->url ? stream->url : ""));
+    return 1;
+}
+
+static lt_Value web_kept_headers(lt_VM* vm, lt_Value instance)
+{
+    lt_Buffer* bucket = &LT_GET_OBJECT(instance)->instance.private_fields.buckets[0];
+    for (uint32_t i = 0; i < bucket->length; ++i)
+    {
+        lt_TablePair* pair = lt_buffer_at(bucket, i);
+        if (LT_IS_NULL(pair->key)) return pair->value;
+    }
+    return lt_make_table(vm);
+}
+
+static uint8_t web_stream_headers(lt_VM* vm, uint8_t argc)
+{
+    (void)argc;
+    lt_Value instance = lt_pop(vm);
+    lt_push(vm, web_kept_headers(vm, instance));
+    return 1;
+}
+
+static uint8_t web_stream_closed(lt_VM* vm, uint8_t argc)
+{
+    (void)argc;
+    lt_Value instance = lt_pop(vm);
+    WebStreamState* stream = web_stream_data(vm, instance);
+    uint8_t closed = stream && (atomic_load(&stream->stop) || atomic_load(&stream->done));
+    lt_push(vm, closed ? LT_VALUE_TRUE : LT_VALUE_FALSE);
+    return 1;
+}
+
+static void web_stream_hook_destroy(lt_VM* vm, void* context)
+{
+    WebStreamState* stream = context;
+    atomic_store(&stream->stop, 1);
+    web_stream_lock(stream);
+    web_stream_wake(stream);
+    web_stream_unlock(stream);
+    if (!LT_IS_NULL(stream->promise))
+    {
+        lt_native_unroot_persistent_internal(vm, stream->promise);
+        stream->promise = LT_VALUE_NULL;
+    }
+    if (!LT_IS_NULL(stream->pending_next))
+    {
+        lt_native_unroot_persistent_internal(vm, stream->pending_next);
+        stream->pending_next = LT_VALUE_NULL;
+    }
+    web_stream_release(stream);
+}
+
+static lt_PollResult web_stream_poll(lt_VM* vm, void* context)
+{
+    WebStreamState* stream = context;
+    uint8_t did_work = 0;
+    uint8_t done = (uint8_t)atomic_load_explicit(&stream->done, memory_order_acquire);
+    uint8_t stopped = (uint8_t)atomic_load_explicit(&stream->stop, memory_order_acquire);
+
+    if (!stream->headers_sent)
+    {
+        if (atomic_load_explicit(&stream->headers_ready, memory_order_acquire))
+        {
+            lt_Value headers = web_headers_from_data(vm, stream->header_data);
+            lt_push(vm, headers);
+            uint16_t count = lt_exec(vm, web_class(vm, "Stream"), 0);
+            lt_Value instance = count ? lt_pop(vm) : LT_VALUE_NULL;
+            while (count > 1)
+            {
+                lt_pop(vm);
+                --count;
+            }
+            if (!LT_IS_INSTANCE(instance))
+            {
+                lt_pop(vm);
+                ltasync_settle_promise(vm, stream->promise, LT_PROMISE_REJECTED, lt_make_string(vm, "Failed to create HTTP stream!"));
+                lt_native_unroot_persistent_internal(vm, stream->promise);
+                stream->promise = LT_VALUE_NULL;
+                if (stream->hook) lt_remove_poll_hook(vm, stream->hook);
+                return LT_POLL_WORK;
+            }
+            lt_push(vm, instance);
+            web_stream_retain(stream);
+            lt_instance_set_native_data(vm, instance, web_class(vm, "Stream"), stream);
+            web_keep_headers(vm, instance, headers);
+            ltasync_settle_promise(vm, stream->promise, LT_PROMISE_FULFILLED, instance);
+            lt_native_unroot_persistent_internal(vm, stream->promise);
+            stream->promise = LT_VALUE_NULL;
+            stream->headers_sent = 1;
+            lt_pop(vm);
+            lt_pop(vm);
+            did_work = 1;
+        }
+        else if (done || stopped)
+        {
+            const char* message = stream->error ? stream->error : "HTTP stream ended before headers!";
+            ltasync_settle_promise(vm, stream->promise, LT_PROMISE_REJECTED, lt_make_string(vm, message));
+            lt_native_unroot_persistent_internal(vm, stream->promise);
+            stream->promise = LT_VALUE_NULL;
+            if (stream->hook) lt_remove_poll_hook(vm, stream->hook);
+            return LT_POLL_WORK;
+        }
+        else return LT_POLL_PENDING;
+    }
+
+    lt_Value pending = stream->pending_next;
+    if (!LT_IS_NULL(pending))
+    {
+        web_stream_lock(stream);
+        WebStreamChunk* chunk = stream->chunk_head;
+        if (chunk)
+        {
+            stream->chunk_head = chunk->next;
+            if (!stream->chunk_head) stream->chunk_tail = 0;
+            stream->queued_bytes -= chunk->length;
+            web_stream_wake(stream);
+        }
+        char* error = stream->error ? web_strdup(stream->error) : 0;
+        done = (uint8_t)atomic_load_explicit(&stream->done, memory_order_acquire);
+        stopped = (uint8_t)atomic_load_explicit(&stream->stop, memory_order_acquire);
+        web_stream_unlock(stream);
+
+        stream->pending_next = LT_VALUE_NULL;
+        if (chunk)
+        {
+            lt_Value value = web_stream_chunk_value(vm, stream, chunk);
+            ltasync_settle_promise(vm, pending, LT_PROMISE_FULFILLED, value);
+            free(chunk->data);
+            free(chunk);
+            did_work = 1;
+        }
+        else if (error)
+        {
+            ltasync_settle_promise(vm, pending, LT_PROMISE_REJECTED, lt_make_string(vm, error));
+            free(error);
+            did_work = 1;
+        }
+        else if (done || stopped)
+        {
+            ltasync_settle_promise(vm, pending, LT_PROMISE_FULFILLED, LT_VALUE_NULL);
+            did_work = 1;
+        }
+        else
+        {
+            stream->pending_next = pending;
+        }
+        if (LT_IS_NULL(stream->pending_next)) lt_native_unroot_persistent_internal(vm, pending);
+    }
+
+    done = (uint8_t)atomic_load_explicit(&stream->done, memory_order_acquire);
+    stopped = (uint8_t)atomic_load_explicit(&stream->stop, memory_order_acquire);
+    if ((done || stopped) && LT_IS_NULL(stream->pending_next) && stream->hook)
+    {
+        lt_remove_poll_hook(vm, stream->hook);
+        did_work = 1;
+    }
+    if (did_work) return LT_POLL_WORK;
+    if (stream->headers_sent && LT_IS_NULL(stream->pending_next)) return LT_POLL_IDLE;
+    return LT_POLL_PENDING;
+}
+
+static uint8_t web_fetch_stream(lt_VM* vm, uint8_t argc)
+{
+    if (argc < 1 || argc > 2) { lt_runtime_error(vm, "web.fetchStream expects url and optional init!"); return 0; }
+    lt_Value init = argc == 2 ? lt_pop(vm) : LT_VALUE_NULL;
+    lt_Value url_value = lt_pop(vm);
+    if (!LT_IS_STRING(url_value)) { lt_runtime_error(vm, "web.fetchStream url must be a string!"); return 0; }
+    if (!LT_IS_NULL(init) && !LT_IS_TABLE(init)) { lt_runtime_error(vm, "web.fetchStream init must be a table!"); return 0; }
+    lt_native_root_internal(vm, url_value);
+    lt_native_root_internal(vm, init);
+
+    const char* method = "GET";
+    const char* body = "";
+    lt_Value headers = LT_VALUE_NULL;
+    long redirects = 0;
+    const char* proxy = "";
+    int decompress = 0;
+    int binary = 0;
+    if (LT_IS_TABLE(init))
+    {
+        lt_Value value = lt_table_get(vm, init, lt_make_string(vm, "method"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_STRING(value)) { lt_runtime_error(vm, "web.fetchStream method must be a string!"); return 0; }
+            method = lt_get_string(vm, value);
+        }
+        value = lt_table_get(vm, init, lt_make_string(vm, "body"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_STRING(value)) { lt_runtime_error(vm, "web.fetchStream body must be a string!"); return 0; }
+            body = lt_get_string(vm, value);
+        }
+        value = lt_table_get(vm, init, lt_make_string(vm, "headers"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_TABLE(value)) { lt_runtime_error(vm, "web.fetchStream headers must be a table!"); return 0; }
+            headers = value;
+        }
+        value = lt_table_get(vm, init, lt_make_string(vm, "redirects"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_NUMBER(value)) { lt_runtime_error(vm, "web.fetchStream redirects must be an integer from 0 to 20!"); return 0; }
+            double n = lt_get_number(value);
+            if (n < 0 || n > 20 || n != (double)(int)n) { lt_runtime_error(vm, "web.fetchStream redirects must be an integer from 0 to 20!"); return 0; }
+            redirects = (long)n;
+        }
+        value = lt_table_get(vm, init, lt_make_string(vm, "proxy"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_STRING(value)) { lt_runtime_error(vm, "web.fetchStream proxy must be a string!"); return 0; }
+            proxy = lt_get_string(vm, value);
+        }
+        value = lt_table_get(vm, init, lt_make_string(vm, "decompress"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_TRUE(value) && !LT_IS_FALSE(value)) { lt_runtime_error(vm, "web.fetchStream decompress must be a boolean!"); return 0; }
+            decompress = LT_IS_TRUE(value);
+        }
+        value = lt_table_get(vm, init, lt_make_string(vm, "binary"));
+        if (!LT_IS_NULL(value))
+        {
+            if (!LT_IS_TRUE(value) && !LT_IS_FALSE(value)) { lt_runtime_error(vm, "web.fetchStream binary must be a boolean!"); return 0; }
+            binary = LT_IS_TRUE(value);
+        }
+    }
+
+    const char* url = lt_get_string(vm, url_value);
+    WebStreamState* stream = calloc(1, sizeof(*stream));
+    if (!stream) { lt_runtime_error(vm, "Out of memory creating HTTP stream!"); return 0; }
+    atomic_init(&stream->refs, 1);
+    atomic_init(&stream->done, 0);
+    atomic_init(&stream->stop, 0);
+    atomic_init(&stream->headers_ready, 0);
+    stream->vm = vm;
+    stream->promise = LT_VALUE_NULL;
+    stream->pending_next = LT_VALUE_NULL;
+    stream->url = web_strdup(url);
+    stream->method = web_strdup(method);
+    stream->body = web_strdup(body);
+    stream->proxy = web_strdup(proxy);
+    stream->redirects = redirects;
+    stream->decompress = decompress;
+    stream->head = web_header_is(method, "HEAD");
+    stream->binary = binary;
+#if defined(_WIN32)
+    InitializeCriticalSection(&stream->lock);
+    InitializeConditionVariable(&stream->wake);
+#else
+    pthread_mutex_init(&stream->lock, 0);
+    pthread_cond_init(&stream->wake, 0);
+#endif
+    if (!stream->url || !stream->method || !stream->body || !stream->proxy)
+    {
+        web_stream_release(stream);
+        lt_runtime_error(vm, "Out of memory creating HTTP stream!");
+        return 0;
+    }
+
+    if (LT_IS_TABLE(headers))
+    {
+        uint64_t cursor = 0;
+        lt_Value key = LT_VALUE_NULL;
+        lt_Value value = LT_VALUE_NULL;
+        while (lt_table_next(vm, headers, &cursor, &key, &value))
+        {
+            if (!LT_IS_STRING(key) || !LT_IS_STRING(value)) { web_stream_release(stream); lt_runtime_error(vm, "web.fetchStream headers must contain string names and values!"); return 0; }
+            const char* name = lt_get_string(vm, key);
+            const char* text = lt_get_string(vm, value);
+            if (!web_header_valid(name, text)) { web_stream_release(stream); lt_runtime_error(vm, "Invalid web.fetchStream header!"); return 0; }
+            if (web_header_is(name, "Host") || web_header_is(name, "Connection") ||
+                web_header_is(name, "Content-Length") || web_header_is(name, "Transfer-Encoding")) continue;
+            size_t length = strlen(name) + strlen(text) + 3;
+            char* line = malloc(length);
+            if (!line) { web_stream_release(stream); lt_runtime_error(vm, "Out of memory creating HTTP stream!"); return 0; }
+            snprintf(line, length, "%s: %s", name, text);
+            struct curl_slist* grown = curl_slist_append(stream->headers, line);
+            free(line);
+            if (!grown) { web_stream_release(stream); lt_runtime_error(vm, "Out of memory creating HTTP stream!"); return 0; }
+            stream->headers = grown;
+        }
+    }
+
+    stream->promise = ltasync_make_promise(vm);
+    lt_native_root_persistent_internal(vm, stream->promise);
+    stream->hook = ltasync_add_owned_poll_hook(vm, web_stream_poll, stream, web_stream_hook_destroy);
+    if (!stream->hook)
+    {
+        lt_native_unroot_persistent_internal(vm, stream->promise);
+        stream->promise = LT_VALUE_NULL;
+        web_stream_release(stream);
+        lt_runtime_error(vm, "Failed to register HTTP stream poll hook!");
+        return 0;
+    }
+    web_stream_retain(stream); /* poll hook */
+    web_stream_retain(stream); /* worker */
+#ifdef _WIN32
+    HANDLE thread = CreateThread(NULL, 0, web_stream_thread, stream, 0, NULL);
+    if (thread) CloseHandle(thread);
+    else {
+#else
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, web_stream_thread, stream) == 0) pthread_detach(thread);
+    else {
+#endif
+        web_stream_set_error(stream, "Failed to start HTTP stream worker");
+        atomic_store(&stream->done, 1);
+        web_stream_release(stream); /* failed worker */
+    }
+    web_stream_release(stream); /* setup reference */
+    lt_push(vm, stream->promise);
     return 1;
 }
 
@@ -1269,7 +2047,7 @@ void ltstd_open_web(lt_VM* vm)
     }
     web_http_settings_init();
 
-    lt_Value response_class, request_class, server_class;
+    lt_Value response_class, request_class, server_class, stream_class;
 
     response_class = lt_class_create(vm, "Response");
     lt_class_set_native_data_destroy(vm, response_class, web_destroy_response);
@@ -1295,10 +2073,22 @@ void ltstd_open_web(lt_VM* vm)
     lt_class_add_method(vm, server_class, "close", server_close, LT_VIS_PUBLIC, 0);
     lt_class_add_getter(vm, server_class, "port", server_port, LT_VIS_PUBLIC, 0);
 
+    stream_class = lt_class_create(vm, "Stream");
+    lt_class_set_native_data_destroy(vm, stream_class, web_stream_destroy_data);
+    lt_class_add_method(vm, stream_class, "next", web_stream_next, LT_VIS_PUBLIC, 0);
+    lt_class_add_method(vm, stream_class, "close", web_stream_close, LT_VIS_PUBLIC, 0);
+    lt_class_add_getter(vm, stream_class, "status", web_stream_status, LT_VIS_PUBLIC, 0);
+    lt_class_add_getter(vm, stream_class, "statusText", web_stream_status_text, LT_VIS_PUBLIC, 0);
+    lt_class_add_getter(vm, stream_class, "ok", web_stream_ok, LT_VIS_PUBLIC, 0);
+    lt_class_add_getter(vm, stream_class, "url", web_stream_url, LT_VIS_PUBLIC, 0);
+    lt_class_add_getter(vm, stream_class, "headers", web_stream_headers, LT_VIS_PUBLIC, 0);
+    lt_class_add_getter(vm, stream_class, "closed", web_stream_closed, LT_VIS_PUBLIC, 0);
+
     lt_Value registry = lt_make_table(vm);
     lt_table_set(vm, registry, lt_make_string(vm, "Response"), response_class);
     lt_table_set(vm, registry, lt_make_string(vm, "Request"), request_class);
     lt_table_set(vm, registry, lt_make_string(vm, "Server"), server_class);
+    lt_table_set(vm, registry, lt_make_string(vm, "Stream"), stream_class);
     lt_table_set(vm, vm->global, lt_make_string(vm, "__little_web_classes"), registry);
     lt_Value web = lt_make_table(vm);
     /** [LittleBinding] web.fetch
@@ -1308,6 +2098,13 @@ void ltstd_open_web(lt_VM* vm)
      *  @param init table with optional method, body, headers, redirects, proxy, and decompress fields
      */
     lt_table_set(vm, web, lt_make_string(vm, "fetch"), lt_make_native(vm, web_fetch));
+    /** [LittleBinding] web.fetchStream
+     *  requests a URL and returns a promise resolving to a web.Stream once response headers are available.
+     *  @signature (url [, init])
+     *  @param url absolute http or https URL to request
+     *  @param init table with optional method, body, headers, redirects, proxy, decompress, and binary fields
+     */
+    lt_table_set(vm, web, lt_make_string(vm, "fetchStream"), lt_make_native(vm, web_fetch_stream));
     /** [LittleBinding] web.serve
      *  starts an HTTP server that passes each request to the handler and returns a web.Server.
      *  @signature (handler [, options])
@@ -1332,6 +2129,11 @@ void ltstd_open_web(lt_VM* vm)
      *  @signature ()
      */
     lt_table_set(vm, web, lt_make_string(vm, "Server"), server_class);
+    /** [LittleBinding] web.Stream
+     *  represents a streaming HTTP client response returned by fetchStream, exposing next(), close(), status, statusText, ok, url, headers, and closed.
+     *  @signature ()
+     */
+    lt_table_set(vm, web, lt_make_string(vm, "Stream"), stream_class);
 
     lt_table_set(vm, vm->global, lt_make_string(vm, "web"), web);
 }

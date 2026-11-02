@@ -1,0 +1,25 @@
+var largeBody = string.repeat("x", 6 * 1024 * 1024)
+var server = web.serve(fn(request) {
+    return web.Response(largeBody)
+}, { hostname: "127.0.0.1" port: 0 })
+
+var port = string.format("%d", server.port)
+var url = string.expand("http://127.0.0.1:{{port}}/stream", { port })
+var held = null
+
+web.fetchStream(url).next(fn(stream) {
+    held = stream
+    io.print("headers", stream.status)
+}).catch(fn(reason) {
+    io.print("fetch error", reason)
+})
+
+setTimeout(fn() {
+    held = null
+    io.print("collected", gc.collect() >= 0)
+    mainloop.stop()
+}, 50)
+
+mainloop.run()
+server:close()
+io.print("done")

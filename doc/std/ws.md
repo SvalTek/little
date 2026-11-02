@@ -10,6 +10,6 @@
 - `handler`: callable receiving each accepted ws.WebSocket
 - `options`: table with optional hostname, port, and tls fields, where tls holds cert and key paths
 
-`ws.WebSocket()` represents a WebSocket connection exposing next(), send(), close(), url, and closed.
+`ws.WebSocket()` represents a WebSocket connection exposing next(), send(), close(), url, and closed; it can be used as an async for source.
 
 `ws.Server()` represents a running WebSocket server exposing close() and the bound port.

@@ -1,0 +1,32 @@
+var body = async fn() {
+    return 1 + "nope"
+}
+
+body().next(fn(value) {
+    io.print("body next", value)
+}).catch(fn(reason) {
+    io.print("body catch", string.contains(reason, "Expected arithmetic operands"))
+})
+mainloop.run()
+
+var awaited = async fn() {
+    var value = await Promise(fn(resolve, reject) {
+        reject("bad")
+    })
+    return value
+}
+
+awaited().next(fn(value) {
+    io.print("await next", value)
+}).catch(fn(reason) {
+    io.print("await catch", string.contains(reason, "bad"))
+})
+mainloop.run()
+
+Promise(fn(resolve, reject) {
+    return 1 + "nope"
+}).catch(fn(reason) {
+    io.print("executor catch", string.contains(reason, "Expected arithmetic operands"))
+})
+
+mainloop.run()

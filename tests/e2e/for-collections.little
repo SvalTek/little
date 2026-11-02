@@ -1,0 +1,60 @@
+var values = []
+for value in [ 10, 20, 30 ] {
+    array.push(values, value)
+}
+io.print(array.join(values, ","))
+
+for index, value in [ "a", "b" ] {
+    io.print(index, value)
+}
+
+var entries = { a: 1 b: 2 c: 3 }
+var count = 0
+var total = 0
+for value in entries {
+    count = count + 1
+    total = total + value
+}
+io.print(count, total)
+
+var seen = { a: false b: false c: false }
+var keyTotal = 0
+for key, value in entries {
+    seen[key] = true
+    keyTotal = keyTotal + value
+}
+io.print(keyTotal, seen.a, seen.b, seen.c)
+
+table.put(entries, "removed", null)
+count = 0
+for value in entries {
+    count = count + 1
+}
+io.print(count)
+
+var pairs = []
+for i in [ 1, 2 ] {
+    for j in [ 3, 4 ] {
+        if j is 4 { break }
+        array.push(pairs, i * 10 + j)
+    }
+}
+io.print(array.join(pairs, ","))
+
+var cursor = 0
+var iterator = fn() {
+    if cursor >= 2 { return null }
+    cursor = cursor + 1
+    return unpack([ cursor, cursor * 10 ])
+}
+for key, value in iterator {
+    io.print(key, value)
+}
+
+var live = { a: 1 b: 2 }
+var liveCount = 0
+for key, value in live {
+    if key is "a" { table.put(live, "c", 3) }
+    liveCount = liveCount + 1
+}
+io.print(liveCount >= 2 and liveCount <= 3)

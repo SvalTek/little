@@ -1,0 +1,36 @@
+var server = ws.serve(fn(socket, request) {
+    socket:next().next(fn(first) {
+        socket:send(first)
+        socket:next().next(fn(second) {
+            socket:send(second)
+        })
+    })
+}, { hostname: "127.0.0.1" port: 0 })
+
+var port = string.format("%d", server.port)
+ws.connect(string.expand("ws://127.0.0.1:{{port}}/stream", { port })).next(fn(socket) {
+    var read = async fn() {
+        var count = 0
+        async for message in socket {
+            if type message is "string" {
+                io.print("client text", message)
+            } else {
+                io.print("client binary", array.len(message), message[2])
+            }
+            count = count + 1
+            if count is 2 {
+                socket:close()
+                break
+            }
+        }
+        io.print("client stopped")
+        mainloop.stop()
+    }
+    read()
+    socket:send("hello")
+    socket:send([ 1, 2, 255 ])
+})
+
+mainloop.run()
+server:close()
+io.print("done")

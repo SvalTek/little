@@ -1,0 +1,72 @@
+var largeBody = string.repeat("x", 6 * 1024 * 1024)
+var server = web.serve(fn(request) {
+    if request.url is "/text" {
+        return web.Response("hello from stream", {
+            headers: { "X-Test": "stream" }
+        })
+    }
+    if request.url is "/binary" {
+        return web.Response("AZ")
+    }
+    return web.Response(largeBody)
+}, { hostname: "127.0.0.1" port: 0 })
+
+var port = string.format("%d", server.port)
+var base = string.expand("http://127.0.0.1:{{port}}", { port })
+
+web.fetchStream(string.concat(base, "/text")).next(fn(stream) {
+    io.print("status", stream.status, stream.ok)
+    io.print("header", stream.headers["X-Test"])
+    io.print("url", string.contains(stream.url, "/text"))
+    var read = async fn() {
+        var body = ""
+        async for chunk in stream {
+            body = string.concat(body, chunk)
+        }
+        io.print("body", body)
+        io.print("closed", stream.closed)
+        mainloop.stop()
+    }
+    read().catch(fn(reason) {
+        io.print("read error", reason)
+        mainloop.stop()
+    })
+}).catch(fn(reason) {
+    io.print("fetch error", reason)
+    mainloop.stop()
+})
+mainloop.run()
+
+web.fetchStream(string.concat(base, "/binary"), { binary: true }).next(fn(stream) {
+    var read = async fn() {
+        var bytes = []
+        async for chunk in stream {
+            for index, byte in chunk {
+                array.push(bytes, byte)
+            }
+        }
+        io.print("bytes", array.len(bytes), bytes[0], bytes[1])
+        mainloop.stop()
+    }
+    read().catch(fn(reason) {
+        io.print("binary error", reason)
+        mainloop.stop()
+    })
+}).catch(fn(reason) {
+    io.print("binary fetch error", reason)
+    mainloop.stop()
+})
+mainloop.run()
+
+web.fetchStream(string.concat(base, "/large")).next(fn(stream) {
+    stream:close()
+    io.print("closed", stream.closed)
+    mainloop.stop()
+}).catch(fn(reason) {
+    io.print("large fetch error", reason)
+    mainloop.stop()
+})
+mainloop.run()
+
+server:close()
+io.print("done")
