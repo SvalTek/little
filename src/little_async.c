@@ -146,6 +146,11 @@ static void _lt_sleep_ms(uint32_t ms)
 #endif
 }
 
+uint8_t lt_native_is_promise_internal(lt_Value value)
+{
+	return LT_IS_OBJECT(value) && LT_GET_OBJECT(value)->type == LT_OBJECT_PROMISE;
+}
+
 static lt_Value _lt_make_promise(lt_VM* vm)
 {
 	lt_Object* promise = lt_allocate(vm, LT_OBJECT_PROMISE);
